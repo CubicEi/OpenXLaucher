@@ -10,14 +10,16 @@ import {
   msActivateSkin,
   msDeleteSkin,
   msSetActiveCape,
+  msSilentRefreshAccount,
   microsoftProbeAccountLogin,
   type MCSkinInfo,
   type MCCapeInfo,
 } from "@/lib/auth";
-import { X, Check, Upload, Trash2, RefreshCw, Shirt, Sparkles } from "lucide-react";
+import { X, Check, Upload, Trash2, RefreshCw, Shirt, Sparkles, AlertCircle } from "lucide-react";
 import { overlayFade, scaleIn } from "@/lib/motion";
 import type { Account } from "@/types";
 import { cn } from "@/lib/utils";
+import { useAccountContext } from "@/components/accounts/account-provider";
 
 interface SkinCapeManagerProps {
   account: Account;
@@ -26,7 +28,9 @@ interface SkinCapeManagerProps {
 
 type TabType = "skins" | "capes";
 
-export function SkinCapeManager({ account, onClose }: SkinCapeManagerProps) {
+export function SkinCapeManager({ account: initialAccount, onClose }: SkinCapeManagerProps) {
+  const { updateProfile } = useAccountContext();
+  const [account, setAccount] = useState(initialAccount);
   const [tab, setTab] = useState<TabType>("skins");
   const [loading, setLoading] = useState(true);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -40,16 +44,55 @@ export function SkinCapeManager({ account, onClose }: SkinCapeManagerProps) {
 
   // 加载皮肤/披风列表 —— 调用【公共函数 microsoftProbeAccountLogin】
   // 保证和 AccountProvider 启动时的账号有效性检测逻辑 100% 一致
-  const loadProfile = async () => {
+  const loadProfile = async (retryWithRefresh = true) => {
     setLoading(true);
     setErrorMsg(null);
-    const probe = await microsoftProbeAccountLogin(account.accessToken);
-    if (probe.ok) {
-      setSkins(probe.profile.skins || []);
-      setCapes(probe.profile.capes || []);
-      setLoading(false);
-    } else {
-      setErrorMsg(probe.error); // 错误消息原封不动返回（和启动时检测的错误消息完全一样）
+    try {
+      const probe = await microsoftProbeAccountLogin(account.accessToken);
+      if (probe.ok) {
+        setSkins(probe.profile.skins || []);
+        setCapes(probe.profile.capes || []);
+        setLoading(false);
+      } else {
+        // 如果是 401 错误且允许重试，尝试静默刷新 Token
+        if (retryWithRefresh && (probe.error.includes("401") || probe.error.includes("Unauthorized"))) {
+          console.log("[SkinCapeManager] Token 可能过期 (401)，尝试静默刷新...");
+          try {
+            const newInfo = await msSilentRefreshAccount(account.id);
+            // 更新本地状态和全局状态
+            const updatedAccount = { 
+              ...account, 
+              accessToken: newInfo.access_token,
+              name: newInfo.name,
+              skinUrl: newInfo.skin_url 
+            };
+            setAccount(updatedAccount);
+            updateProfile(account.id, { 
+              accessToken: newInfo.access_token,
+              name: newInfo.name,
+              skinUrl: newInfo.skin_url 
+            });
+            // 用新 Token 重新加载 (不再重试)
+            const secondProbe = await microsoftProbeAccountLogin(newInfo.access_token);
+            if (secondProbe.ok) {
+              setSkins(secondProbe.profile.skins || []);
+              setCapes(secondProbe.profile.capes || []);
+              setLoading(false);
+              return;
+            } else {
+              setErrorMsg(secondProbe.error);
+            }
+          } catch (refreshErr) {
+            console.error("[SkinCapeManager] 静默刷新失败:", refreshErr);
+            setErrorMsg("登录已失效，请重新登录账号");
+          }
+        } else {
+          setErrorMsg(probe.error);
+        }
+        setLoading(false);
+      }
+    } catch (e) {
+      setErrorMsg(e instanceof Error ? e.message : String(e));
       setLoading(false);
     }
   };
@@ -89,8 +132,28 @@ export function SkinCapeManager({ account, onClose }: SkinCapeManagerProps) {
       if (fileInputRef.current) fileInputRef.current.value = "";
       // 上传成功后刷新列表
       await loadProfile();
-    } catch (e: unknown) {
-      setErrorMsg(e instanceof Error ? e.message : String(e));
+    } catch (e: any) {
+      const msg = e instanceof Error ? e.message : String(e);
+      // 如果上传时 401，尝试刷新一次 Token 并重试上传
+      if (msg.includes("401") || msg.includes("Unauthorized")) {
+        console.log("[SkinCapeManager] 上传时 Token 过期，尝试静默刷新并重试...");
+        try {
+          const newInfo = await msSilentRefreshAccount(account.id);
+          const updatedAccount = { ...account, accessToken: newInfo.access_token };
+          setAccount(updatedAccount);
+          updateProfile(account.id, { accessToken: newInfo.access_token });
+          // 重试上传
+          await msUploadSkin(newInfo.access_token, base64Only, uploadVariant);
+          setUploadPreview(null);
+          if (fileInputRef.current) fileInputRef.current.value = "";
+          await loadProfile();
+          return;
+        } catch (refreshErr) {
+          setErrorMsg("登录已失效，请重新登录后再上传");
+        }
+      } else {
+        setErrorMsg(msg);
+      }
     } finally {
       setBusyAction(null);
     }
@@ -104,8 +167,22 @@ export function SkinCapeManager({ account, onClose }: SkinCapeManagerProps) {
     try {
       await msActivateSkin(account.accessToken, skinId, variant as "classic" | "slim");
       await loadProfile();
-    } catch (e: unknown) {
-      setErrorMsg(e instanceof Error ? e.message : String(e));
+    } catch (e: any) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (msg.includes("401") || msg.includes("Unauthorized")) {
+        try {
+          const newInfo = await msSilentRefreshAccount(account.id);
+          setAccount({ ...account, accessToken: newInfo.access_token });
+          updateProfile(account.id, { accessToken: newInfo.access_token });
+          await msActivateSkin(newInfo.access_token, skinId, variant as "classic" | "slim");
+          await loadProfile();
+          return;
+        } catch {
+          setErrorMsg("会话过期，请重新登录");
+        }
+      } else {
+        setErrorMsg(msg);
+      }
     } finally {
       setBusyAction(null);
     }
@@ -135,8 +212,22 @@ export function SkinCapeManager({ account, onClose }: SkinCapeManagerProps) {
     try {
       await msSetActiveCape(account.accessToken, capeId);
       await loadProfile();
-    } catch (e: unknown) {
-      setErrorMsg(e instanceof Error ? e.message : String(e));
+    } catch (e: any) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (msg.includes("401") || msg.includes("Unauthorized")) {
+        try {
+          const newInfo = await msSilentRefreshAccount(account.id);
+          setAccount({ ...account, accessToken: newInfo.access_token });
+          updateProfile(account.id, { accessToken: newInfo.access_token });
+          await msSetActiveCape(newInfo.access_token, capeId);
+          await loadProfile();
+          return;
+        } catch {
+          setErrorMsg("会话过期，请重新登录");
+        }
+      } else {
+        setErrorMsg(msg);
+      }
     } finally {
       setBusyAction(null);
     }
@@ -348,11 +439,20 @@ export function SkinCapeManager({ account, onClose }: SkinCapeManagerProps) {
                               isActive && "border-primary bg-primary/5 shadow-sm"
                             )}
                           >
-                            <img
-                              src={skin.url}
-                              alt={skin.alias || "皮肤"}
-                              className="size-20 rounded-md bg-muted object-contain shadow-sm"
-                            />
+                            <div className="relative size-20 rounded-md bg-muted overflow-hidden border shadow-sm flex items-center justify-center">
+                              <img
+                                src={skin.url}
+                                alt={skin.alias || "皮肤"}
+                                className="size-full object-contain"
+                                onError={(e) => {
+                                  (e.target as HTMLImageElement).src = "";
+                                  (e.target as HTMLImageElement).parentElement?.classList.add("bg-destructive/10");
+                                }}
+                              />
+                              <div className="absolute inset-0 flex items-center justify-center opacity-0 hover:opacity-100 transition-opacity bg-black/20 pointer-events-none">
+                                <Shirt className="size-8 text-white/50" />
+                              </div>
+                            </div>
                             <div className="text-xs text-center space-y-0.5 w-full">
                               <p className="font-medium truncate">
                                 {skin.alias || "未命名"}
@@ -444,11 +544,17 @@ export function SkinCapeManager({ account, onClose }: SkinCapeManagerProps) {
                             )}
                             onClick={() => handleSetCape(cape.id)}
                           >
-                            <img
-                              src={cape.url}
-                              alt={cape.alias || "披风"}
-                              className="size-20 rounded-md bg-muted object-contain shadow-sm"
-                            />
+                            <div className="relative size-20 rounded-md bg-muted overflow-hidden border shadow-sm flex items-center justify-center">
+                              <img
+                                src={cape.url}
+                                alt={cape.alias || "披风"}
+                                className="size-full object-contain"
+                                onError={(e) => {
+                                  (e.target as HTMLImageElement).src = "";
+                                  (e.target as HTMLImageElement).parentElement?.classList.add("bg-destructive/10");
+                                }}
+                              />
+                            </div>
                             <div className="text-xs text-center space-y-0.5 w-full">
                               <p className="font-medium truncate">
                                 {cape.alias || "未命名"}

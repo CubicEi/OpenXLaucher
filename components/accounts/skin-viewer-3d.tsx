@@ -67,6 +67,8 @@ export function SkinViewer3D({
         height,
         skin: skinSrc || null,
         cape: capeSrc || null,
+        devicePixelRatio: typeof window !== "undefined" ? window.devicePixelRatio : 1,
+        preserveDrawingBuffer: true,
         // model: modelType === "slim" ? "slim" : "default",
         controls: {
           enabled: true,
@@ -87,6 +89,11 @@ export function SkinViewer3D({
         viewer.camera.rotation.x = -0.15;
         viewer.camera.position.y = 0;
         viewer.camera.position.z = 55;
+      } catch {}
+
+      // 显式刷新一次，确保纹理映射在 initial load 时正确
+      try {
+        viewer.setSize(width, height);
       } catch {}
 
       // 动画
@@ -155,8 +162,7 @@ export function SkinViewer3D({
   useEffect(() => {
     if (!viewerRef.current) return;
     try {
-      viewerRef.current.width = width;
-      viewerRef.current.height = height;
+      viewerRef.current.setSize(width, height);
     } catch {}
   }, [width, height]);
 
@@ -178,14 +184,13 @@ export function SkinViewer3D({
   return (
     <div
       ref={containerRef}
-      className="relative flex items-center justify-center select-none"
+      className="relative flex items-center justify-center select-none overflow-hidden"
       style={{ width, height }}
     >
       <canvas
         ref={canvasRef}
-        width={width}
-        height={height}
         className="rounded-lg bg-gradient-to-b from-transparent to-black/5"
+        style={{ width: "100%", height: "100%", display: "block" }}
       />
       {!loaded && !error && (
         <div className="absolute inset-0 flex items-center justify-center text-sm text-muted-foreground">
