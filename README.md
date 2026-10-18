@@ -1,4 +1,4 @@
-r# RTLauncher
+# RTLauncher
 
 一款现代化的 Minecraft 桌面启动器，基于 **Tauri 2** (Rust) + **Next.js 16** 构建，轻量、快速且跨平台。
 
