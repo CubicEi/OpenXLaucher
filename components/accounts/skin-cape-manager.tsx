@@ -12,6 +12,7 @@ import {
   msSetActiveCape,
   msSilentRefreshAccount,
   microsoftProbeAccountLogin,
+  fetchTextureImageBase64,
   type MCSkinInfo,
   type MCCapeInfo,
 } from "@/lib/auth";
@@ -28,6 +29,14 @@ interface SkinCapeManagerProps {
 
 type TabType = "skins" | "capes";
 
+function normalizeTextureUrl(url?: string | null): string {
+  if (!url) return "";
+  if (url.startsWith("http://")) {
+    return "https://" + url.slice(7);
+  }
+  return url;
+}
+
 export function SkinCapeManager({ account: initialAccount, onClose }: SkinCapeManagerProps) {
   const { updateProfile } = useAccountContext();
   const [account, setAccount] = useState(initialAccount);
@@ -36,11 +45,33 @@ export function SkinCapeManager({ account: initialAccount, onClose }: SkinCapeMa
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [skins, setSkins] = useState<MCSkinInfo[]>([]);
   const [capes, setCapes] = useState<MCCapeInfo[]>([]);
+  const [failedSkinIds, setFailedSkinIds] = useState<Record<string, boolean>>({});
+  const [failedCapeIds, setFailedCapeIds] = useState<Record<string, boolean>>({});
+  const [textureBase64Map, setTextureBase64Map] = useState<Record<string, string>>({});
   const [uploadPreview, setUploadPreview] = useState<string | null>(null);
   const [uploadVariant, setUploadVariant] = useState<"classic" | "slim">("classic");
   const [busyAction, setBusyAction] = useState<string | null>(null); // 正在执行的操作 ID
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // 异步预拉取并缓存纹理图片的 base64，彻底解决跨域及直连 Mojang 贴图失败的问题
+  const prefetchTextures = (skinList: MCSkinInfo[], capeList: MCCapeInfo[]) => {
+    const urlsToFetch = [
+      ...skinList.map((s) => s.url),
+      ...capeList.map((c) => c.url),
+    ].filter(Boolean);
+
+    urlsToFetch.forEach(async (url) => {
+      try {
+        const base64Data = await fetchTextureImageBase64(url);
+        if (base64Data) {
+          setTextureBase64Map((prev) => ({ ...prev, [url]: base64Data }));
+        }
+      } catch (err) {
+        console.warn(`[SkinCapeManager] 获取纹理 Base64 失败 (${url}):`, err);
+      }
+    });
+  };
 
   // 加载皮肤/披风列表 —— 调用【公共函数 microsoftProbeAccountLogin】
   // 保证和 AccountProvider 启动时的账号有效性检测逻辑 100% 一致
@@ -50,8 +81,11 @@ export function SkinCapeManager({ account: initialAccount, onClose }: SkinCapeMa
     try {
       const probe = await microsoftProbeAccountLogin(account.accessToken);
       if (probe.ok) {
-        setSkins(probe.profile.skins || []);
-        setCapes(probe.profile.capes || []);
+        const loadedSkins = (probe.profile.skins || []).map((s) => ({ ...s, url: normalizeTextureUrl(s.url) }));
+        const loadedCapes = (probe.profile.capes || []).map((c) => ({ ...c, url: normalizeTextureUrl(c.url) }));
+        setSkins(loadedSkins);
+        setCapes(loadedCapes);
+        prefetchTextures(loadedSkins, loadedCapes);
         setLoading(false);
       } else {
         // 如果是 401 错误且允许重试，尝试静默刷新 Token
@@ -64,19 +98,22 @@ export function SkinCapeManager({ account: initialAccount, onClose }: SkinCapeMa
               ...account, 
               accessToken: newInfo.access_token,
               name: newInfo.name,
-              skinUrl: newInfo.skin_url 
+              skinUrl: normalizeTextureUrl(newInfo.skin_url) 
             };
             setAccount(updatedAccount);
             updateProfile(account.id, { 
               accessToken: newInfo.access_token,
               name: newInfo.name,
-              skinUrl: newInfo.skin_url 
+              skinUrl: normalizeTextureUrl(newInfo.skin_url) 
             });
             // 用新 Token 重新加载 (不再重试)
             const secondProbe = await microsoftProbeAccountLogin(newInfo.access_token);
             if (secondProbe.ok) {
-              setSkins(secondProbe.profile.skins || []);
-              setCapes(secondProbe.profile.capes || []);
+              const loadedSkins = (secondProbe.profile.skins || []).map((s) => ({ ...s, url: normalizeTextureUrl(s.url) }));
+              const loadedCapes = (secondProbe.profile.capes || []).map((c) => ({ ...c, url: normalizeTextureUrl(c.url) }));
+              setSkins(loadedSkins);
+              setCapes(loadedCapes);
+              prefetchTextures(loadedSkins, loadedCapes);
               setLoading(false);
               return;
             } else {
@@ -281,7 +318,7 @@ export function SkinCapeManager({ account: initialAccount, onClose }: SkinCapeMa
                 <Button
                   variant="ghost"
                   size="icon-sm"
-                  onClick={loadProfile}
+                  onClick={() => loadProfile()}
                   disabled={loading}
                   title="刷新"
                 >
@@ -440,15 +477,20 @@ export function SkinCapeManager({ account: initialAccount, onClose }: SkinCapeMa
                             )}
                           >
                             <div className="relative size-20 rounded-md bg-muted overflow-hidden border shadow-sm flex items-center justify-center">
-                              <img
-                                src={skin.url}
-                                alt={skin.alias || "皮肤"}
-                                className="size-full object-contain"
-                                onError={(e) => {
-                                  (e.target as HTMLImageElement).src = "";
-                                  (e.target as HTMLImageElement).parentElement?.classList.add("bg-destructive/10");
-                                }}
-                              />
+                              {!failedSkinIds[skin.id] ? (
+                                <img
+                                  src={textureBase64Map[skin.url] || normalizeTextureUrl(skin.url)}
+                                  alt=""
+                                  className="size-full object-contain"
+                                  onError={() => {
+                                    if (!textureBase64Map[skin.url]) {
+                                      setFailedSkinIds((prev) => ({ ...prev, [skin.id]: true }));
+                                    }
+                                  }}
+                                />
+                              ) : (
+                                <Shirt className="size-8 text-muted-foreground/50" />
+                              )}
                               <div className="absolute inset-0 flex items-center justify-center opacity-0 hover:opacity-100 transition-opacity bg-black/20 pointer-events-none">
                                 <Shirt className="size-8 text-white/50" />
                               </div>
@@ -545,15 +587,20 @@ export function SkinCapeManager({ account: initialAccount, onClose }: SkinCapeMa
                             onClick={() => handleSetCape(cape.id)}
                           >
                             <div className="relative size-20 rounded-md bg-muted overflow-hidden border shadow-sm flex items-center justify-center">
-                              <img
-                                src={cape.url}
-                                alt={cape.alias || "披风"}
-                                className="size-full object-contain"
-                                onError={(e) => {
-                                  (e.target as HTMLImageElement).src = "";
-                                  (e.target as HTMLImageElement).parentElement?.classList.add("bg-destructive/10");
-                                }}
-                              />
+                              {!failedCapeIds[cape.id] ? (
+                                <img
+                                  src={textureBase64Map[cape.url] || normalizeTextureUrl(cape.url)}
+                                  alt=""
+                                  className="size-full object-contain"
+                                  onError={() => {
+                                    if (!textureBase64Map[cape.url]) {
+                                      setFailedCapeIds((prev) => ({ ...prev, [cape.id]: true }));
+                                    }
+                                  }}
+                                />
+                              ) : (
+                                <Sparkles className="size-8 text-muted-foreground/50" />
+                              )}
                             </div>
                             <div className="text-xs text-center space-y-0.5 w-full">
                               <p className="font-medium truncate">

@@ -1622,7 +1622,11 @@ pub async fn ms_get_skins_and_capes(access_token: String) -> Result<MCSkinCapePr
         .map(|s| MCSkinInfo {
             id: s.id,
             state: s.state,
-            url: s.url,
+            url: if s.url.starts_with("http://") {
+                s.url.replacen("http://", "https://", 1)
+            } else {
+                s.url
+            },
             variant: s.variant.unwrap_or_else(|| "classic".to_string()),
             alias: s.alias,
         })
@@ -1635,12 +1639,47 @@ pub async fn ms_get_skins_and_capes(access_token: String) -> Result<MCSkinCapePr
         .map(|c| MCCapeInfo {
             id: c.id,
             state: c.state,
-            url: c.url,
+            url: if c.url.starts_with("http://") {
+                c.url.replacen("http://", "https://", 1)
+            } else {
+                c.url
+            },
             alias: c.alias,
         })
         .collect();
 
     Ok(MCSkinCapeProfile { skins, capes })
+}
+
+/// 安全抓取指定 URL 的图片纹理（皮肤/披风）并返回 Base64 Data URL (data:image/png;base64,...)
+/// 彻底解决 WebView2 跨域、CSP、防盗链及直连 Mojang CDN 失败导致的图片破损问题
+#[tauri::command]
+pub async fn fetch_texture_image_base64(url: String) -> Result<String, String> {
+    use base64::Engine as _;
+    let target_url = if url.starts_with("http://") {
+        url.replacen("http://", "https://", 1)
+    } else {
+        url
+    };
+
+    let client = build_http_client()?;
+    let resp = client
+        .get(&target_url)
+        .send()
+        .await
+        .map_err(|e| friendly_net_err(e))?;
+
+    if !resp.status().is_success() {
+        return Err(format!("抓取纹理图片失败 (HTTP {})", resp.status()));
+    }
+
+    let bytes = resp
+        .bytes()
+        .await
+        .map_err(|e| format!("读取图片数据失败: {}", e))?;
+
+    let base64_str = BASE64.encode(&bytes);
+    Ok(format!("data:image/png;base64,{}", base64_str))
 }
 
 /// 上传新皮肤（PNG base64）并设置为当前皮肤

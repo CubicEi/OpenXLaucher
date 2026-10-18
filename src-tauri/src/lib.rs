@@ -13,9 +13,10 @@ mod updater;
 mod version_management;
 use auth::littleskinLoader::{useMethod, use_method_with_credentials};
 use auth::official::{
-    delete_cached_skin, get_skin_base64, ms_activate_skin, ms_cancel_login, ms_delete_skin,
-    ms_get_skins_and_capes, ms_has_account_in_db, ms_poll_and_login, ms_request_device_code,
-    ms_set_active_cape, ms_silent_refresh_account, ms_upload_skin, redownload_littleskin_skin,
+    delete_cached_skin, fetch_texture_image_base64, get_skin_base64, ms_activate_skin,
+    ms_cancel_login, ms_delete_skin, ms_get_skins_and_capes, ms_has_account_in_db,
+    ms_poll_and_login, ms_request_device_code, ms_set_active_cape, ms_silent_refresh_account,
+    ms_upload_skin, redownload_littleskin_skin,
 };
 use auth::yissadrail::{getAccountList, getPlayerSkin, thirdPartyLogin};
 use downloader::decompression::extract_library_paths;
@@ -141,6 +142,7 @@ pub fn run() {
             get_skin_base64,
             redownload_littleskin_skin,
             ms_get_skins_and_capes,
+            fetch_texture_image_base64,
             ms_upload_skin,
             ms_activate_skin,
             ms_delete_skin,

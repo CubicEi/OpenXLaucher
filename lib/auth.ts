@@ -224,6 +224,15 @@ export async function msGetSkinsAndCapes(
 }
 
 /**
+ * 安全抓取指定 URL 的图片纹理（皮肤/披风）并返回 Base64 Data URL (data:image/png;base64,...)
+ * 彻底解决 WebView 跨域与网络直连 Mojang 贴图服务器问题
+ * @param url 纹理图片链接
+ */
+export async function fetchTextureImageBase64(url: string): Promise<string> {
+  return safeInvoke<string>("fetch_texture_image_base64", { url });
+}
+
+/**
  * 上传新皮肤（PNG base64 编码），上传后自动设为当前皮肤
  * @param accessToken 微软登录得到的 access_token
  * @param pngBase64 PNG 图像的 base64 编码（不带 data:image/png;base64, 前缀）

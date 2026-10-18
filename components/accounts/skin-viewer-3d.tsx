@@ -24,6 +24,14 @@ type SkinViewer3DProps = {
   autoRotate?: boolean;
 };
 
+function normalizeTextureUrl(url?: string): string | null {
+  if (!url) return null;
+  if (url.startsWith("http://")) {
+    return "https://" + url.slice(7);
+  }
+  return url;
+}
+
 export function SkinViewer3D({
   skinSrc,
   capeSrc,
@@ -65,8 +73,8 @@ export function SkinViewer3D({
         canvas: canvasRef.current,
         width,
         height,
-        skin: skinSrc || null,
-        cape: capeSrc || null,
+        skin: normalizeTextureUrl(skinSrc),
+        cape: normalizeTextureUrl(capeSrc),
         devicePixelRatio: typeof window !== "undefined" ? window.devicePixelRatio : 1,
         preserveDrawingBuffer: true,
         // model: modelType === "slim" ? "slim" : "default",
@@ -132,8 +140,11 @@ export function SkinViewer3D({
   useEffect(() => {
     if (!viewerRef.current || !skinSrc) return;
     try {
-      viewerRef.current.skin = skinSrc;
-      setError(false);
+      const normalized = normalizeTextureUrl(skinSrc);
+      if (normalized) {
+        viewerRef.current.skin = normalized;
+        setError(false);
+      }
     } catch (e) {
       console.error("加载皮肤失败:", e);
       setError(true);
@@ -144,7 +155,7 @@ export function SkinViewer3D({
   useEffect(() => {
     if (!viewerRef.current) return;
     try {
-      viewerRef.current.cape = capeSrc || null;
+      viewerRef.current.cape = normalizeTextureUrl(capeSrc);
     } catch (e) {
       console.error("加载披风失败:", e);
     }
