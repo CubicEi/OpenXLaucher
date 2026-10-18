@@ -980,23 +980,26 @@ pub async fn install(
         .ok_or_else(|| anyhow!("version.json 缺少 id 字段"))?
         .to_string();
     let forge_version = id.replace("-forge-", "-");
-    // 从 libraries 中解析真正的 forge/neoforge 版本号（用于 maven 路径匹配）
-    // id 可能是 "1.21.4-neoforge-26.2.0.9-beta"，但我们真正需要的版本号是 "26.2.0.9-beta"
     let mut real_loader_version: Option<String> = None;
+    let mut loader_group: Option<&'static str> = None;
     if let Some(libs) = version_json.get("libraries").and_then(|l| l.as_array()) {
         for lib in libs {
             if let Some(name) = lib.get("name").and_then(|n| n.as_str()) {
                 let parts: Vec<&str> = name.split(':').collect();
                 if parts.len() >= 3 {
                     if parts[0].eq_ignore_ascii_case("net.neoforged")
-                        && parts[1].eq_ignore_ascii_case("neoforge")
+                        && (parts[1].eq_ignore_ascii_case("neoforge")
+                            || parts[1].eq_ignore_ascii_case("forge")
+                            || parts[1].eq_ignore_ascii_case("fml"))
                     {
+                        loader_group = Some("neoforge");
                         real_loader_version = Some(parts[2].to_string());
                         break;
                     }
                     if parts[0].eq_ignore_ascii_case("net.minecraftforge")
                         && parts[1].eq_ignore_ascii_case("forge")
                     {
+                        loader_group = Some("forge");
                         real_loader_version = Some(parts[2].to_string());
                         break;
                     }
@@ -1004,13 +1007,29 @@ pub async fn install(
             }
         }
     }
-    let forge_version = real_loader_version.unwrap_or(forge_version);
-    let id = if !id.starts_with(&format!("{}-", cfg.mc_version)) && id != cfg.mc_version {
-        let new_id = format!("{}-{}", cfg.mc_version, id);
-        println!("修复: 将 id {} 添加 mc 版本前缀 → {}", id, new_id);
-        new_id
-    } else {
-        id
+    let forge_version = real_loader_version.clone().unwrap_or(forge_version);
+    // 规范化 loader 版本目录 id：
+    // NeoForge → {mc}-neoforge-{loader_version}
+    // Forge   → {mc}-forge-{loader_version}
+    // 其他    → 原有逻辑（只加 mc 前缀）
+    let id = match loader_group {
+        Some("neoforge") => {
+            let lv = real_loader_version.as_deref().unwrap_or(&id);
+            format!("{}-neoforge-{}", cfg.mc_version, lv)
+        }
+        Some("forge") => {
+            let lv = real_loader_version.as_deref().unwrap_or(&id);
+            format!("{}-forge-{}", cfg.mc_version, lv)
+        }
+        _ => {
+            if !id.starts_with(&format!("{}-", cfg.mc_version)) && id != cfg.mc_version {
+                let new_id = format!("{}-{}", cfg.mc_version, id);
+                println!("修复: 将 id {} 添加 mc 版本前缀 → {}", id, new_id);
+                new_id
+            } else {
+                id
+            }
+        }
     };
     let mut version_json = version_json;
     if let Some(obj) = version_json.as_object_mut() {
@@ -1096,7 +1115,8 @@ pub async fn install(
         }
     }
     let mut ip_model_mut = ip_model.clone();
-    let is_neoforge = forge_version.to_lowercase().contains("neoforge");
+    let is_neoforge = loader_group == Some("neoforge")
+        || (loader_group.is_none() && forge_version.to_lowercase().contains("neoforge"));
     let (maven_group, maven_artifact) = if is_neoforge {
         ("net.neoforged".to_string(), "neoforge".to_string())
     } else {

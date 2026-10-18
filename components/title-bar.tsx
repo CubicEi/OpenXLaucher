@@ -1,12 +1,13 @@
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
-import { Copy, Maximize2, Minus, X, RotateCcw } from 'lucide-react'
+import { useCallback, useEffect, useState, useSyncExternalStore } from 'react'
+import { Copy, Maximize2, Minus, X } from 'lucide-react'
 
 import { ModeToggle } from '@/components/mode-toggle'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
-import { useUIConfigContext } from '@/components/ui-config/ui-config-provider'
+import { ThemeSlot } from '@/components/themes/theme-slot'
+import { useThemeRuntime } from '@/components/themes/theme-runtime-provider'
 
 interface WindowApi {
   minimize: () => Promise<void>
@@ -54,6 +55,9 @@ function detectMacOS() {
   return platform.includes('mac')
 }
 
+const subscribeToNothing = () => () => undefined
+const serverIsMacOS = () => false
+
 function WindowButton({ onClick, title, children, className }: WindowButtonProps) {
   return (
     <Button
@@ -73,14 +77,15 @@ function WindowButton({ onClick, title, children, className }: WindowButtonProps
 }
 
 export function TitleBar({ className }: TitleBarProps) {
-  const [isMacOS, setIsMacOS] = useState(false)
+  const { slots, snapshot, reportThemeError } = useThemeRuntime()
+  const themeSlot = { registry: slots, owner: snapshot.activeOwner, onError: reportThemeError }
+  const isMacOS = useSyncExternalStore(
+    subscribeToNothing,
+    detectMacOS,
+    serverIsMacOS
+  )
   const [isMaximized, setIsMaximized] = useState(false)
   const [windowApi, setWindowApi] = useState<WindowApi | null>(null)
-  const { resetConfig } = useUIConfigContext()
-
-  useEffect(() => {
-    setIsMacOS(detectMacOS())
-  }, [])
 
   useEffect(() => {
     let unlisten: (() => void) | undefined
@@ -160,12 +165,6 @@ export function TitleBar({ className }: TitleBarProps) {
     }
   }, [windowApi])
 
-  const handleResetUIConfig = useCallback(() => {
-    if (confirm('确定要重置侧边栏配置吗？这将恢复所有标签页的默认显示状态。')) {
-      resetConfig()
-    }
-  }, [resetConfig])
-
   return (
     <div
       className={cn(
@@ -177,46 +176,44 @@ export function TitleBar({ className }: TitleBarProps) {
         <>
           <div className='absolute inset-0' data-tauri-drag-region />
 
+          <div className='no-drag absolute inset-y-0 left-0 flex items-center pl-3'>
+            <ThemeSlot {...themeSlot} slotId='app.titlebar.leading' />
+          </div>
+
           <div className='pointer-events-none absolute inset-y-0 left-0 right-0 flex items-center justify-center'>
-            <div className='flex items-center gap-2' data-tauri-drag-region>
-              <AppLogo className='h-5 w-5 text-foreground' />
-              <span className='text-sm font-medium text-foreground/80'>RTLauncher</span>
-            </div>
+            <ThemeSlot {...themeSlot} slotId='app.titlebar.center'>
+              <div className='flex items-center gap-2' data-tauri-drag-region>
+                <AppLogo className='h-5 w-5 text-foreground' />
+                <span className='text-sm font-medium text-foreground/80'>RTLauncher</span>
+              </div>
+            </ThemeSlot>
           </div>
 
           <div className='no-drag absolute inset-y-0 right-0 flex items-center pr-3'>
-            <ModeToggle />
-
-            <WindowButton
-              onClick={handleResetUIConfig}
-              title='重置侧边栏配置'
-              className='text-muted-foreground hover:text-foreground'
-            >
-              <RotateCcw className='size-3.5' />
-            </WindowButton>
+            <ThemeSlot {...themeSlot} slotId='app.titlebar.actions'>
+              <ModeToggle />
+            </ThemeSlot>
           </div>
         </>
       ) : (
         <div className='flex h-full items-center' data-tauri-drag-region>
-          <div className='flex h-full items-center gap-2 px-3' data-tauri-drag-region>
-            <AppLogo className='h-5 w-5 text-foreground' />
-            <span className='text-sm font-medium text-foreground/80'>RTLauncher</span>
+          <ThemeSlot {...themeSlot} slotId='app.titlebar.leading'>
+            <div className='flex h-full items-center gap-2 px-3' data-tauri-drag-region>
+              <AppLogo className='h-5 w-5 text-foreground' />
+              <span className='text-sm font-medium text-foreground/80'>RTLauncher</span>
+            </div>
+          </ThemeSlot>
+
+          <div className='flex h-full flex-1 items-center justify-center' data-tauri-drag-region>
+            <ThemeSlot {...themeSlot} slotId='app.titlebar.center' />
           </div>
 
-          <div className='h-full flex-1' data-tauri-drag-region />
+          <div className='no-drag flex h-full items-center gap-1'>
+            <ThemeSlot {...themeSlot} slotId='app.titlebar.actions'>
+              <ModeToggle />
+            </ThemeSlot>
 
-          <div className='no-drag flex h-full items-center gap-1 pr-3'>
-            <ModeToggle />
-
-            <WindowButton
-              onClick={handleResetUIConfig}
-              title='重置侧边栏配置'
-              className='text-muted-foreground hover:text-foreground'
-            >
-              <RotateCcw className='size-3.5' />
-            </WindowButton>
-
-            <div className='flex items-center gap-1'>
+            <div className='flex items-center gap-1 pr-3'>
               <WindowButton onClick={handleMinimize} title='最小化'>
                 <Minus className='size-4' />
               </WindowButton>

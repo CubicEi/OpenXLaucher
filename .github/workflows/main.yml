@@ -5,6 +5,10 @@ on:
     branches:
       - main
 
+# 构建产物统一命名（与 0.1.2 Release 保持一致），修改版本时只需更新这里
+env:
+  APP_VERSION: 0.1.2
+
 # This workflow will build your tauri app without uploading it anywhere.
 
 jobs:
@@ -15,12 +19,21 @@ jobs:
         include:
           - platform: 'macos-latest' # for Arm based macs (M1 and above).
             args: '--target aarch64-apple-darwin'
+            artifact_name: 'macos_aarch64'
           - platform: 'macos-latest' # for Intel based macs.
             args: '--target x86_64-apple-darwin'
+            artifact_name: 'macos_x64'
           - platform: 'ubuntu-22.04' # for Tauri v1 you could replace this with ubuntu-20.04.
-            args: ''
+            args: '--bundles deb'
+            name: 'linux-bundle'
+            artifact_name: 'linux_amd64'
+          - platform: 'ubuntu-22.04' # Linux portable binary
+            args: '--config src-tauri/tauri.portable.conf.json'
+            name: 'linux-portable'
+            artifact_name: 'linuxx64-portable'
           - platform: 'windows-latest'
-            args: '--no-bundle'
+            args: '--bundles nsis'
+            artifact_name: 'windows_x64'
 
     runs-on: ${{ matrix.platform }}
     steps:
@@ -75,23 +88,27 @@ jobs:
           $certBytes = [Convert]::FromBase64String($env:CERT_BASE64)
           $certPath = Join-Path $env:RUNNER_TEMP "signing-cert.pfx"
           [System.IO.File]::WriteAllBytes($certPath, $certBytes)
-          $signArgs = @(
-            "sign",
-            "/fd", "SHA256",
-            "/f", $certPath,
-            "/tr", "http://timestamp.digicert.com",
-            "/td", "SHA256",
-            "src-tauri/target/release/rtlauncher.exe"
-          )
-          if ($env:CERT_PASSWORD) {
-            $signArgs = @("sign", "/fd", "SHA256", "/f", $certPath, "/p", $env:CERT_PASSWORD, "/tr", "http://timestamp.digicert.com", "/td", "SHA256", "src-tauri/target/release/rtlauncher.exe")
+          $signTargets = @("src-tauri/target/release/rtlauncher.exe")
+          $signTargets += @(Get-ChildItem -Path "src-tauri/target/release/bundle/nsis/*-setup.exe" -File | ForEach-Object { $_.FullName })
+          foreach ($target in $signTargets) {
+            $signArgs = @(
+              "sign",
+              "/fd", "SHA256",
+              "/f", $certPath,
+              "/tr", "http://timestamp.digicert.com",
+              "/td", "SHA256",
+              $target
+            )
+            if ($env:CERT_PASSWORD) {
+              $signArgs = @("sign", "/fd", "SHA256", "/f", $certPath, "/p", $env:CERT_PASSWORD, "/tr", "http://timestamp.digicert.com", "/td", "SHA256", $target)
+            }
+            & signtool $signArgs
+            if ($LASTEXITCODE -ne 0) {
+              Write-Host "[ERROR] Signing failed for $target with exit code $LASTEXITCODE"
+              exit 1
+            }
+            Write-Host "[OK] Signed $target"
           }
-          & signtool $signArgs
-          if ($LASTEXITCODE -ne 0) {
-            Write-Host "[ERROR] Signing failed with exit code $LASTEXITCODE"
-            exit 1
-          }
-          Write-Host "[OK] rtlauncher.exe signed successfully"
           Remove-Item $certPath -ErrorAction SilentlyContinue
 
       # ===== 上传构建产物 =====
@@ -99,30 +116,41 @@ jobs:
         if: matrix.platform == 'macos-latest'
         uses: actions/upload-artifact@v7
         with:
-          name: tauri-app-${{ matrix.args == '--target aarch64-apple-darwin' && 'macos-arm64' || 'macos-x64' }}
+          name: RTLauncher_${{ env.APP_VERSION }}_${{ matrix.artifact_name }}
           path: |
             src-tauri/target/*/release/bundle/**/*.dmg
             src-tauri/target/*/release/bundle/**/*.app
           if-no-files-found: warn
-          retention-days: 7
+          retention-days: 90
 
-      - name: upload artifacts (Ubuntu)
-        if: matrix.platform == 'ubuntu-22.04'
+      - name: upload artifacts (Ubuntu bundle)
+        if: matrix.platform == 'ubuntu-22.04' && matrix.name == 'linux-bundle'
         uses: actions/upload-artifact@v7
         with:
-          name: tauri-app-linux
+          name: RTLauncher_${{ env.APP_VERSION }}_${{ matrix.artifact_name }}
           path: |
-            src-tauri/target/release/bundle/**/*.AppImage
             src-tauri/target/release/bundle/**/*.deb
-          if-no-files-found: warn
-          retention-days: 7
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: upload artifacts (Ubuntu portable)
+        if: matrix.platform == 'ubuntu-22.04' && matrix.name == 'linux-portable'
+        uses: actions/upload-artifact@v7
+        with:
+          name: RTLauncher_${{ env.APP_VERSION }}_${{ matrix.artifact_name }}
+          path: |
+            src-tauri/target/release/rtlauncher
+            src-tauri/install-deps.sh
+            src-tauri/PORTABLE_README.md
+          if-no-files-found: error
+          retention-days: 90
 
       - name: upload artifacts (Windows)
         if: matrix.platform == 'windows-latest'
         uses: actions/upload-artifact@v7
         with:
-          name: tauri-app-windows
+          name: RTLauncher_${{ env.APP_VERSION }}_${{ matrix.artifact_name }}
           path: |
-            src-tauri/target/release/rtlauncher.exe
-          if-no-files-found: warn
-          retention-days: 7
+            src-tauri/target/release/bundle/nsis/*-setup.exe
+          if-no-files-found: error
+          retention-days: 90

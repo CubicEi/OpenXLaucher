@@ -22,6 +22,7 @@ export interface BackgroundConfig {
 export type ThemeColor = "default" | string;
 
 export interface AppearanceSettings {
+  themeId: string;
   themeMode: ThemeMode;
   themeColor: ThemeColor; // "default" 或 oklch 字符串
   fontSize: number; // 12 ~ 18（整数 px，仅影响文字）
@@ -69,6 +70,7 @@ export const DEFAULT_SETTINGS: LauncherSettings = {
     autoDownloadModDependencies: true,
   },
   appearance: {
+    themeId: "builtin.default",
     themeMode: "system",
     themeColor: "default",
     fontSize: 14,
@@ -92,7 +94,28 @@ export const BG_BLUR_MAX = 20;
 export const BG_OPACITY_MIN = 0;
 export const BG_OPACITY_MAX = 100;
 
-const STORAGE_KEY = "rtlauncher:settings:v3";
+const STORAGE_KEY = "rtlauncher:settings:v4";
+const LEGACY_STORAGE_KEY = "rtlauncher:settings:v3";
+
+type LegacySettings = {
+  general?: Partial<GeneralSettings>;
+  appearance?: Partial<Omit<AppearanceSettings, "themeId">>;
+};
+
+export function migrateSettingsV3(settings: LegacySettings): Partial<LauncherSettings> {
+  return {
+    ...settings,
+    appearance: {
+      ...DEFAULT_SETTINGS.appearance,
+      ...(settings.appearance ?? {}),
+      background: {
+        ...DEFAULT_SETTINGS.appearance.background,
+        ...(settings.appearance?.background ?? {}),
+      },
+      themeId: "builtin.default",
+    },
+  } as Partial<LauncherSettings>;
+}
 
 function isAppLanguage(value: unknown): value is AppLanguage {
   return value === "zh-CN" || value === "en-US";
@@ -181,23 +204,26 @@ function derivePalette(primaryOklch: string, isDark: boolean) {
     };
   } else {
     // 深色模式
+    const cardC = Math.min(0.04, c * 0.2);
     return {
       background: makeOklch(0.15, Math.min(0.03, c * 0.15), h),
       foreground: makeOklch(0.98, 0.005, h),
-      card: makeOklch(0.22, Math.min(0.04, c * 0.2), h),
+      card: makeOklch(0.22, cardC, h),
       cardForeground: makeOklch(0.98, 0.005, h),
-      popover: makeOklch(0.22, Math.min(0.04, c * 0.2), h),
+      popover: makeOklch(0.22, cardC, h),
       popoverForeground: makeOklch(0.98, 0.005, h),
       primary: makeOklch(Math.min(0.92, l + 0.2), c, h),
-      primaryForeground: makeOklch(0.22, Math.min(0.04, c * 0.2), h),
+      primaryForeground: makeOklch(0.22, cardC, h),
       secondary: makeOklch(0.28, Math.min(0.05, c * 0.25), h),
       secondaryForeground: makeOklch(0.92, c * 0.2, h),
       muted: makeOklch(0.3, Math.min(0.04, c * 0.2), h),
       mutedForeground: makeOklch(0.75, Math.min(0.08, c * 0.4), h),
       accent: makeOklch(0.26, Math.min(0.05, c * 0.25), h),
       accentForeground: makeOklch(0.9, Math.min(0.08, c * 0.4), h),
-      border: makeOklch(1, 0, 0, 0.12),
-      input: makeOklch(1, 0, 0, 0.18),
+      // 深色模式下使用不透明描边色（等价于半透明白色叠加在 card 上的结果），
+      // 避免 WebKitGTK 对半透明 1px 圆角描边的抗锯齿问题导致的“粗糙”边缘
+      border: makeOklch(0.314, cardC * 0.88, h),
+      input: makeOklch(0.36, cardC * 0.82, h),
       ring: makeOklch(Math.min(0.78, l + 0.15), c, h),
     };
   }
@@ -239,8 +265,8 @@ const DEFAULT_DARK = {
   mutedForeground: "oklch(0.709 0.01 56.259)",
   accent: "oklch(0.268 0.007 34.298)",
   accentForeground: "oklch(0.985 0.001 106.423)",
-  border: "oklch(1 0 0 / 10%)",
-  input: "oklch(1 0 0 / 15%)",
+  border: "oklch(0.294 0.005 56.043)",
+  input: "oklch(0.334 0.005 56.043)",
   ring: "oklch(0.553 0.013 58.071)",
 };
 
@@ -357,9 +383,14 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
     };
 
     try {
-      const raw = localStorage.getItem(STORAGE_KEY);
+      const current = localStorage.getItem(STORAGE_KEY);
+      const legacy = current ? null : localStorage.getItem(LEGACY_STORAGE_KEY);
+      const raw = current ?? legacy;
       if (raw) {
-        const parsed = JSON.parse(raw) as Partial<LauncherSettings>;
+        const stored = JSON.parse(raw) as Partial<LauncherSettings>;
+        const parsed = legacy
+          ? migrateSettingsV3(stored as LegacySettings)
+          : stored;
         merged = {
           general: {
             ...DEFAULT_SETTINGS.general,

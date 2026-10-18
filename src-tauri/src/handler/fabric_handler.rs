@@ -1,6 +1,8 @@
 use crate::downloader::dwPatch::get_minecraft_dir;
 use crate::downloader::fabric_installer;
-use crate::downloader::shared_utils::{merge_version_jsons_to_instance, sanitize_instance_name};
+use crate::downloader::shared_utils::{
+    copy_version_mods_to_instance, merge_version_jsons_to_instance, sanitize_instance_name,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -289,9 +291,8 @@ pub async fn download_and_install_fabric(
                 if let Some(inst_name) = instance_name_cloned {
                     let clean_name = sanitize_instance_name(&inst_name);
                     println!("[Fabric] 创建实例目录: {}", clean_name);
-                    let default_name = format!("{}-fabric-{}", version, loader_ver);
                     let final_name = if clean_name.trim().is_empty() {
-                        sanitize_instance_name(&default_name)
+                        sanitize_instance_name(&loader_version_name)
                     } else {
                         clean_name
                     };
@@ -302,7 +303,17 @@ pub async fn download_and_install_fabric(
                         "fabric",
                         &minecraft_path_clone,
                     ) {
-                        Ok(_) => println!("[Fabric] 实例 JSON 合并完成: {}", final_name),
+                        Ok(_) => {
+                            println!("[Fabric] 实例 JSON 合并完成: {}", final_name);
+                            // Fabric API 以 mod 形式装在 versions/{mc}/mods，搬运到实例 mods
+                            if api_ver.is_some() {
+                                copy_version_mods_to_instance(
+                                    &final_name,
+                                    &version,
+                                    &minecraft_path_clone,
+                                );
+                            }
+                        }
                         Err(e) => println!("[Fabric] 警告: 合并实例 JSON 失败: {}", e),
                     }
                 }

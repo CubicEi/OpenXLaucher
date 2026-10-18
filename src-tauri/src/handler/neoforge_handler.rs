@@ -2,7 +2,9 @@ use crate::downloader::dwPatch::get_minecraft_dir;
 use crate::downloader::mod_loader_installer_shared::pick_java_executable;
 use crate::downloader::neoforge_installer;
 use crate::downloader::original_dwl::process_version;
-use crate::downloader::shared_utils::{merge_version_jsons_to_instance, sanitize_instance_name};
+use crate::downloader::shared_utils::{
+    cleanup_loader_version_dir, merge_version_jsons_to_instance, sanitize_instance_name,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -179,9 +181,11 @@ pub async fn download_and_install_neoforge(
                 if let Some(inst_name) = instance_name_cloned {
                     let clean_name = sanitize_instance_name(&inst_name);
                     println!("[NeoForge] 创建实例目录: {}", clean_name);
-                    let default_name = format!("{}-neoforge-{}", version, neoforge_ver);
+                    // default_name 直接使用 install 返回的规范化 loader_version，
+                    // 确保 merge 和 install 操作同一个 versions/<loader_version>/ 目录，
+                    // 避免出现两个不同名称的 NeoForge 版本目录。
                     let final_name = if clean_name.trim().is_empty() {
-                        sanitize_instance_name(&default_name)
+                        sanitize_instance_name(&loader_version)
                     } else {
                         clean_name
                     };
@@ -192,7 +196,12 @@ pub async fn download_and_install_neoforge(
                         "neoforge",
                         &minecraft_path_clone,
                     ) {
-                        Ok(_) => println!("[NeoForge] 实例 JSON 合并完成: {}", final_name),
+                        Ok(_) => {
+                            println!("[NeoForge] 实例 JSON 合并完成: {}", final_name);
+                            if final_name != loader_version {
+                                cleanup_loader_version_dir(&loader_version, &minecraft_path_clone);
+                            }
+                        }
                         Err(e) => println!("[NeoForge] 警告: 合并实例 JSON 失败: {}", e),
                     }
                 }

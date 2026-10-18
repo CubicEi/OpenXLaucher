@@ -43,6 +43,7 @@ function makeProgressHandler(
         });
       }
       const newTask: DownloadTask = {
+        clientId: `backend-${task_id}`,
         taskId: task_id,
         label: "Java 运行时",
         mcVersion: "Java",
@@ -79,6 +80,7 @@ function makeFinishedHandler(
         });
       }
       const newTask: DownloadTask = {
+        clientId: `backend-${task_id}`,
         taskId: task_id,
         label: "Java 运行时",
         mcVersion: "Java",
@@ -117,6 +119,7 @@ export async function setupAllDownloadListeners(
     ["neoforge-download-progress", "neoforge-download-finished", "other"],
     ["liteloader-download-progress", "liteloader-download-finished", "other"],
     ["quilt-download-progress", "quilt-download-finished", "other"],
+    ["combined-download-progress", "combined-download-finished", "other"],
   ];
 
   const unlistens: UnlistenFn[] = [];

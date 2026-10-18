@@ -8,7 +8,8 @@ mod auth;
 mod downloader;
 mod handler;
 mod http_client;
-mod mutiplayer;
+mod multiplayer;
+mod themes;
 mod updater;
 mod version_management;
 use auth::littleskinLoader::{useMethod, use_method_with_credentials};
@@ -64,6 +65,9 @@ use handler::modpack_installer_handler::{
 use handler::neoforge_handler::{
     cancel_neoforge_download, download_and_install_neoforge, get_neoforge_versions,
 };
+use handler::combined_install_handler::{
+    cancel_combined_download, install_combined_package,
+};
 use handler::optifine_handler::{
     cancel_optifine_download, download_and_install_optifine, get_optifine_version_names,
     get_optifine_versions, install_optifine,
@@ -82,14 +86,16 @@ use handler::diagnostics::{
     export_launch_report, check_mod_installed,
 };
 use handler::mod_links::{get_modrinth_required_dependencies, get_curseforge_required_dependencies};
-use mutiplayer::{
+use multiplayer::{
     ensure_openp2p_stopped, mp_check_openp2p, mp_encode_room_info, mp_get_openp2p_dir,
     mp_get_openp2p_path, mp_install_openp2p, mp_is_openp2p_running, mp_poll_log,
     mp_start_openp2p_host, mp_start_openp2p_join, mp_stop_openp2p,
 };
+#[cfg(target_os = "windows")]
+use multiplayer::quick_kill_openp2p;
 use updater::handler::{
     cancel_update, can_check_update, check_for_updates, create_updater_state, download_update,
-    get_target_version, get_update_status, install_update,
+    get_update_status, install_update,
 };
 use version_management::{
     vm_delete_cached_file, vm_delete_file, vm_ensure_instance_dirs, vm_find_resource_packs,
@@ -98,6 +104,11 @@ use version_management::{
 };
 
 use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
+use themes::commands::{
+    theme_install_archive, theme_is_trusted, theme_list, theme_mark_healthy, theme_read_binary,
+    theme_read_text, theme_register_dev_directory, theme_remove, theme_set_active,
+    theme_set_trusted,
+};
 
 #[cfg(target_os = "macos")]
 use objc2::msg_send;
@@ -210,6 +221,8 @@ pub fn run() {
             get_neoforge_versions,
             download_and_install_neoforge,
             cancel_neoforge_download,
+            install_combined_package,
+            cancel_combined_download,
             get_liteloader_versions,
             download_and_install_liteloader,
             cancel_liteloader_download,
@@ -262,12 +275,24 @@ pub fn run() {
             install_update,
             cancel_update,
             can_check_update,
-            get_target_version,
+            theme_list,
+            theme_install_archive,
+            theme_register_dev_directory,
+            theme_remove,
+            theme_read_text,
+            theme_read_binary,
+            theme_set_active,
+            theme_mark_healthy,
+            theme_is_trusted,
+            theme_set_trusted,
         ])
         .manage(create_updater_state())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
+            themes::commands::report_theme_store_initialization(
+                themes::commands::initialize_theme_store(app.handle()),
+            );
             #[cfg(not(target_os = "macos"))]
             app.handle().plugin(tauri_plugin_single_instance::init(
                 |app: &tauri::AppHandle, _args, _cwd| {
@@ -324,10 +349,8 @@ pub fn run() {
                             .args(["/F", "/T", "/IM", "openp2p"])
                             .creation_flags(CREATE_NO_WINDOW)
                             .output();
-                        let _ = std::process::Command::new("wmic")
-                            .args(["process", "where", "name='openp2p.exe'", "delete"])
-                            .creation_flags(CREATE_NO_WINDOW)
-                            .output();
+                        // 用系统进程 API 兜底结束 openp2p，替代已弃用且会被杀毒软件拦截的 wmic
+                        quick_kill_openp2p();
                     }
                     #[cfg(any(target_os = "linux", target_os = "macos"))]
                     {

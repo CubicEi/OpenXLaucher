@@ -1,7 +1,7 @@
 # See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
 
 # dependencies
-/node_modules
+node_modules/
 /.pnp
 .pnp.*
 .yarn/*
@@ -23,6 +23,7 @@
 # misc
 .DS_Store
 *.pem
+.markdownlint.json
 
 # debug
 npm-debug.log*
@@ -75,4 +76,6 @@ gen_latest_json.js
 /.tauri-start.ps1
 /downloads/
 /RTLauncher-portable/
-.aider*
+/pr_description
+/packages/theme-cli/dist/
+

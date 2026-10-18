@@ -22,6 +22,8 @@ export type DownloadTaskStatus =
   | "cancelled";
 
 export interface DownloadTask {
+  /** React 渲染用的稳定本地标识；后端 taskId 更新时不变。 */
+  clientId: string;
   taskId: number;
   label: string;
   mcVersion: string;
@@ -52,6 +54,13 @@ interface DownloadContextValue {
   startNeoForgeDownload: (mcVersion: string, neoforgeVersion: string, instanceName?: string) => Promise<number>;
   /** 启动 LiteLoader 下载（不排队）*/
   startLiteLoaderDownload: (mcVersion: string, liteloaderVersion: string, instanceName?: string) => Promise<number>;
+  /** 组合安装（原版必选 + 多个兼容加载器 + Fabric API，自动组包成实例）*/
+  startCombinedInstall: (
+    label: string,
+    mcVersion: string,
+    selections: { loader: string; version: string }[],
+    instanceName: string
+  ) => Promise<number>;
   /** Mod 文件下载 */
   startModDownload: (modSlug: string, modName: string, mcVersion: string, modLoader: string, downloadUrl: string) => Promise<number>;
   /** 通用资源文件下载（mod / resourcepack / shaderpack / datapack / world） */
@@ -191,6 +200,7 @@ export function DownloadProvider({ children }: { children: React.ReactNode }) {
         try {
           const taskId = await invoke<number>("download_patcher", { mcVersion, instanceName: instanceName ?? null });
           const task: DownloadTask = {
+            clientId: `server-${taskId}`,
             taskId,
             label,
             mcVersion,
@@ -207,6 +217,7 @@ export function DownloadProvider({ children }: { children: React.ReactNode }) {
         const localId = localIdCounterRef.current--;
         pendingQueueRef.current.push({ localId, label, mcVersion, instanceName });
         const task: DownloadTask = {
+          clientId: `client-${localId}`,
           taskId: localId,
           label,
           mcVersion,
@@ -238,6 +249,7 @@ export function DownloadProvider({ children }: { children: React.ReactNode }) {
       );
       if (isDownloading) return prev;
       const task: DownloadTask = {
+        clientId: `client-${taskId}`,
         taskId,
         label: runtimeName,
         mcVersion: "Java",
@@ -360,6 +372,34 @@ export function DownloadProvider({ children }: { children: React.ReactNode }) {
     [startModLoaderDownload]
   );
 
+  /** 组合安装（原版 + 多个兼容加载器 + Fabric API，后端自动组包成单个实例） */
+  const startCombinedInstall = useCallback(
+    async (
+      label: string,
+      mcVersion: string,
+      selections: { loader: string; version: string }[],
+      instanceName: string
+    ) => {
+      await ensureDownloadListeners();
+      const taskId = await invoke<number>("install_combined_package", {
+        mcVersion,
+        selections: selections.map((s) => ({ loader_type: s.loader, version: s.version })),
+        instanceName,
+      });
+      const task: DownloadTask = {
+        clientId: `server-${taskId}`,
+        taskId,
+        label,
+        mcVersion,
+        status: "downloading",
+        startedAt: Date.now(),
+      };
+      setTasks((prev) => [task, ...prev]);
+      return taskId;
+    },
+    [ensureDownloadListeners]
+  );
+
   /** 整合包安装（异步，进度显示在右下角下载任务栏） */
   const startModpackDownload = useCallback(
     async (modpackName: string, path: string) => {
@@ -403,6 +443,7 @@ export function DownloadProvider({ children }: { children: React.ReactNode }) {
           invoke("cancel_forge_download", { taskId }),
           invoke("cancel_neoforge_download", { taskId }),
           invoke("cancel_liteloader_download", { taskId }),
+          invoke("cancel_combined_download", { taskId }),
         ]);
       } catch (e) {
         console.error("取消下载失败:", e);
@@ -436,6 +477,7 @@ export function DownloadProvider({ children }: { children: React.ReactNode }) {
         startForgeDownload,
         startNeoForgeDownload,
         startLiteLoaderDownload,
+        startCombinedInstall,
         startModDownload,
         startResourceDownload,
         startModpackDownload,
