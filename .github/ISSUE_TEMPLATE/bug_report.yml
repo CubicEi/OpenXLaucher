@@ -1,0 +1,76 @@
+name: Bug Report
+description: 报告可以稳定复现的错误或异常行为
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢你帮助改进 RTLauncher。提交前请先搜索已有 Issue，避免重复报告。
+
+  - type: textarea
+    id: description
+    attributes:
+      label: 问题描述
+      description: 请清楚描述发生了什么，以及你期望发生什么。
+      placeholder: 实际行为与预期行为分别是什么？
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: 复现步骤
+      description: 请提供能够稳定复现问题的最小步骤。
+      placeholder: |
+        1. 打开……
+        2. 点击……
+        3. 出现……
+    validations:
+      required: true
+
+  - type: dropdown
+    id: operating-system
+    attributes:
+      label: 操作系统
+      options:
+        - Windows 11
+        - Windows 10
+        - macOS (Apple Silicon)
+        - macOS (Intel)
+        - Linux
+        - 其他
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: RTLauncher 版本
+      description: 可以在应用关于页面或安装包文件名中查看。
+      placeholder: 例如 0.1.0
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: 日志与截图
+      description: 请粘贴相关日志，或拖入截图。提交前请移除令牌、密码等敏感信息。
+
+  - type: textarea
+    id: additional-context
+    attributes:
+      label: 补充信息
+      description: 其他可能帮助定位问题的信息。
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: 提交前确认
+      options:
+        - label: 我已搜索现有 Issue，确认没有相同问题。
+          required: true
+        - label: 我已移除日志中的账号、令牌和其他敏感信息。
+          required: true

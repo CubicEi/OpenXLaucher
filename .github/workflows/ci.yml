@@ -1,0 +1,202 @@
+name: 'Tauri App Build PR Test'
+
+on:
+  push:
+    branches:
+      - achieve-RTLauncher
+  pull_request:
+    branches:
+      - achieve-RTLauncher
+    types: [opened, synchronize, labeled]
+
+# 构建产物统一命名（与 0.1.2 Release 保持一致），修改版本时只需更新这里
+env:
+  APP_VERSION: 0.1.2
+
+jobs:
+  test-tauri:
+    if: |
+      github.event_name == 'push' ||
+      github.event.action == 'opened' || 
+      github.event.action == 'synchronize' || 
+      (github.event.action == 'labeled' && github.event.label.name == '需要 Action 构建')
+    
+    permissions:
+      contents: read
+      pull-requests: write
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: 'macos-latest'
+            args: '--target aarch64-apple-darwin'
+            name: 'macOS ARM64'
+            artifact_name: 'macos_aarch64'
+            bundle_path: 'src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg'
+          - platform: 'macos-latest'
+            args: '--target x86_64-apple-darwin'
+            name: 'macOS x64'
+            artifact_name: 'macos_x64'
+            bundle_path: 'src-tauri/target/x86_64-apple-darwin/release/bundle/dmg/*.dmg'
+          - platform: 'ubuntu-22.04'
+            args: '--bundles deb'
+            name: 'Linux'
+            artifact_name: 'linux_amd64'
+            bundle_path: 'src-tauri/target/release/bundle/deb/*.deb'
+          - platform: 'ubuntu-22.04'
+            args: '--config src-tauri/tauri.portable.conf.json'
+            name: 'Linux Portable'
+            artifact_name: 'linuxx64-portable'
+            bundle_path: |
+              src-tauri/target/release/rtlauncher
+              src-tauri/install-deps.sh
+              src-tauri/PORTABLE_README.md
+          - platform: 'windows-latest'
+            args: '--bundles nsis'
+            name: 'Windows'
+            artifact_name: 'windows_x64'
+            bundle_path: 'src-tauri/target/release/bundle/nsis/*-setup.exe'
+
+    runs-on: ${{ matrix.platform }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      # --- 1. 前端环境与缓存优化 ---
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: 10
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: 'pnpm'
+
+      # --- 2. Rust 环境与增量编译缓存 ---
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.platform }}-${{ matrix.args }}-${{ hashFiles('src-tauri/Cargo.lock') }}
+
+      # --- 3. 系统依赖安装 (仅 Linux) ---
+      - if: matrix.platform == 'ubuntu-22.04'
+        name: Install Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+
+      - name: Install JS dependencies
+        # 核心修复：增加 --ignore-workspace 避免配置失效导致的 ERR_PNPM_INVALID_WORKSPACE_CONFIGURATION
+        run: pnpm install --ignore-workspace
+
+      # --- 4. 构建 Tauri 应用 ---
+      - name: Build Tauri app
+        uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          args: ${{ matrix.args }}
+
+      # --- 5. Windows 数字签名 ---
+      - name: Sign Windows Executable
+        if: matrix.platform == 'windows-latest'
+        env:
+          CERT_BASE64: ${{ secrets.WINDOWS_CERTIFICATE_BASE64 }}
+          CERT_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          if (-not $env:CERT_BASE64) {
+            Write-Host "[WARN] WINDOWS_CERTIFICATE_BASE64 secret not set, skipping signature"
+            exit 0
+          }
+          $certBytes = [Convert]::FromBase64String($env:CERT_BASE64)
+          $certPath = Join-Path $env:RUNNER_TEMP "signing-cert.pfx"
+          [System.IO.File]::WriteAllBytes($certPath, $certBytes)
+          $signTargets = @("src-tauri/target/release/rtlauncher.exe")
+          $signTargets += @(Get-ChildItem -Path "src-tauri/target/release/bundle/nsis/*-setup.exe" -File | ForEach-Object { $_.FullName })
+          foreach ($target in $signTargets) {
+            $signArgs = @(
+              "sign",
+              "/fd", "SHA256",
+              "/f", $certPath,
+              "/tr", "http://timestamp.digicert.com",
+              "/td", "SHA256",
+              $target
+            )
+            if ($env:CERT_PASSWORD) {
+              $signArgs = @("sign", "/fd", "SHA256", "/f", $certPath, "/p", $env:CERT_PASSWORD, "/tr", "http://timestamp.digicert.com", "/td", "SHA256", $target)
+            }
+            & signtool $signArgs
+            if ($LASTEXITCODE -ne 0) {
+              Write-Host "[ERROR] Signing failed for $target with exit code $LASTEXITCODE"
+              exit 1
+            }
+            Write-Host "[OK] Signed $target"
+          }
+          Remove-Item $certPath -ErrorAction SilentlyContinue
+
+      # --- 5. 产物上传 (只提取 .dmg/.exe/.deb) ---
+      - name: Upload Bundles
+        uses: actions/upload-artifact@v7
+        with:
+          name: RTLauncher_${{ env.APP_VERSION }}_${{ matrix.artifact_name }}
+          path: ${{ matrix.bundle_path }}
+          if-no-files-found: error
+          retention-days: 90
+
+    outputs:
+      result: ${{ job.status }}
+
+  report-status:
+    needs: test-tauri
+    # 仅在 PR 环境下尝试发表评论，避免在 main 分支直接提交时报错
+    if: always() && github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Report build status
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const runUrl = `https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            
+            let body;
+            if ('${{ needs.test-tauri.result }}' === 'success') {
+              body = `### ✅ 构建成功！\n\n编译已完成，您可以点击下方链接跳转到页面底部的 **Artifacts** 处下载安装包：\n\n🔗 [查看构建产物](${runUrl})\n\n> 💡 **小贴士**: 本次已启用增量编译缓存，后续构建速度将显著提升。`;
+            } else {
+              body = `### ❌ 构建失败\n\n编译过程中遇到了错误，请查看日志排查：\n\n🔗 [查看错误日志](${runUrl})`;
+            }
+
+            await github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: body
+            });
+
+      - name: Remove build label
+        if: always() && github.event.action == 'labeled' && github.event.label.name == '需要 Action 构建'
+        continue-on-error: true
+        uses: actions/github-script@v9
+        with:
+          script: |
+            try {
+              await github.rest.issues.removeLabel({
+                issue_number: context.issue.number,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                name: '需要 Action 构建'
+              });
+            } catch (e) {
+              console.log('无法移除标签，可能已被手动移除');
+            }

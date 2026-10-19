@@ -1,0 +1,87 @@
+name: Sync Crowdin translations
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - components/i18n/locales/en-US.json
+      - crowdin.yml
+      - .github/workflows/crowdin.yml
+  schedule:
+    - cron: "17 9 * * 1"
+  workflow_dispatch:
+    inputs:
+      seed_existing_translations:
+        description: Upload the existing translations before the first sync
+        required: false
+        default: false
+        type: boolean
+
+concurrency:
+  group: crowdin-sync
+  cancel-in-progress: false
+
+jobs:
+  upload-sources:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Upload source strings
+        uses: crowdin/github-action@c7af9bc98b01694653031fef2a0dc6c7888ce9bc # v2
+        with:
+          upload_sources: true
+          upload_translations: false
+          download_translations: false
+          push_translations: false
+          create_pull_request: false
+        env:
+          CROWDIN_PROJECT_ID: ${{ secrets.CROWDIN_PROJECT_ID }}
+          CROWDIN_PERSONAL_TOKEN: ${{ secrets.CROWDIN_PERSONAL_TOKEN }}
+
+  synchronize:
+    if: github.event_name != 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Upload the initial source and translations
+        if: github.event_name == 'workflow_dispatch' && inputs.seed_existing_translations
+        uses: crowdin/github-action@c7af9bc98b01694653031fef2a0dc6c7888ce9bc # v2
+        with:
+          upload_sources: true
+          upload_translations: true
+          download_translations: false
+          push_translations: false
+          create_pull_request: false
+        env:
+          CROWDIN_PROJECT_ID: ${{ secrets.CROWDIN_PROJECT_ID }}
+          CROWDIN_PERSONAL_TOKEN: ${{ secrets.CROWDIN_PERSONAL_TOKEN }}
+
+      - name: Upload sources and download translations
+        if: github.event_name != 'workflow_dispatch' || !inputs.seed_existing_translations
+        uses: crowdin/github-action@c7af9bc98b01694653031fef2a0dc6c7888ce9bc # v2
+        with:
+          upload_sources: true
+          upload_translations: false
+          download_translations: true
+          skip_untranslated_strings: false
+          localization_branch_name: crowdin/translations
+          create_pull_request: true
+          pull_request_base_branch_name: main
+          commit_message: Update translations from Crowdin
+          pull_request_title: Update translations from Crowdin
+          pull_request_body: Crowdin generated this translation update. Review the files before you merge the pull request.
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CROWDIN_PROJECT_ID: ${{ secrets.CROWDIN_PROJECT_ID }}
+          CROWDIN_PERSONAL_TOKEN: ${{ secrets.CROWDIN_PERSONAL_TOKEN }}

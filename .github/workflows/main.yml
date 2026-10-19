@@ -1,0 +1,156 @@
+name: 'Tauri App Build Test'
+
+on:
+  push:
+    branches:
+      - main
+
+# 构建产物统一命名（与 0.1.2 Release 保持一致），修改版本时只需更新这里
+env:
+  APP_VERSION: 0.1.2
+
+# This workflow will build your tauri app without uploading it anywhere.
+
+jobs:
+  test-tauri:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: 'macos-latest' # for Arm based macs (M1 and above).
+            args: '--target aarch64-apple-darwin'
+            artifact_name: 'macos_aarch64'
+          - platform: 'macos-latest' # for Intel based macs.
+            args: '--target x86_64-apple-darwin'
+            artifact_name: 'macos_x64'
+          - platform: 'ubuntu-22.04' # for Tauri v1 you could replace this with ubuntu-20.04.
+            args: '--bundles deb'
+            name: 'linux-bundle'
+            artifact_name: 'linux_amd64'
+          - platform: 'ubuntu-22.04' # Linux portable binary
+            args: '--config src-tauri/tauri.portable.conf.json'
+            name: 'linux-portable'
+            artifact_name: 'linuxx64-portable'
+          - platform: 'windows-latest'
+            args: '--bundles nsis'
+            artifact_name: 'windows_x64'
+
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: setup pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: 10
+
+      - name: setup node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: 'pnpm'
+
+      - name: install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          # Those targets are only used on macos runners so it's in an `if` to slightly speed up windows and linux builds.
+          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      - name: install dependencies (ubuntu only)
+        if: matrix.platform == 'ubuntu-22.04' # This must match the platform value defined above.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+
+      - name: install frontend dependencies
+        run: pnpm install
+
+      # If tagName and releaseId are omitted tauri-action will only build the app and won't try to upload any assets.
+      - uses: tauri-apps/tauri-action@v1
+        id: tauri-build
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          args: ${{ matrix.args }}
+
+      # ===== Windows 数字签名 =====
+      - name: Sign Windows Executable
+        if: matrix.platform == 'windows-latest'
+        env:
+          CERT_BASE64: ${{ secrets.WINDOWS_CERTIFICATE_BASE64 }}
+          CERT_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          if (-not $env:CERT_BASE64) {
+            Write-Host "[WARN] WINDOWS_CERTIFICATE_BASE64 secret not set, skipping signature"
+            exit 0
+          }
+          $certBytes = [Convert]::FromBase64String($env:CERT_BASE64)
+          $certPath = Join-Path $env:RUNNER_TEMP "signing-cert.pfx"
+          [System.IO.File]::WriteAllBytes($certPath, $certBytes)
+          $signTargets = @("src-tauri/target/release/rtlauncher.exe")
+          $signTargets += @(Get-ChildItem -Path "src-tauri/target/release/bundle/nsis/*-setup.exe" -File | ForEach-Object { $_.FullName })
+          foreach ($target in $signTargets) {
+            $signArgs = @(
+              "sign",
+              "/fd", "SHA256",
+              "/f", $certPath,
+              "/tr", "http://timestamp.digicert.com",
+              "/td", "SHA256",
+              $target
+            )
+            if ($env:CERT_PASSWORD) {
+              $signArgs = @("sign", "/fd", "SHA256", "/f", $certPath, "/p", $env:CERT_PASSWORD, "/tr", "http://timestamp.digicert.com", "/td", "SHA256", $target)
+            }
+            & signtool $signArgs
+            if ($LASTEXITCODE -ne 0) {
+              Write-Host "[ERROR] Signing failed for $target with exit code $LASTEXITCODE"
+              exit 1
+            }
+            Write-Host "[OK] Signed $target"
+          }
+          Remove-Item $certPath -ErrorAction SilentlyContinue
+
+      # ===== 上传构建产物 =====
+      - name: upload artifacts (macOS)
+        if: matrix.platform == 'macos-latest'
+        uses: actions/upload-artifact@v7
+        with:
+          name: RTLauncher_${{ env.APP_VERSION }}_${{ matrix.artifact_name }}
+          path: |
+            src-tauri/target/*/release/bundle/**/*.dmg
+            src-tauri/target/*/release/bundle/**/*.app
+          if-no-files-found: warn
+          retention-days: 90
+
+      - name: upload artifacts (Ubuntu bundle)
+        if: matrix.platform == 'ubuntu-22.04' && matrix.name == 'linux-bundle'
+        uses: actions/upload-artifact@v7
+        with:
+          name: RTLauncher_${{ env.APP_VERSION }}_${{ matrix.artifact_name }}
+          path: |
+            src-tauri/target/release/bundle/**/*.deb
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: upload artifacts (Ubuntu portable)
+        if: matrix.platform == 'ubuntu-22.04' && matrix.name == 'linux-portable'
+        uses: actions/upload-artifact@v7
+        with:
+          name: RTLauncher_${{ env.APP_VERSION }}_${{ matrix.artifact_name }}
+          path: |
+            src-tauri/target/release/rtlauncher
+            src-tauri/install-deps.sh
+            src-tauri/PORTABLE_README.md
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: upload artifacts (Windows)
+        if: matrix.platform == 'windows-latest'
+        uses: actions/upload-artifact@v7
+        with:
+          name: RTLauncher_${{ env.APP_VERSION }}_${{ matrix.artifact_name }}
+          path: |
+            src-tauri/target/release/bundle/nsis/*-setup.exe
+          if-no-files-found: error
+          retention-days: 90

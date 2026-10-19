@@ -1,0 +1,60 @@
+name: General Issue
+description: 提交不属于 Bug 或功能建议的其他问题与咨询
+title: "[General]: "
+labels:
+  - question
+body:
+  - type: markdown
+    attributes:
+      value: |
+        此模板适用于使用咨询、文档问题和其他无法归入 Bug Report 或 Feature Request 的内容。
+
+  - type: dropdown
+    id: category
+    attributes:
+      label: 问题类型
+      options:
+        - 使用咨询
+        - 文档问题
+        - 构建或部署问题
+        - 兼容性问题
+        - 其他
+    validations:
+      required: true
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: 问题说明
+      description: 请完整描述你的问题或需要讨论的内容。
+    validations:
+      required: true
+
+  - type: textarea
+    id: attempted
+    attributes:
+      label: 已尝试的方法
+      description: 请说明你已经查阅的资料或尝试过的解决方法。
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: 相关环境
+      description: 如有必要，请提供操作系统、RTLauncher 版本及其他相关版本。
+      placeholder: Windows 11 / RTLauncher 0.1.0
+
+  - type: textarea
+    id: additional-context
+    attributes:
+      label: 补充信息
+      description: 可以添加日志、截图或相关链接。请勿提交敏感信息。
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: 提交前确认
+      options:
+        - label: 我已确认该内容不适合使用 Bug Report 或 Feature Request 模板。
+          required: true
+        - label: 我已搜索现有 Issue，确认没有相同问题。
+          required: true

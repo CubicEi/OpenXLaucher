@@ -1,0 +1,197 @@
+name: 'Tauri App Build PR Test'
+
+on:
+  pull_request:
+    types: [opened, labeled]
+
+# 构建产物统一命名：UTC时间戳 + PR号 + 步进版本号（重新运行工作流时自动递增）
+# 时间戳无法在 workflow 级 env 中生成，故在 test-tauri job 首步写入 GITHUB_ENV
+
+jobs:
+  test-tauri:
+    if: github.event.action == 'opened' || (github.event.action == 'labeled' && github.event.label.name == '需要 Action 构建')
+    
+    permissions:
+      contents: read
+      pull-requests: write
+    
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: 'macos-latest'
+            args: '--target aarch64-apple-darwin'
+            name: 'macOS ARM64'
+            artifact_name: 'macos_aarch64'
+          - platform: 'macos-latest'
+            args: '--target x86_64-apple-darwin'
+            name: 'macOS x64'
+            artifact_name: 'macos_x64'
+          - platform: 'ubuntu-22.04'
+            args: '--bundles deb'
+            name: 'Linux'
+            artifact_name: 'linux_amd64'
+          - platform: 'windows-latest'
+            args: '--bundles nsis'
+            name: 'Windows'
+            artifact_name: 'windows_x64'
+
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Generate version (timestamp + PR# + attempt)
+        id: version
+        shell: bash
+        run: |
+          echo "APP_VERSION=$(date -u +%Y%m%d%H%M%S)-pr${{ github.event.pull_request.number }}-${{ github.run_attempt }}" >> "$GITHUB_ENV"
+          echo "Generated APP_VERSION: $APP_VERSION"
+
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: 'pnpm'
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      - if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+
+      - run: pnpm install
+
+      - uses: tauri-apps/tauri-action@v1
+        id: tauri-build
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          args: ${{ matrix.args }}
+
+      - name: Sign Windows Executable
+        if: matrix.platform == 'windows-latest'
+        env:
+          CERT_BASE64: ${{ secrets.WINDOWS_CERTIFICATE_BASE64 }}
+          CERT_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          if (-not $env:CERT_BASE64) {
+            Write-Host "[WARN] WINDOWS_CERTIFICATE_BASE64 secret not set, skipping signature"
+            exit 0
+          }
+          $certBytes = [Convert]::FromBase64String($env:CERT_BASE64)
+          $certPath = Join-Path $env:RUNNER_TEMP "signing-cert.pfx"
+          [System.IO.File]::WriteAllBytes($certPath, $certBytes)
+          $signTargets = @("src-tauri/target/release/rtlauncher.exe")
+          $signTargets += @(Get-ChildItem -Path "src-tauri/target/release/bundle/nsis/*-setup.exe" -File | ForEach-Object { $_.FullName })
+          foreach ($target in $signTargets) {
+            $signArgs = @(
+              "sign",
+              "/fd", "SHA256",
+              "/f", $certPath,
+              "/tr", "http://timestamp.digicert.com",
+              "/td", "SHA256",
+              $target
+            )
+            if ($env:CERT_PASSWORD) {
+              $signArgs = @("sign", "/fd", "SHA256", "/f", $certPath, "/p", $env:CERT_PASSWORD, "/tr", "http://timestamp.digicert.com", "/td", "SHA256", $target)
+            }
+            & signtool $signArgs
+            if ($LASTEXITCODE -ne 0) {
+              Write-Host "[ERROR] Signing failed for $target with exit code $LASTEXITCODE"
+              exit 1
+            }
+            Write-Host "[OK] Signed $target"
+          }
+          Remove-Item $certPath -ErrorAction SilentlyContinue
+
+      - name: Upload macOS bundles
+        if: matrix.platform == 'macos-latest'
+        uses: actions/upload-artifact@v7
+        with:
+          name: RTLauncher_${{ env.APP_VERSION }}_${{ matrix.artifact_name }}
+          path: |
+            src-tauri/target/*/release/bundle/**/*.dmg
+            src-tauri/target/*/release/bundle/**/*.app
+          if-no-files-found: warn
+          retention-days: 90
+
+      - name: Upload Linux bundles
+        if: matrix.platform == 'ubuntu-22.04'
+        uses: actions/upload-artifact@v7
+        with:
+          name: RTLauncher_${{ env.APP_VERSION }}_${{ matrix.artifact_name }}
+          path: |
+            src-tauri/target/release/bundle/**/*.AppImage
+            src-tauri/target/release/bundle/**/*.deb
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Upload Windows bundles
+        if: matrix.platform == 'windows-latest'
+        uses: actions/upload-artifact@v7
+        with:
+          name: RTLauncher_${{ env.APP_VERSION }}_${{ matrix.artifact_name }}
+          path: |
+            src-tauri/target/release/bundle/nsis/*-setup.exe
+          if-no-files-found: error
+          retention-days: 90
+
+    outputs:
+      result: ${{ job.status }}
+
+  report-status:
+    needs: test-tauri
+    # Fork PRs receive a read-only GITHUB_TOKEN, so they cannot post comments.
+    if: >-
+      always() &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      (github.event.action == 'opened' ||
+      (github.event.action == 'labeled' && github.event.label.name == '需要 Action 构建'))
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Report build status
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const runUrl = `https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            
+            let body;
+            if ('${{ needs.test-tauri.result }}' === 'success') {
+              body = `✅ **构建成功** - [查看详情](${runUrl})`;
+            } else {
+              body = `❌ **构建失败** - [查看日志](${runUrl})`;
+            }
+            
+            await github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: body
+            });
+
+      - name: Remove build label
+        if: always() && github.event.action == 'labeled' && github.event.label.name == '需要 Action 构建'
+        continue-on-error: true
+        uses: actions/github-script@v9
+        with:
+          script: |
+            try {
+              await github.rest.issues.removeLabel({
+                issue_number: context.issue.number,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                name: '需要 Action 构建'
+              });
+              console.log('Label removed successfully');
+            } catch (e) {
+              console.log('Failed to remove label or label does not exist:', e.message);
+            }

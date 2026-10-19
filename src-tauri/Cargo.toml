@@ -1,0 +1,88 @@
+[package]
+name = "rtlauncher"
+version = "1.0.0"
+default-run = "rtlauncher"
+description = "RTLauncher - A Modern Minecraft Launcher"
+authors = ["Lighting-Team"]
+license = "GNU GPL v3.0"
+repository = ""
+edition = "2021"
+rust-version = "1.77.2"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+name = "rtlauncher_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.5.4", features = [] }
+
+[dependencies]
+serde_json = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+semver = "1.0"
+log = "0.4"
+env_logger = "0.10"
+sha2 = "0.10"
+md-5 = "0.10"
+base64 = "0.21"
+hex = "0.4"
+sqlite = "0.30"
+url = "2.2"
+webbrowser = "0.8"
+tauri = { version = "2.10.0", features = ["macos-private-api"] }
+tauri-plugin-log = "2"
+tauri-plugin-dialog = "2"
+tauri-plugin-opener = "2"
+regex = "1.5"
+os_info = "3.0.0"
+anyhow = "1.0"
+sha1 = "0.10"
+futures = "0.3"
+zip = { version = "0.6", default-features = false, features = ["deflate"] }
+tokio = { version = "1.0", default-features = false, features = ["rt-multi-thread", "macros", "sync", "time", "io-util", "process"] }
+reqwest = { version = "0.11", default-features = false, features = ["json", "stream", "blocking", "rustls-tls", "gzip"] }
+scraper = "0.18"
+rayon = "1.8"
+fastnbt = "2"
+flate2 = { version = "1.0", default-features = false, features = ["zlib"] }
+sysinfo = "0.33"
+tao = "0.35.3"
+urlencoding = "2.1"
+dirs = "6"
+encoding_rs = "0.8"
+
+[target."cfg(target_os = \"macos\")".dependencies]
+objc2 = "0.6.2"
+objc2-app-kit = { version = "0.3.2", features = ["NSColor", "NSWindow"] }
+
+[target."cfg(target_os = \"windows\")".dependencies]
+winapi = { version = "0.3", features = ["processthreadsapi", "securitybaseapi", "winnt", "shellapi", "winuser", "winbase"] }
+winreg = "0.52"
+
+[target.'cfg(not(target_os = "macos"))'.dependencies]
+tauri-plugin-single-instance = "2"
+
+[target."cfg(unix)".dependencies]
+nix = { version = "0.27", default-features = false, features = ["user"] }
+libc = "0.2"
+
+[dev-dependencies]
+tempfile = "3"
+
+# ===== Release 体积优化配置 =====
+# 这会显著减小最终 exe 体积（从 ~20MB → ~8-10MB）
+# 构建时间会变长，但产物更小、运行更快
+[profile.release]
+opt-level = "s"           # 使用 size 优化而不是 "z" 以减少内存使用
+lto = false               # 禁用 LTO 以大幅减少内存使用
+codegen-units = 4         # 减少代码生成单元以允许更好的跨单元优化，减小二进制体积
+strip = "symbols"          # 去除调试符号
+panic = "abort"            # panic 时直接终止，移除 stack-unwinding 代码
+incremental = false        # 禁用增量编译（release 不需要）
+overflow-checks = false    # 禁用整数溢出运行时检查（release 默认就 false，明确设置）
+
+# 优化测试 profile（仅影响 cargo test，不影响最终产物）
+[profile.test]
+opt-level = 1

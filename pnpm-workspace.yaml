@@ -1,0 +1,10 @@
+packages:
+  - "."
+  - "packages/*"
+  - "examples/themes/*"
+
+allowBuilds:
+  esbuild: true
+  msw: true
+  sharp: false
+  unrs-resolver: false

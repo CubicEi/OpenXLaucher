@@ -1,0 +1,4 @@
+[build]
+# Limit parallel jobs to reduce memory usage during compilation
+# Set to 1 for minimal memory usage on low-memory systems
+jobs = 1

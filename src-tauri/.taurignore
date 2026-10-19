@@ -1,0 +1,3 @@
+# Launcher runtime data is written while the app is running.  Do not treat it
+# as a source change and restart `tauri dev` when resource pages are opened.
+minecraft/
