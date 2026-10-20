@@ -7,8 +7,8 @@ import { AccountProvider } from "@/components/accounts/account-provider";
 import { DownloadProvider } from "@/components/download/download-provider";
 import { DownloadTaskList } from "@/components/download/download-task-list";
 import { LaunchProvider } from "@/components/launch/launch-provider";
-import { MultiplayerProvider } from "@/components/multiplayer/multiplayer-provider";
 import { DeferredGlobalFeatures } from "@/components/global/deferred-global-features";
+import { StartupRuntimeDependencyNotifier } from "@/components/settings/startup-runtime-dependency-notifier";
 import { UIConfigProvider } from "@/components/ui-config/ui-config-provider";
 import { ThemeRuntimeProvider } from "@/components/themes/theme-runtime-provider";
 import { ThemeShell } from "@/components/themes/theme-shell";
@@ -38,19 +38,18 @@ export default function RootLayout({
             <SettingsProvider>
               <AccountProvider>
                 <LaunchProvider>
-                  <MultiplayerProvider>
                     <DownloadProvider>
                       <TooltipProvider>
                         <ThemeRuntimeProvider>
                           {/* 非关键全局能力在首屏可交互后再加载 */}
                           <DeferredGlobalFeatures />
+                          <StartupRuntimeDependencyNotifier />
                           <StartupUpdateNotifier />
                           <ThemeShell>{children}</ThemeShell>
                           <DownloadTaskList />
                         </ThemeRuntimeProvider>
                       </TooltipProvider>
                     </DownloadProvider>
-                  </MultiplayerProvider>
                 </LaunchProvider>
               </AccountProvider>
             </SettingsProvider>

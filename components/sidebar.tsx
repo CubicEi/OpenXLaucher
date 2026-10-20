@@ -6,7 +6,6 @@ import {
   Rocket,
   Wrench,
   Settings,
-  Globe,
   Gamepad2,
 } from "lucide-react"
 import Link from "next/link"
@@ -127,7 +126,6 @@ const NAV_ITEM_BASE: Omit<NavItem, "label">[] = [
   { id: "game-settings", icon: <Gamepad2 className="size-4" />, href: "/game-settings" },
   { id: "launch", icon: <Rocket className="size-4" />, href: "/launch" },
   { id: "download", icon: <Download className="size-4" />, href: "/download" },
-  { id: "multiplayer", icon: <Globe className="size-4" />, href: "/multiplayer" },
   { id: "tools", icon: <Wrench className="size-4" />, href: "/tools" },
   { id: "settings", icon: <Settings className="size-4" />, href: "/settings" },
 ]
@@ -137,7 +135,6 @@ const NAV_LABELS: Record<string, TranslationKey> = {
   "game-settings": "sidebar.gameSettings",
   launch: "sidebar.launch",
   download: "sidebar.downloads",
-  multiplayer: "sidebar.multiplayer",
   tools: "sidebar.tools",
   settings: "sidebar.settings",
 }

@@ -4,7 +4,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { useUIConfigContext } from "@/components/ui-config/ui-config-provider";
-import { Home, Gamepad2, Rocket, Download, Globe, Wrench, Settings, RotateCcw } from "lucide-react";
+import { Home, Gamepad2, Rocket, Download, Wrench, Settings, RotateCcw } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useI18n } from "@/components/i18n/use-i18n";
 
@@ -13,7 +13,6 @@ const TAB_ICONS: Record<string, React.ReactNode> = {
   "game-settings": <Gamepad2 className="size-4" />,
   launch: <Rocket className="size-4" />,
   download: <Download className="size-4" />,
-  multiplayer: <Globe className="size-4" />,
   tools: <Wrench className="size-4" />,
   settings: <Settings className="size-4" />,
 };
@@ -23,7 +22,6 @@ const TAB_NAMES_EN: Record<string, string> = {
   "game-settings": "Game Settings",
   launch: "Launch",
   download: "Downloads",
-  multiplayer: "Multiplayer",
   tools: "Tools",
   settings: "Settings",
 };

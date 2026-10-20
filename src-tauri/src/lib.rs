@@ -76,6 +76,7 @@ use handler::quilt_handler::{
     cancel_quilt_download, download_and_install_quilt, get_quilt_api_versions,
     get_quilt_loader_versions,
 };
+use handler::runtime_dependencies::check_runtime_dependencies;
 use handler::system::{
     get_system_memory, open_external, optimize_memory_usage, read_file_base64, write_file,
 };
@@ -184,6 +185,7 @@ pub fn run() {
             get_system_memory,
             optimize_memory_usage,
             open_external,
+            check_runtime_dependencies,
             read_file_base64,
             get_mod_dependencies_analysis,
             get_system_info,

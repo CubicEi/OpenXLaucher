@@ -15,9 +15,8 @@ const DEFAULT_SIDEBAR_TABS: SidebarTabConfig[] = [
   { id: "game-settings", name: "游戏设置", visible: true, canHide: true, order: 1 },
   { id: "launch", name: "启动", visible: true, canHide: false, order: 2 },
   { id: "download", name: "下载", visible: true, canHide: true, order: 3 },
-  { id: "multiplayer", name: "联机", visible: true, canHide: true, order: 4 },
-  { id: "tools", name: "工具", visible: true, canHide: true, order: 5 },
-  { id: "settings", name: "设置", visible: true, canHide: false, order: 6 },
+  { id: "tools", name: "工具", visible: true, canHide: true, order: 4 },
+  { id: "settings", name: "设置", visible: true, canHide: false, order: 5 },
 ];
 
 /** 默认UI配置 */
@@ -62,14 +61,16 @@ export function UIConfigProvider({ children }: { children: React.ReactNode }) {
           const parsed = JSON.parse(saved);
           if (parsed.sidebarTabs && Array.isArray(parsed.sidebarTabs)) {
             // 合并默认配置和保存的配置，确保新增的标签页被包含
-            const mergedTabs = DEFAULT_SIDEBAR_TABS.map(defaultTab => {
-              const savedTab = parsed.sidebarTabs.find((t: SidebarTabConfig) => t.id === defaultTab.id);
+            const mergedTabs = DEFAULT_SIDEBAR_TABS.map((defaultTab) => {
+              const savedTab = parsed.sidebarTabs.find(
+                (t: SidebarTabConfig) => t.id === defaultTab.id
+              );
               // 强制确保不可隐藏的标签页始终可见
               if (!defaultTab.canHide) {
                 return { ...defaultTab, visible: true };
               }
               return savedTab ? { ...defaultTab, ...savedTab } : defaultTab;
-            });
+            }).filter((tab) => tab.id !== "multiplayer");
             parsed.sidebarTabs = mergedTabs;
           }
           if (!cancelled) {
