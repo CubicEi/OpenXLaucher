@@ -293,7 +293,14 @@ export default function ModsPage() {
     return () => window.clearTimeout(t);
   }, [loadingState.configLoaded]);
 
-  if (!loadingState.configLoaded || (loadingState.configLoaded && !preparingTimeout && (loadingState.instancesScanning || !loadingState.minecraftPath))) {
+  const blockingInstanceScan =
+    loadingState.instancesScanning && !loadingState.instanceDir;
+  if (
+    !loadingState.configLoaded ||
+    (loadingState.configLoaded &&
+      !preparingTimeout &&
+      (blockingInstanceScan || !loadingState.minecraftPath))
+  ) {
     return (
       <ResourcePageFallback
         title="pageFactory.loadingConfiguration"

@@ -1,5 +1,6 @@
 pub mod cache_paths;
 pub mod runtime_dependencies;
+pub mod runtime_log;
 pub mod chinese_search;
 pub mod config;
 pub mod diagnostics;

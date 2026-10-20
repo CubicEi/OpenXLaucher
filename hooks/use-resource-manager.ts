@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { blobToBase64 } from "@/lib/file-utils";
+import { appLog } from "@/lib/runtime-log";
 
 export interface ModDependency {
   mod_id: string;
@@ -191,8 +192,8 @@ export function useResourceManager(
     }
     setInstanceLoading(true);
     setInstanceError(null);
+    const dir = `${instanceDir}/${currentInstanceSubdir}`;
     try {
-      const dir = `${instanceDir}/${currentInstanceSubdir}`;
       const entries: ResourceEntry[] =
         await invoke("vm_list_dir", { dirPath: dir, extensionsFilter: stableExtensions });
       // 存档本身是目录；支持目录导航的页面也需要保留目录条目。
@@ -225,6 +226,13 @@ export function useResourceManager(
         }
       }
     } catch (error: unknown) {
+      if (!isMissingDirectoryError(error)) {
+        appLog.warn("resources", "list instance files failed", {
+          dir,
+          cacheKind,
+          error: String(error),
+        });
+      }
       if (isMissingDirectoryError(error)) {
         if (requestId === instanceRequestIdRef.current) {
           setInstanceFiles([]);
@@ -247,6 +255,8 @@ export function useResourceManager(
     cacheKind,
     directoryNavigation,
     parseModMetadata,
+    mcVersion,
+    modLoader,
   ]);
 
   const fetchCacheFiles = useCallback(async () => {
@@ -483,7 +493,7 @@ export function useResourceManager(
     if (instanceDir) {
       void fetchInstanceFilesRef.current();
     }
-  }, [instanceDir, currentInstanceSubdir]);
+  }, [instanceDir, currentInstanceSubdir, cacheKind, mcVersion, modLoader]);
 
   useEffect(() => {
     if (mcVersion) {

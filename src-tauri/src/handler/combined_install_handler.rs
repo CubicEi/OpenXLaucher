@@ -259,6 +259,7 @@ async fn run_combined_install(
             return Err("已取消".to_string());
         }
         let mc_path_str = minecraft_path.to_string_lossy().to_string();
+        // 仅选用已有 Java 运行 Forge/NeoForge processor，不在此流程下载/安装 Java。
         let java = pick_java_executable(mc_version);
         let (tx2, mut rx2) = tokio::sync::mpsc::channel::<f64>(64);
         let tx_main = tx.clone();

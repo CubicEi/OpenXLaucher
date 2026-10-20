@@ -78,6 +78,7 @@ use handler::quilt_handler::{
     get_quilt_loader_versions,
 };
 use handler::runtime_dependencies::check_runtime_dependencies;
+use handler::runtime_log::write_runtime_log;
 use handler::system::{
     get_system_memory, open_external, optimize_memory_usage, read_file_base64, write_file,
 };
@@ -101,8 +102,8 @@ use updater::handler::{
 };
 use version_management::{
     vm_delete_cached_file, vm_delete_file, vm_ensure_instance_dirs, vm_find_resource_packs,
-    vm_list_dir, vm_modify_game_rule, vm_parse_level_dat, vm_rename_file, vm_scan_instances,
-    vm_write_file_base64,
+    vm_list_dir, vm_modify_game_rule, vm_parse_level_dat, vm_rename_file,
+    vm_rename_version_dir, vm_scan_instances, vm_write_file_base64,
 };
 
 use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
@@ -181,12 +182,14 @@ pub fn run() {
             vm_ensure_instance_dirs,
             vm_delete_file,
             vm_rename_file,
+            vm_rename_version_dir,
             vm_write_file_base64,
             vm_delete_cached_file,
             get_system_memory,
             optimize_memory_usage,
             open_external,
             check_runtime_dependencies,
+            write_runtime_log,
             read_file_base64,
             get_mod_dependencies_analysis,
             get_system_info,

@@ -1,8 +1,12 @@
 pub mod resource_checker;
 
 use base64::Engine;
+use crate::downloader::shared_utils::sanitize_instance_name;
 use serde::Serialize;
-use std::path::Path;
+use serde_json::Value;
+use std::fs;
+use std::io;
+use std::path::{Path, PathBuf};
 
 /// Minecraft 实例中需要存在的标准子目录
 ///
@@ -726,7 +730,20 @@ pub async fn vm_list_dir(
     extensions_filter: Vec<String>,
 ) -> Result<Vec<DirEntry>, String> {
     let path = Path::new(&dir_path);
+    let is_mods_dir = dir_path.replace('\\', "/").ends_with("/mods");
     if !path.exists() || !path.is_dir() {
+        if is_mods_dir {
+            let _ = crate::handler::runtime_log::append_runtime_log(
+                "warn",
+                "resources",
+                "mods directory missing",
+                Some(serde_json::json!({
+                    "dirPath": dir_path,
+                    "exists": path.exists(),
+                    "isDir": path.is_dir(),
+                })),
+            );
+        }
         return Ok(vec![]);
     }
 
@@ -789,6 +806,7 @@ pub async fn vm_list_dir(
 
     // 目录在前，文件在后；同类按名称排序
     result.sort_by(|a, b| b.is_dir.cmp(&a.is_dir).then(a.name.cmp(&b.name)));
+
     Ok(result)
 }
 
@@ -809,6 +827,126 @@ pub async fn vm_delete_file(dir_path: String, file_name: String) -> Result<(), S
         std::fs::remove_file(&file_path).map_err(|e| format!("删除文件失败: {}", e))?;
     }
     Ok(())
+}
+
+fn validate_version_folder_name(name: &str) -> Result<(), String> {
+    if name.is_empty() {
+        return Err("版本文件夹名不能为空".to_string());
+    }
+    if name.contains('/') || name.contains('\\') || name.contains("..") {
+        return Err("版本文件夹名包含非法路径字符".to_string());
+    }
+    Ok(())
+}
+
+fn ensure_version_dir_in_versions_root(
+    versions_root: &Path,
+    version_dir: &Path,
+) -> Result<(), String> {
+    if !version_dir.exists() {
+        return Err(format!("版本目录不存在: {}", version_dir.display()));
+    }
+    if !version_dir.is_dir() {
+        return Err(format!("目标路径不是目录: {}", version_dir.display()));
+    }
+    let normalized_target = version_dir
+        .canonicalize()
+        .unwrap_or_else(|_| version_dir.to_path_buf());
+    let normalized_root = versions_root
+        .canonicalize()
+        .unwrap_or_else(|_| versions_root.to_path_buf());
+    if !normalized_target.starts_with(&normalized_root) {
+        return Err("拒绝操作：目录不在 versions 目录内".to_string());
+    }
+    Ok(())
+}
+
+fn update_version_json_id(text: &str, new_id: &str) -> Result<String, String> {
+    let mut value: Value =
+        serde_json::from_str(text).map_err(|e| format!("解析 version.json 失败: {}", e))?;
+    let obj = value
+        .as_object_mut()
+        .ok_or_else(|| "version.json 顶层不是 JSON 对象".to_string())?;
+    obj.insert("id".to_string(), Value::String(new_id.to_string()));
+    serde_json::to_string_pretty(&value).map_err(|e| format!("序列化 version.json 失败: {}", e))
+}
+
+/// 重命名已安装版本目录（versions 下的文件夹及其 json/jar/natives）
+#[tauri::command]
+pub fn vm_rename_version_dir(
+    minecraft_path: String,
+    old_folder_name: String,
+    new_folder_name: String,
+) -> Result<String, String> {
+    validate_version_folder_name(&old_folder_name)?;
+    let new_name = sanitize_instance_name(new_folder_name.trim());
+    validate_version_folder_name(&new_name)?;
+
+    if new_name == old_folder_name {
+        return Ok(new_name);
+    }
+
+    let mc_path = PathBuf::from(&minecraft_path);
+    let versions_root = mc_path.join("versions");
+    let old_dir = versions_root.join(&old_folder_name);
+    let new_dir = versions_root.join(&new_name);
+
+    ensure_version_dir_in_versions_root(&versions_root, &old_dir)?;
+
+    if new_dir.exists() {
+        return Err(format!("目标版本目录已存在: {}", new_dir.display()));
+    }
+
+    let old_json = old_dir.join(format!("{}.json", old_folder_name));
+    if !old_json.is_file() {
+        return Err(format!("找不到版本 JSON: {}", old_json.display()));
+    }
+
+    let json_text = fs::read_to_string(&old_json)
+        .map_err(|e| format!("读取 version.json 失败: {}", e))?;
+    let updated_json = update_version_json_id(&json_text, &new_name)?;
+    let new_json = old_dir.join(format!("{}.json", new_name));
+    fs::write(&new_json, updated_json).map_err(|e| format!("写入 version.json 失败: {}", e))?;
+    if new_json != old_json {
+        let _ = fs::remove_file(&old_json);
+    }
+
+    let old_jar = old_dir.join(format!("{}.jar", old_folder_name));
+    if old_jar.is_file() {
+        let new_jar = old_dir.join(format!("{}.jar", new_name));
+        if new_jar.exists() {
+            return Err(format!("目标 JAR 已存在: {}", new_jar.display()));
+        }
+        fs::rename(&old_jar, &new_jar).map_err(|e| format!("重命名 JAR 失败: {}", e))?;
+    }
+
+    let old_natives = old_dir.join(format!("{}-natives", old_folder_name));
+    if old_natives.is_dir() {
+        let new_natives = old_dir.join(format!("{}-natives", new_name));
+        if new_natives.exists() {
+            return Err(format!("目标 natives 目录已存在: {}", new_natives.display()));
+        }
+        fs::rename(&old_natives, &new_natives)
+            .map_err(|e| format!("重命名 natives 目录失败: {}", e))?;
+    }
+
+    fs::rename(&old_dir, &new_dir).map_err(|e| {
+        if e.kind() == io::ErrorKind::PermissionDenied {
+            format!(
+                "无法重命名版本目录（文件可能正在使用中）: {}",
+                e
+            )
+        } else {
+            format!("重命名版本目录失败: {}", e)
+        }
+    })?;
+
+    println!(
+        "[Version] 已重命名版本目录: {} -> {}",
+        old_folder_name,
+        new_name
+    );
+    Ok(new_name)
 }
 
 /// 重命名实例目录中的文件

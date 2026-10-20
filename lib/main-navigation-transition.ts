@@ -3,6 +3,8 @@
 import type { MouseEvent as ReactMouseEvent } from "react";
 import type { AppRouterInstance } from "next/dist/shared/lib/app-router-context.shared-runtime";
 
+import { appLog } from "@/lib/runtime-log";
+
 export type ActiveMainNavigation = {
   controller: AbortController;
   previousTransition: string;
@@ -17,6 +19,8 @@ const FADE_OUT_MS = 80;
 const FADE_IN_MS = 150;
 const FIRST_MUTATION_SETTLE_MS = 80;
 const TIMEOUT_MS = 1200;
+/** Static export + WebView: client `router.push` can stall; hard-assign if URL unchanged. */
+const APP_ROUTE_PUSH_FALLBACK_MS = 200;
 
 let activeNavigation: ActiveMainNavigation | null = null;
 
@@ -45,6 +49,72 @@ export function pathnameMatchesNavigationTarget(current: string, target: string)
     return true;
   }
   return false;
+}
+
+/** Matches `trailingSlash: true` in next.config — static export routing expects trailing slashes. */
+export function toAppHref(href: string) {
+  if (href === "/" || href.endsWith("/")) return href;
+  return `${href}/`;
+}
+
+const SHARED_LAYOUT_PREFIXES = ["/game-settings", "/instance-settings"];
+
+/** Tab / sub-route navigation inside the same Next.js layout (no full-page fade). */
+export function isSharedLayoutRoute(path: string) {
+  const normalized = normalizeAppPathname(path);
+  return SHARED_LAYOUT_PREFIXES.some(
+    (prefix) => normalized === prefix || normalized.startsWith(`${prefix}/`),
+  );
+}
+
+export function isWithinSameLayoutSection(current: string, target: string) {
+  const normalizedCurrent = normalizeAppPathname(current);
+  const normalizedTarget = normalizeAppPathname(target);
+  if (normalizedCurrent === normalizedTarget) return true;
+  for (const prefix of SHARED_LAYOUT_PREFIXES) {
+    const currentIn = normalizedCurrent === prefix || normalizedCurrent.startsWith(`${prefix}/`);
+    const targetIn = normalizedTarget === prefix || normalizedTarget.startsWith(`${prefix}/`);
+    if (currentIn && targetIn) return true;
+  }
+  return false;
+}
+
+/** Game / instance settings use a persistent layout — skip full-page fade when entering from anywhere. */
+export function shouldUseLightweightAppNavigation(current: string, target: string) {
+  const normalizedCurrent = normalizeAppPathname(current);
+  const normalizedTarget = normalizeAppPathname(target);
+  if (normalizedCurrent === normalizedTarget) return false;
+  return (
+    isSharedLayoutRoute(normalizedTarget) ||
+    isWithinSameLayoutSection(normalizedCurrent, normalizedTarget)
+  );
+}
+
+/** Client navigation with trailing-slash href; falls back to `location.assign` when push stalls. */
+export function pushAppRoute(router: AppRouterInstance, href: string) {
+  const pushHref = toAppHref(href);
+  const targetPathname = normalizeAppPathname(href);
+  router.push(pushHref);
+
+  if (typeof window === "undefined") return;
+
+  window.setTimeout(() => {
+    if (pathnameMatchesNavigationTarget(window.location.pathname, targetPathname)) {
+      return;
+    }
+    appLog.warn("nav", "pushAppRoute assign fallback", {
+      pushHref,
+      pathname: window.location.pathname,
+      targetPathname,
+    });
+    window.location.assign(pushHref);
+  }, APP_ROUTE_PUSH_FALLBACK_MS);
+}
+
+export function isDescendantAppPath(ancestor: string, descendant: string) {
+  const from = normalizeAppPathname(ancestor);
+  const to = normalizeAppPathname(descendant);
+  return to.startsWith(`${from}/`);
 }
 
 export function getPageTransitionElement(): HTMLElement | null {
@@ -93,32 +163,47 @@ function waitForPageContent(
   root: HTMLElement,
   targetPathname: string,
   signal: AbortSignal,
+  fromPathname?: string,
 ) {
   return new Promise<void>((resolve) => {
     let settled = false;
     let settleTimer: number | undefined;
+    const allowMutationWithoutPathMatch =
+      !!fromPathname && isDescendantAppPath(fromPathname, targetPathname);
 
-    const finish = () => {
+    const pathnameReady = () =>
+      pathnameMatchesNavigationTarget(window.location.pathname, targetPathname);
+
+    const finish = (_reason: string) => {
       if (settled) return;
       settled = true;
       observer.disconnect();
       window.clearTimeout(timeoutTimer);
+      window.clearInterval(pathPollTimer);
       if (settleTimer !== undefined) window.clearTimeout(settleTimer);
-      signal.removeEventListener("abort", finish);
+      signal.removeEventListener("abort", onAbort);
       resolve();
+    };
+
+    const onAbort = () => finish("abort");
+
+    const scheduleMutationSettle = (reason: string) => {
+      if (!settleTimer) {
+        settleTimer = window.setTimeout(() => {
+          settleTimer = undefined;
+          finish(reason);
+        }, FIRST_MUTATION_SETTLE_MS);
+      }
     };
 
     const observer = new MutationObserver(() => {
       if (settled) return;
-      if (!pathnameMatchesNavigationTarget(window.location.pathname, targetPathname)) {
+      if (!pathnameReady() && !allowMutationWithoutPathMatch) {
         return;
       }
-      if (!settleTimer) {
-        settleTimer = window.setTimeout(() => {
-          settleTimer = undefined;
-          finish();
-        }, FIRST_MUTATION_SETTLE_MS);
-      }
+      scheduleMutationSettle(
+        pathnameReady() ? "mutation" : "mutation-descendant",
+      );
     });
 
     observer.observe(root, {
@@ -127,21 +212,23 @@ function waitForPageContent(
       characterData: true,
     });
 
-    const timeoutTimer = window.setTimeout(finish, TIMEOUT_MS);
+    const timeoutTimer = window.setTimeout(() => finish("timeout"), TIMEOUT_MS);
 
-    if (pathnameMatchesNavigationTarget(window.location.pathname, targetPathname)) {
-      settleTimer = window.setTimeout(() => {
-        settleTimer = undefined;
-        finish();
-      }, FIRST_MUTATION_SETTLE_MS);
+    const pathPollTimer = window.setInterval(() => {
+      if (settled || !pathnameReady()) return;
+      scheduleMutationSettle("pathname-poll");
+    }, 32);
+
+    if (pathnameReady()) {
+      scheduleMutationSettle("pathname-already-matched");
     }
 
     if (signal.aborted) {
-      finish();
+      finish("abort-initial");
       return;
     }
 
-    signal.addEventListener("abort", finish, { once: true });
+    signal.addEventListener("abort", onAbort, { once: true });
   });
 }
 
@@ -174,15 +261,21 @@ export function navigateWithMainTransition(
     return;
   }
 
+  const pushHref = toAppHref(href);
+  if (shouldUseLightweightAppNavigation(currentPathname, targetPathname)) {
+    pushAppRoute(router, href);
+    return;
+  }
+
   const root =
     getPageTransitionElement() ?? document.querySelector<HTMLElement>("main");
   if (!root) {
-    router.push(href);
+    router.push(pushHref);
     return;
   }
 
   if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
-    router.push(href);
+    router.push(pushHref);
     return;
   }
 
@@ -215,11 +308,12 @@ export function navigateWithMainTransition(
   root.style.opacity = "0";
 
   const main = document.querySelector<HTMLElement>("main");
-  router.push(href);
+  router.push(pushHref);
   const contentReady = waitForPageContent(
     main ?? root,
     targetPathname,
     controller.signal,
+    currentPathname,
   );
 
   window.setTimeout(async () => {
@@ -264,6 +358,15 @@ export function createInAppLinkHandler(
   return (event: ReactMouseEvent<HTMLAnchorElement>) => {
     if (!shouldHandlePrimaryLink(event)) return;
     event.preventDefault();
+
+    const targetPathname = normalizeAppPathname(href);
+    const currentPathname = normalizeAppPathname(window.location.pathname);
+
+    if (shouldUseLightweightAppNavigation(currentPathname, targetPathname)) {
+      pushAppRoute(router, href);
+      return;
+    }
+
     navigateWithMainTransition(router, href, options);
   };
 }

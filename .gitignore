@@ -79,3 +79,4 @@ gen_latest_json.js
 /pr_description
 /packages/theme-cli/dist/
 
+test_client/

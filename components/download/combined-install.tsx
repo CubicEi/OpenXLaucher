@@ -1,11 +1,10 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Input } from "@/components/ui/input";
 import {
   Card,
   CardContent,
@@ -13,12 +12,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+import { InstanceNameDialog } from "@/components/download/instance-name-dialog";
 import {
   Select,
   SelectContent,
@@ -71,9 +65,7 @@ export function CombinedInstall({ version }: CombinedInstallProps) {
   const [view, setView] = useState<"grid" | "fabric-api">("grid");
 
   const [showNameDialog, setShowNameDialog] = useState(false);
-  const [instanceNameInput, setInstanceNameInput] = useState("");
   const [installing, setInstalling] = useState(false);
-  const inputRef = useRef<HTMLInputElement>(null);
 
   const hasFabric = selected.includes("fabric");
   /** 选择了版本即代表启用 Fabric API */
@@ -204,18 +196,11 @@ export function CombinedInstall({ version }: CombinedInstallProps) {
 
   const handleInstall = () => {
     if (!canInstall) return;
-    setInstanceNameInput(defaultInstanceName);
     setShowNameDialog(true);
-    setTimeout(() => {
-      inputRef.current?.focus();
-      inputRef.current?.select();
-    }, 50);
   };
 
-  const confirmInstall = async () => {
+  const confirmInstall = async (instanceName: string) => {
     if (!canInstall) return;
-    const name = instanceNameInput.trim();
-    const instanceName = name.length > 0 ? name : defaultInstanceName;
 
     setShowNameDialog(false);
     setInstalling(true);
@@ -528,46 +513,13 @@ export function CombinedInstall({ version }: CombinedInstallProps) {
         </div>
       </div>
 
-      {/* 实例名称输入对话框 */}
-      <Dialog open={showNameDialog} onOpenChange={setShowNameDialog}>
-        <DialogContent className="!max-w-lg p-0">
-          <DialogHeader>
-            <DialogTitle>{t("download.instanceName")}</DialogTitle>
-          </DialogHeader>
-          <div className="p-5 space-y-4">
-            <div className="space-y-2">
-              <p className="text-sm text-muted-foreground">
-                {t("download.instanceNameHint")}
-                <code className="mx-1 px-1.5 py-0.5 rounded bg-muted text-xs">
-                  {defaultInstanceName}
-                </code>
-              </p>
-              <Input
-                ref={inputRef}
-                placeholder={defaultInstanceName}
-                value={instanceNameInput}
-                onChange={(e) => setInstanceNameInput(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") void confirmInstall();
-                }}
-              />
-            </div>
-            <div className="flex items-center justify-end gap-2">
-              <Button
-                variant="outline"
-                onClick={() => {
-                  setShowNameDialog(false);
-                }}
-              >
-                {t("download.cancel")}
-              </Button>
-              <Button onClick={() => void confirmInstall()}>
-                {t("download.startDownload")}
-              </Button>
-            </div>
-          </div>
-        </DialogContent>
-      </Dialog>
+      <InstanceNameDialog
+        open={showNameDialog}
+        onOpenChange={setShowNameDialog}
+        defaultName={defaultInstanceName}
+        onConfirm={confirmInstall}
+        confirming={installing}
+      />
     </>
   );
 }

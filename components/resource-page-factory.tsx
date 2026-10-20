@@ -164,7 +164,8 @@ export function createResourcePage(config: ResourcePageConfig): React.FC {
       directoryNavigation,
     );
 
-    if (!configLoaded || (configLoaded && !preparingTimeout && instancesScanning)) {
+    const blockingInstanceScan = instancesScanning && !instanceDir;
+    if (!configLoaded || (configLoaded && !preparingTimeout && blockingInstanceScan)) {
       return (
         <motion.div
           variants={fadeSlideUp}

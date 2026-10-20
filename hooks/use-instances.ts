@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import type { InstanceData } from "@/types";
+import { appLog } from "@/lib/runtime-log";
 
 interface UseInstancesReturn {
   instances: InstanceData[];
@@ -14,6 +15,22 @@ interface UseInstancesReturn {
 // 首页卸载与实例详情页挂载之间可能重叠。仅复用进行中的扫描：这样可以
 // 消除首次跳转的并发读取，同时不会让之后的版本安装结果被长期缓存。
 const inFlightInstanceScans = new Map<string, Promise<InstanceData[]>>();
+const cachedInstancesByPath = new Map<string, InstanceData[]>();
+const lastInstancesFetchAt = new Map<string, number>();
+const INSTANCES_REFETCH_MIN_MS = 3000;
+
+/** 清除实例扫描缓存，下次 refetch 会强制重新扫描 */
+export function invalidateInstancesCache(instancesPath?: string) {
+  if (instancesPath) {
+    cachedInstancesByPath.delete(instancesPath);
+    lastInstancesFetchAt.delete(instancesPath);
+    inFlightInstanceScans.delete(instancesPath);
+  } else {
+    cachedInstancesByPath.clear();
+    lastInstancesFetchAt.clear();
+    inFlightInstanceScans.clear();
+  }
+}
 
 function loadInstances(instancesPath: string): Promise<InstanceData[]> {
   const pending = inFlightInstanceScans.get(instancesPath);
@@ -34,7 +51,7 @@ function loadInstances(instancesPath: string): Promise<InstanceData[]> {
       if (inFlightInstanceScans.get(instancesPath) === request) {
         inFlightInstanceScans.delete(instancesPath);
       }
-    }
+    },
   );
 
   return request;
@@ -47,8 +64,12 @@ function loadInstances(instancesPath: string): Promise<InstanceData[]> {
  *                       为空字符串或 undefined 时不发起请求。
  */
 export function useInstances(instancesPath?: string): UseInstancesReturn {
-  const [instances, setInstances] = useState<InstanceData[]>([]);
-  const [loading, setLoading] = useState(false);
+  const [instances, setInstances] = useState<InstanceData[]>(() =>
+    instancesPath ? cachedInstancesByPath.get(instancesPath) ?? [] : [],
+  );
+  const [loading, setLoading] = useState(() =>
+    instancesPath ? !cachedInstancesByPath.has(instancesPath) : false,
+  );
   const [error, setError] = useState<string | null>(null);
   const requestIdRef = useRef(0);
 
@@ -61,14 +82,30 @@ export function useInstances(instancesPath?: string): UseInstancesReturn {
       return;
     }
 
-    setLoading(true);
+    const hasCached = cachedInstancesByPath.has(instancesPath);
+    const lastFetchAt = lastInstancesFetchAt.get(instancesPath) ?? 0;
+    if (hasCached && Date.now() - lastFetchAt < INSTANCES_REFETCH_MIN_MS) {
+      setInstances(cachedInstancesByPath.get(instancesPath) ?? []);
+      setLoading(false);
+      setError(null);
+      return;
+    }
+    if (!hasCached) {
+      setLoading(true);
+    }
     setError(null);
+    lastInstancesFetchAt.set(instancesPath, Date.now());
     try {
       const data = await loadInstances(instancesPath);
+      cachedInstancesByPath.set(instancesPath, data);
       if (requestId === requestIdRef.current) {
         setInstances(data);
       }
     } catch (e) {
+      appLog.error("instances", "vm_scan_instances failed", {
+        instancesPath,
+        error: String(e),
+      });
       if (requestId === requestIdRef.current) {
         setError(String(e));
       }

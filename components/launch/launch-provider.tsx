@@ -12,6 +12,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { useAccountContext } from "@/components/accounts/account-provider";
 import { isTauriRuntime } from "@/lib/tauri-runtime";
+import { appLog } from "@/lib/runtime-log";
 import { log4jParser } from "@/components/launch/log4j-progress-parser";
 import { useI18n } from "@/components/i18n/use-i18n";
 import { analyzeLaunchLogs } from "@/components/launch/launch-analyzer";
@@ -122,6 +123,10 @@ export function LaunchProvider({ children }: { children: React.ReactNode }) {
       // 1) localStorage 配置应用
       // 2) Tauri 原生返回的路径配置应用（或失败也视为完成）
       if (!cancelled && localConfigApplied && nativePathsResolved) {
+        appLog.info("launch", "config loaded", {
+          localConfigApplied,
+          nativePathsResolved,
+        });
         setConfigLoaded(true);
       }
     };

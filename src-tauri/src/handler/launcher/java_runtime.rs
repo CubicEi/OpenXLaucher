@@ -50,16 +50,6 @@ pub(super) fn get_java_major_version(java_path: &str) -> String {
     }
 }
 
-pub(super) fn major_version_to_runtime_name(major: u32) -> Option<&'static str> {
-    match major {
-        8 => Some("java-runtime-alpha"),
-        11 => Some("java-runtime-beta"),
-        17 => Some("java-runtime-gamma"),
-        21 => Some("java-runtime-delta"),
-        _ => None,
-    }
-}
-
 /// 从游戏 JAR 的 class 文件推断真实 Java 需求，避免整合包中过期的
 /// `javaVersion` 导致启动器选择过旧的 Java。
 pub(super) fn required_java_major_from_jar(jar_path: &std::path::Path) -> Option<u32> {

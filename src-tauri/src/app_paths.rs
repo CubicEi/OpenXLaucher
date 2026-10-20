@@ -120,6 +120,10 @@ pub fn portable_java_dir() -> PathBuf {
     portable_rtl_dir().join("java")
 }
 
+pub fn portable_logs_dir() -> PathBuf {
+    portable_rtl_dir().join("logs")
+}
+
 pub fn launcher_exe_dir() -> PathBuf {
     std::env::current_exe()
         .ok()
@@ -130,6 +134,7 @@ pub fn launcher_exe_dir() -> PathBuf {
 pub fn ensure_portable_dirs() {
     let _ = std::fs::create_dir_all(portable_config_dir());
     let _ = std::fs::create_dir_all(portable_java_dir());
+    let _ = std::fs::create_dir_all(portable_logs_dir());
 }
 
 #[cfg(all(test, target_os = "linux"))]

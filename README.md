@@ -11,7 +11,7 @@
 -  **多人联机** — 基于 OpenP2P 的局域网联机方案，支持房主创建和玩家加入
 -  **皮肤系统** — 3D 皮肤预览（skinview3d）、Microsoft / LittleSkin / Yggdrasil 账户登录
 -  **国际化** — 内置中文（简体）与英文界面，可轻松扩展
--  **自动安装** — 自动下载 Java 运行时、Mod Loader、依赖库
+-  **自动安装** — 自动下载 Mod Loader、依赖库（Java 运行时需在「下载 → Java」手动安装）
 -  **主题切换** — 亮/暗主题无缝切换
 -  **低体积** — Rust 原生打包，安装包体积小、内存占用低
 
@@ -76,6 +76,10 @@ RTLauncher/
 ├── crowdin.yml                 # Crowdin 文件同步配置
 └── types/                      # TypeScript 类型定义
 ```
+
+### 运行日志（便携版）
+
+便携构建在 exe 同目录写入 `RTL/logs/launcher.log`（NDJSON，一行一条 JSON）。前端使用 `lib/runtime-log.ts` 的 `appLog` / `rtlLog`，Rust 侧使用 `handler/runtime_log.rs`。
 
 ##  Crowdin 翻译同步
 

@@ -609,10 +609,16 @@
     "deleteVersion": "Delete version",
     "pleaseClickTheTitleAboveToSelectAGame": "Please click the title above to select a game version",
     "afterConfigurationYouCanManageModsResourcePacksAnd": "After configuration, you can manage mods, resource packs, and more for the current version",
-    "goToModpackManagement": "Go to Modpack Management",
+    "goToModpackManagement": "Install Modpack Files",
     "coreSettings": "Core Settings",
     "coreSettingsPlaceholder": "Additional core settings will appear here",
-    "featureEntries": "Features"
+    "featureEntries": "Features",
+    "renameVersionFolder": "Rename version folder",
+    "startRenameVersion": "Rename",
+    "renameVersionDialogTitle": "Rename version folder",
+    "renameVersionDialogHint": "Enter a new folder name under versions/. Leave empty to keep the current name:",
+    "renameVersionConfirm": "Apply",
+    "renameVersionSuccess": "Version folder renamed to: {newName}"
   },
   "checkUpdate": {
     "title": "Check for Updates",
@@ -644,7 +650,7 @@
   },
   "download": {
     "title": "Download Center",
-    "subtitle": "Download Minecraft versions and Java",
+    "subtitle": "Download game versions and loaders; install Java separately on the Java tab",
     "tabChineseSearch": "MCMod Search",
     "tabAllPlatforms": "All Platforms",
     "tabFavorites": "Favorites",

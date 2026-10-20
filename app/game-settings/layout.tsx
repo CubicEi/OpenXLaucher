@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { cn } from "@/lib/utils";
@@ -12,6 +13,7 @@ import {
   createInAppLinkHandler,
   normalizeAppPathname,
   onInAppLinkPointerDown,
+  toAppHref,
 } from "@/lib/main-navigation-transition";
 
 const NAV_ITEMS: { href: string; label: Translation }[] = [
@@ -31,6 +33,12 @@ export default function GameSettingsLayout({
   const router = useRouter();
   const currentPath = normalizeAppPathname(pathname);
   const { t } = useI18n();
+
+  useEffect(() => {
+    for (const item of NAV_ITEMS) {
+      router.prefetch(toAppHref(item.href));
+    }
+  }, [router]);
 
   return (
     <div className="h-full flex flex-col">

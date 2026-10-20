@@ -609,10 +609,16 @@
     "deleteVersion": "删除版本",
     "pleaseClickTheTitleAboveToSelectAGame": "请先点击上方标题选择游戏版本",
     "afterConfigurationYouCanManageModsResourcePacksAnd": "配置完成后即可管理当前版本的模组、资源包等内容",
-    "goToModpackManagement": "进入整合包管理",
+    "goToModpackManagement": "整合包文件安装",
     "coreSettings": "核心设置",
     "coreSettingsPlaceholder": "更多核心设置将在此显示",
-    "featureEntries": "功能入口"
+    "featureEntries": "功能入口",
+    "renameVersionFolder": "修改版本名",
+    "startRenameVersion": "开始修改",
+    "renameVersionDialogTitle": "修改版本文件夹名称",
+    "renameVersionDialogHint": "输入新的版本文件夹名称，留空则保持当前名称：",
+    "renameVersionConfirm": "确认修改",
+    "renameVersionSuccess": "版本文件夹已重命名为：{newName}"
   },
   "checkUpdate": {
     "title": "检查更新",
@@ -644,7 +650,7 @@
   },
   "download": {
     "title": "下载中心",
-    "subtitle": "下载 Minecraft 游戏版本与 Java 运行时",
+    "subtitle": "下载游戏版本、加载器；Java 运行时请在本页 Java 标签单独安装",
     "tabChineseSearch": "MC百科搜索",
     "tabAllPlatforms": "全平台搜索",
     "tabFavorites": "收藏",

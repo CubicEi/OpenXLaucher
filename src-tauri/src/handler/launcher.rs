@@ -5,12 +5,9 @@ mod memory;
 mod process;
 
 use std::path::PathBuf;
-use tauri::Manager;
 
 use arguments::{build_jvm_arguments_inner, VersionJson};
-use java_runtime::{
-    get_java_major_version, major_version_to_runtime_name, required_java_major_from_jar,
-};
+use java_runtime::{get_java_major_version, required_java_major_from_jar};
 use process::run_command;
 
 pub use arguments::build_jvm_arguments;
@@ -102,54 +99,11 @@ pub fn launch_game(
                 );
                 resolved_java_path = matched.path;
             } else {
-                let runtime_name = major_version_to_runtime_name(major);
-                if let Some(rt_name) = runtime_name {
-                    println!(
-                        "[启动器] 未找到匹配的 Java {}，开始自动下载 {}...",
-                        major, rt_name
-                    );
-                    let java_download_dir = crate::handler::config::get_java_download_dir()
-                        .unwrap_or_else(|_| {
-                            crate::app_paths::portable_java_dir()
-                                .to_string_lossy()
-                                .into_owned()
-                        });
-                    let task_id = std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .map(|d| d.as_secs())
-                        .unwrap_or(0);
-                    let window = app
-                        .get_webview_window("main")
-                        .ok_or_else(|| "无法获取主窗口".to_string())?;
-                    let rt_name_owned = rt_name.to_string();
-                    let base_path = java_download_dir.clone();
-                    let download_result = tokio::runtime::Handle::current().block_on(async move {
-                        crate::handler::java_downloader::download_java_runtime(
-                            rt_name_owned,
-                            base_path,
-                            task_id,
-                            window,
-                        )
-                        .await
-                    });
-                    match download_result {
-                        Ok(result) => {
-                            println!("[启动器] Java 下载成功: {}", result.message);
-                            resolved_java_path = result.java_path;
-                        }
-                        Err(e) => {
-                            eprintln!(
-                                "[启动器] Java 下载失败: {}，将继续使用当前路径 {}",
-                                e, java_path
-                            );
-                        }
-                    }
-                } else {
-                    println!(
-                        "[启动器] Java {} 无对应运行时名称映射，将继续使用当前路径 {}",
-                        major, java_path
-                    );
-                }
+                // 不再随游戏启动自动下载 Java；请用户在「下载 → Java」页手动安装。
+                println!(
+                    "[启动器] 未找到匹配的 Java {}，继续使用当前路径 {}（不会自动下载运行时）",
+                    major, java_path
+                );
             }
         }
     } else {
