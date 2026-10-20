@@ -1,26 +1,5 @@
-import type { Announcement, InstanceCard, LoaderOption, LoaderVersion, MinecraftVersion } from "@/types";
+import type { InstanceCard, LoaderOption, LoaderVersion, MinecraftVersion } from "@/types";
 import type { LoaderType } from "@/types";
-
-/**
- * 公告数据
- */
-export const ANNOUNCEMENTS: Announcement[] = [
-  {
-    id: "announcement-1",
-    title: "欢迎使用 RTLauncher",
-    content: "全新的 Minecraft 启动器，提供现代化的设计和流畅的体验。",
-  },
-  {
-    id: "announcement-2",
-    title: "系统更新",
-    content: "我们最近发布了新功能，改善了用户体验。",
-  },
-  {
-    id: "announcement-3",
-    title: "使用提示",
-    content: "查看我们的文档了解如何更好地使用本系统。",
-  },
-];
 
 /**
  * 实例卡片配置数据

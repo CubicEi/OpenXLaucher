@@ -16,7 +16,15 @@ pub fn config_dir() -> String {
         format!("{}/Library/Application Support/RTLauncher/config", home)
     };
 
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "windows")]
+    let dir = {
+        crate::app_paths::ensure_portable_dirs();
+        crate::app_paths::portable_config_dir()
+            .to_string_lossy()
+            .into_owned()
+    };
+
+    #[cfg(all(not(target_os = "macos"), not(target_os = "windows")))]
     let dir = "./RTL/config".to_string();
 
     let _ = std::fs::create_dir_all(&dir);

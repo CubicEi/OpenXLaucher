@@ -5,7 +5,6 @@ import { motion } from "framer-motion";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Switch } from "@/components/ui/switch";
 import { Input } from "@/components/ui/input";
 import {
   Card,
@@ -241,8 +240,7 @@ export function CombinedInstall({ version }: CombinedInstallProps) {
         {/* 原版：必选 */}
         <div className="shrink-0">
           <div className="flex items-center gap-3 rounded-xl border border-border bg-card px-4 py-3">
-            <Switch checked disabled className="border-emerald-500" />
-            <div className={cn("flex size-9 items-center justify-center rounded-lg p-1.5", loaderColors.vanilla.bg)}>
+            <div className={cn("flex size-9 shrink-0 items-center justify-center rounded-lg p-1.5", loaderColors.vanilla.bg)}>
               <LoaderIcon kind="vanilla" className="size-full" />
             </div>
             <div className="min-w-0 flex-1">
@@ -256,6 +254,19 @@ export function CombinedInstall({ version }: CombinedInstallProps) {
                 {version.id}
               </p>
             </div>
+            <Button
+              size="sm"
+              disabled={!canInstall || installing}
+              onClick={handleInstall}
+              className="shrink-0"
+            >
+              {installing ? (
+                <Loader2 className="size-4 animate-spin" />
+              ) : (
+                <Download className="size-4" />
+              )}
+              {t("download.installCombined")}
+            </Button>
           </div>
         </div>
 
@@ -490,38 +501,23 @@ export function CombinedInstall({ version }: CombinedInstallProps) {
           ) : null}
         </div>
 
-        {/* 底部安装按钮 */}
+        {/* 底部选择摘要 */}
         <div className="shrink-0 border-t border-border pt-4">
-          <div className="flex items-center justify-between gap-4">
-            <div className="flex items-center gap-2 text-xs text-muted-foreground min-w-0">
-              {selected.length === 0 ? (
-                <>
-                  <CheckCircle2 className="size-4 text-emerald-500 shrink-0" />
-                  {t("download.vanillaOnly")}
-                </>
-              ) : (
-                <>
-                  <CheckCircle2 className="size-4 text-emerald-500 shrink-0" />
-                  <span className="truncate">
-                    {selected.map((l) => LOADER_OPTIONS.find((o) => o.id === l)?.name ?? l).join(" + ")}
-                    {fabricApiEnabled ? " + Fabric API" : ""}
-                  </span>
-                </>
-              )}
-            </div>
-            <Button
-              size="sm"
-              disabled={!canInstall || installing}
-              onClick={handleInstall}
-              className="shrink-0"
-            >
-              {installing ? (
-                <Loader2 className="size-4 animate-spin" />
-              ) : (
-                <Download className="size-4" />
-              )}
-              {t("download.installCombined")}
-            </Button>
+          <div className="flex items-center gap-2 text-xs text-muted-foreground min-w-0">
+            {selected.length === 0 ? (
+              <>
+                <CheckCircle2 className="size-4 text-emerald-500 shrink-0" />
+                {t("download.vanillaOnly")}
+              </>
+            ) : (
+              <>
+                <CheckCircle2 className="size-4 text-emerald-500 shrink-0" />
+                <span className="truncate">
+                  {selected.map((l) => LOADER_OPTIONS.find((o) => o.id === l)?.name ?? l).join(" + ")}
+                  {fabricApiEnabled ? " + Fabric API" : ""}
+                </span>
+              </>
+            )}
           </div>
           {!allVersionsChosen && selected.length > 0 && (
             <div className="flex items-center gap-1.5 mt-2 text-xs text-amber-600 dark:text-amber-400">

@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { motion } from "framer-motion";
 import {
@@ -19,7 +20,6 @@ import { AccountSwitcher } from "@/components/accounts/account-switcher";
 import { SkinCapeManager } from "@/components/accounts/skin-cape-manager";
 import { SkinViewer3D } from "@/components/accounts/skin-viewer-3d";
 import { useAccountContext } from "@/components/accounts/account-provider";
-import { AnnouncementCard } from "@/components/home/announcement-card";
 import { LaunchStatusBadge } from "@/components/launch/launch-status-badge";
 import { useLaunchContext } from "@/components/launch/launch-provider";
 import { VersionSelectorDialog } from "@/components/launch/version-selector-dialog";
@@ -40,9 +40,14 @@ import {
 } from "@/components/ui/dialog";
 import { useInstancePath } from "@/hooks/use-instance-path";
 import type { Account } from "@/types";
+import {
+  createInAppLinkHandler,
+  onInAppLinkPointerDown,
+} from "@/lib/main-navigation-transition";
 
 /** 首页仪表盘：把启动状态、实例资源与账户操作集中在一个可滚动页面。 */
 export default function Home() {
+  const router = useRouter();
   const [isProfileSelectorOpen, setIsProfileSelectorOpen] = useState(false);
   const [isSkinManagerOpen, setIsSkinManagerOpen] = useState(false);
   const { selectedProfile, selectProfile } = useAccountContext();
@@ -217,15 +222,14 @@ export default function Home() {
             </motion.aside>
           </div>
         ) : (
-          <div className="grid min-h-0 items-start gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
+          <div className="grid min-h-0 grid-cols-[minmax(0,1fr)_320px] items-start gap-4">
             <section className="flex min-w-0 flex-col gap-4">
-              <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_250px]">
-                <motion.div
-                  initial={{ opacity: 0, y: 8 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ duration: 0.3 }}
-                >
-                  <Card className="relative min-h-[280px] overflow-hidden border-primary/20 bg-gradient-to-br from-primary/12 via-card to-card shadow-sm">
+              <motion.div
+                initial={{ opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.3 }}
+              >
+                <Card className="relative min-h-[280px] overflow-hidden border-primary/20 bg-gradient-to-br from-primary/12 via-card to-card shadow-sm">
                     <div className="pointer-events-none absolute -right-12 -top-16 size-52 rounded-full bg-primary/10 blur-3xl" />
                     <CardContent className="relative flex h-full min-h-[280px] flex-col p-5 sm:p-6">
                       <div className="flex items-start justify-between gap-3">
@@ -304,18 +308,8 @@ export default function Home() {
                         </p>
                       )}
                     </CardContent>
-                  </Card>
-                </motion.div>
-
-                <motion.div
-                  initial={{ opacity: 0, y: 8 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: 0.05, duration: 0.3 }}
-                  className="min-h-[230px]"
-                >
-                  <AnnouncementCard compact />
-                </motion.div>
-              </div>
+                </Card>
+              </motion.div>
 
               <Card size="sm" className="shadow-sm">
                 <CardHeader className="pb-1">
@@ -328,6 +322,8 @@ export default function Home() {
                       <Link
                         key={href}
                         href={href}
+                        onPointerDown={onInAppLinkPointerDown}
+                        onClick={createInAppLinkHandler(router, href)}
                         className="group flex min-w-0 items-center gap-3 rounded-xl border border-transparent p-3 transition-colors hover:border-border hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                       >
                         <span className={`flex size-9 shrink-0 items-center justify-center rounded-xl ${iconClassName}`}>
@@ -349,6 +345,8 @@ export default function Home() {
                       <Link
                         key={href}
                         href={href}
+                        onPointerDown={onInAppLinkPointerDown}
+                        onClick={createInAppLinkHandler(router, href)}
                         className="group flex min-w-0 items-center gap-3 rounded-xl border border-transparent p-3 transition-colors hover:border-border hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                       >
                         <span className={`flex size-9 shrink-0 items-center justify-center rounded-xl ${iconClassName}`}>
@@ -370,7 +368,7 @@ export default function Home() {
               initial={{ opacity: 0, y: 8 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: 0.1, duration: 0.3 }}
-              className="lg:sticky lg:top-0"
+              className="sticky top-0 w-[320px] shrink-0"
             >
               <Card className="overflow-hidden border shadow-sm">
                 <CardHeader className="pb-2">

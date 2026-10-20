@@ -454,7 +454,14 @@ fn get_windows_search_paths(paths: &mut Vec<PathBuf>) {
                 .join("openjdk"),
         );
     }
-    paths.push(PathBuf::from("./RTL/java"));
+    paths.push(crate::app_paths::portable_java_dir());
+    if let Ok(exe_dir) = std::env::current_exe().and_then(|exe| {
+        exe.parent()
+            .map(|dir| dir.to_path_buf())
+            .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "no parent"))
+    }) {
+        paths.push(exe_dir.join(".minecraft"));
+    }
 }
 #[allow(unused)]
 fn get_macos_search_paths(paths: &mut Vec<PathBuf>) {

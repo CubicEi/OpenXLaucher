@@ -609,7 +609,10 @@
     "deleteVersion": "Delete version",
     "pleaseClickTheTitleAboveToSelectAGame": "Please click the title above to select a game version",
     "afterConfigurationYouCanManageModsResourcePacksAnd": "After configuration, you can manage mods, resource packs, and more for the current version",
-    "goToModpackManagement": "Go to Modpack Management"
+    "goToModpackManagement": "Go to Modpack Management",
+    "coreSettings": "Core Settings",
+    "coreSettingsPlaceholder": "Additional core settings will appear here",
+    "featureEntries": "Features"
   },
   "checkUpdate": {
     "title": "Check for Updates",

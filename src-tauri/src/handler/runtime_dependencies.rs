@@ -15,27 +15,37 @@ pub struct RuntimeDependencyReport {
 }
 
 #[cfg(target_os = "windows")]
-fn is_webview2_installed() -> bool {
-    use winreg::enums::HKEY_LOCAL_MACHINE;
+fn webview2_version_from_key(hkey: winreg::HKEY, subkey: &str) -> bool {
     use winreg::RegKey;
 
-    const WEBVIEW2_CLIENT_ID: &str =
+    RegKey::predef(hkey)
+        .open_subkey(subkey)
+        .and_then(|key| key.get_value::<String, _>("pv"))
+        .ok()
+        .map(|version| {
+            !version.is_empty() && version != "0.0.0.0" && version != "0.0.0.0.0"
+        })
+        .unwrap_or(false)
+}
+
+#[cfg(target_os = "windows")]
+fn is_webview2_installed() -> bool {
+    use winreg::enums::{HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE};
+
+    const CLIENT_ID: &str =
         r"SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7CC4D}";
-    const WEBVIEW2_CLIENT_ID_WOW: &str =
+    const CLIENT_ID_WOW: &str =
         r"SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7CC4D}";
 
-    fn version_from_key(key_path: &str) -> bool {
-        RegKey::predef(HKEY_LOCAL_MACHINE)
-            .open_subkey(key_path)
-            .and_then(|key| key.get_value::<String, _>("pv"))
-            .ok()
-            .map(|version| {
-                !version.is_empty() && version != "0.0.0.0" && version != "0.0.0.0.0"
-            })
-            .unwrap_or(false)
+    for hkey in [HKEY_LOCAL_MACHINE, HKEY_CURRENT_USER] {
+        if webview2_version_from_key(hkey, CLIENT_ID)
+            || webview2_version_from_key(hkey, CLIENT_ID_WOW)
+        {
+            return true;
+        }
     }
 
-    version_from_key(WEBVIEW2_CLIENT_ID) || version_from_key(WEBVIEW2_CLIENT_ID_WOW)
+    false
 }
 
 #[tauri::command]

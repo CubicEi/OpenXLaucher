@@ -147,7 +147,15 @@ pub fn config_dir() -> String {
         .to_string_lossy()
         .to_string();
 
-    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    #[cfg(target_os = "windows")]
+    let dir = {
+        crate::app_paths::ensure_portable_dirs();
+        crate::app_paths::portable_config_dir()
+            .to_string_lossy()
+            .into_owned()
+    };
+
+    #[cfg(all(not(target_os = "macos"), not(target_os = "linux"), not(target_os = "windows")))]
     let dir = "./RTL/config".to_string();
 
     let _ = fs::create_dir_all(&dir);

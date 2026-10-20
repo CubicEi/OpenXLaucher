@@ -445,7 +445,7 @@ fn startup_minecraft_paths() -> Vec<String> {
         .join("launcher.json")
     };
     #[cfg(not(target_os = "macos"))]
-    let config_file = std::path::PathBuf::from("./RTL/config").join("launcher.json");
+    let config_file = crate::app_paths::portable_config_dir().join("launcher.json");
 
     let mut paths: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
     paths.insert(default_path);

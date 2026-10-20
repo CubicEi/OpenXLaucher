@@ -109,7 +109,11 @@ pub fn launch_game(
                         major, rt_name
                     );
                     let java_download_dir = crate::handler::config::get_java_download_dir()
-                        .unwrap_or_else(|_| "./RTL/java".to_string());
+                        .unwrap_or_else(|_| {
+                            crate::app_paths::portable_java_dir()
+                                .to_string_lossy()
+                                .into_owned()
+                        });
                     let task_id = std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
                         .map(|d| d.as_secs())

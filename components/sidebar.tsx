@@ -22,6 +22,11 @@ import { useUIConfigContext } from "@/components/ui-config/ui-config-provider"
 import { useI18n, type TranslationKey } from "@/components/i18n/use-i18n"
 import { ThemeSlot } from "@/components/themes/theme-slot"
 import { useThemeRuntime } from "@/components/themes/theme-runtime-provider"
+import { SidebarLaunchButton } from "@/components/launch/sidebar-launch-button"
+import {
+  navigateWithMainTransition,
+  normalizeAppPathname,
+} from "@/lib/main-navigation-transition"
 
 interface SidebarProps {
   className?: string
@@ -33,92 +38,6 @@ interface NavItem {
   label: string
   href: string
   isAvatar?: boolean
-}
-
-let activeNavigation: {
-  controller: AbortController
-  previousPointerEvents: string
-  previousTransition: string
-  previousOpacity: string
-} | null = null
-
-const FADE_OUT_MS = 80
-const FADE_IN_MS = 150
-// 新页面出现首个 mutation 后的稳定窗口 —— 只等很短时间就淡入，
-// 让用户尽快看到新页面的结构，剩余内容增量渲染时自然可见。
-const FIRST_MUTATION_SETTLE_MS = 80
-// 页面切换超时兜底：即使一直没有 mutation 也不再阻塞。
-const TIMEOUT_MS = 1200
-
-function abortActiveNavigation() {
-  const nav = activeNavigation
-  if (!nav) return
-  nav.controller.abort()
-  const main = document.querySelector<HTMLElement>("main")
-  if (main?.isConnected) {
-    main.style.pointerEvents = nav.previousPointerEvents
-    main.style.transition = nav.previousTransition
-    main.style.opacity = nav.previousOpacity
-  }
-  activeNavigation = null
-}
-
-// 归一化路径（去掉结尾斜杠），用于判断路由是否已切换到位。
-function normalizePathname(path: string) {
-  let normalized = path
-  if (normalized.length > 1 && normalized.endsWith("/")) {
-    normalized = normalized.slice(0, -1)
-  }
-  return normalized
-}
-
-function waitForPageContent(
-  main: HTMLElement,
-  targetPathname: string,
-  signal: AbortSignal
-) {
-  return new Promise<void>((resolve) => {
-    let settled = false
-    let settleTimer: number | undefined
-
-    const finish = () => {
-      if (settled) return
-      settled = true
-      observer.disconnect()
-      window.clearTimeout(timeoutTimer)
-      window.clearTimeout(settleTimer)
-      signal.removeEventListener("abort", finish)
-      resolve()
-    }
-
-    const observer = new MutationObserver(() => {
-      if (settled) return
-      if (normalizePathname(window.location.pathname) !== targetPathname) return
-      // 首次 mutation 就说明新页面开始渲染了，
-      // 设一个很短的稳定窗口吸收连续的初次渲染 mutation。
-      if (!settleTimer) {
-        settleTimer = window.setTimeout(() => {
-          settleTimer = undefined
-          finish()
-        }, FIRST_MUTATION_SETTLE_MS)
-      }
-    })
-
-    observer.observe(main, {
-      childList: true,
-      subtree: true,
-      characterData: true,
-    })
-
-    const timeoutTimer = window.setTimeout(finish, TIMEOUT_MS)
-
-    if (signal.aborted) {
-      finish()
-      return
-    }
-
-    signal.addEventListener("abort", finish, { once: true })
-  })
 }
 
 const NAV_ITEM_BASE: Omit<NavItem, "label">[] = [
@@ -160,66 +79,7 @@ function NavButton({ item, isActive, isExactActive }: { item: NavItem; isActive:
     }
 
     event.preventDefault()
-    const main = document.querySelector<HTMLElement>("main")
-    if (!main) return
-
-    abortActiveNavigation()
-
-    const controller = new AbortController()
-
-    // 尊重系统减弱动效设置：直接切换，不做任何过渡动画。
-    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
-      router.push(item.href)
-      return
-    }
-
-    const previousTransition = main.style.transition
-    const previousPointerEvents = main.style.pointerEvents
-    const previousOpacity = main.style.opacity
-
-    const navigation = {
-      controller,
-      previousTransition,
-      previousPointerEvents,
-      previousOpacity,
-    }
-    activeNavigation = navigation
-
-    main.style.pointerEvents = "none"
-    main.style.transition = `opacity ${FADE_OUT_MS}ms ease-out`
-    main.style.opacity = "0"
-
-    const targetPathname = normalizePathname(item.href)
-
-    // 路由切换与淡出动画并行执行：旧页开始淡出的同时，
-    // 新页的加载/渲染已经在进行，大大缩短空白窗口。
-    router.push(item.href)
-    const contentReady = waitForPageContent(
-      main,
-      targetPathname,
-      controller.signal
-    )
-
-    window.setTimeout(async () => {
-      if (controller.signal.aborted) return
-      await contentReady
-
-      if (activeNavigation !== navigation) return
-      requestAnimationFrame(() => {
-        if (!main.isConnected) return
-        main.style.transition = `opacity ${FADE_IN_MS}ms ease-out`
-        main.style.opacity = "1"
-        window.setTimeout(() => {
-          if (main.isConnected) {
-            main.style.transition = previousTransition
-            main.style.pointerEvents = previousPointerEvents
-            main.style.opacity = previousOpacity
-          }
-          if (activeNavigation === navigation) activeNavigation = null
-        }, FADE_IN_MS + 20)
-      })
-    }, FADE_OUT_MS / 2) // 在淡出动画过半后才开始准备淡入，
-    // 避免过早淡入导致旧页半透明残留与新页同时可见。
+    navigateWithMainTransition(router, item.href)
   }
 
   return (
@@ -270,12 +130,14 @@ function NavButton({ item, isActive, isExactActive }: { item: NavItem; isActive:
 }
 
 function isNavItemActive(pathname: string, href: string) {
-  if (href === "/") return pathname === "/"
-  return pathname === href || pathname.startsWith(`${href}/`)
+  const current = normalizeAppPathname(pathname)
+  const target = normalizeAppPathname(href)
+  if (target === "/") return current === "/"
+  return current === target || current.startsWith(`${target}/`)
 }
 
 function isNavItemExactActive(pathname: string, href: string) {
-  return pathname === href
+  return normalizeAppPathname(pathname) === normalizeAppPathname(href)
 }
 
 export function Sidebar({ className }: SidebarProps) {
@@ -322,6 +184,7 @@ export function Sidebar({ className }: SidebarProps) {
 
       <ThemeSlot registry={slots} owner={snapshot.activeOwner} slotId="app.sidebar.footer" onError={reportThemeError}>
         <div className="flex flex-col items-center gap-2 border-t border-border p-2">
+          <SidebarLaunchButton />
           {bottomNavItems.map((item) => (
             <NavButton key={item.href} item={item} isActive={isActive(item.href)} isExactActive={isExactActive(item.href)} />
           ))}

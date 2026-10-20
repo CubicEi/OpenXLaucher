@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useMemo } from "react";
+import { useRouter } from "next/navigation";
 import { invoke } from "@tauri-apps/api/core";
 import {
   Dialog,
@@ -17,7 +18,7 @@ import {
   Loader2,
   CheckCircle2,
   ChevronDown,
-  ChevronLeft,
+  Settings,
 } from "lucide-react";
 import { motion } from "framer-motion";
 import { cn } from "@/lib/utils";
@@ -37,14 +38,6 @@ interface ParsedVersion {
   loaderType: string;     // 加载器类型：vanilla/fabric/forge/neoforge/optifine/liteloader/quilt
   loaderVersion: string;  // 加载器版本号 如 0.15.11
 }
-
-/** 层级数据结构 - 按MC完整版本分组 */
-interface McVersionNode {
-  mcVersion: string;      // MC完整版本 如 1.20.1, 1.21.3, 26.1.2
-  subVersions: ParsedVersion[];  // 该MC版本下的所有子版本（整合包）
-}
-
-type Step = "mc" | "version";
 
 interface VersionSelectorDialogProps {
   open?: boolean;
@@ -228,18 +221,24 @@ function parsedVersionFromInstance(instance: ScannedInstance): ParsedVersion {
   };
 }
 
+function versionToLaunchConfig(version: ParsedVersion) {
+  const isVanilla = version.loaderType === "vanilla";
+  return {
+    versionName: version.name,
+    minecraftVersion: version.mcVersion,
+    loadType: isVanilla ? "0" : "1",
+    loadName: isVanilla ? "" : version.name,
+  } as const;
+}
+
 export function VersionSelectorDialog({ open: controlledOpen, onOpenChange, compact }: VersionSelectorDialogProps = {}) {
   const { t } = useI18n();
+  const router = useRouter();
   const { config, updateConfig } = useLaunchContext();
   const [internalOpen, setInternalOpen] = useState(false);
   const [versions, setVersions] = useState<ParsedVersion[]>([]);
   const [loading, setLoading] = useState(false);
-  const [mcSearchQuery, setMcSearchQuery] = useState("");
-  const [versionSearchQuery, setVersionSearchQuery] = useState("");
-
-  // 层级选择的状态
-  const [step, setStep] = useState<Step>("mc");
-  const [selectedMcVersion, setSelectedMcVersion] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
 
   const isControlled = controlledOpen !== undefined;
   const open = isControlled ? controlledOpen : internalOpen;
@@ -254,10 +253,7 @@ export function VersionSelectorDialog({ open: controlledOpen, onOpenChange, comp
   useEffect(() => {
     if (open) {
       loadVersions();
-      setStep("mc");
-      setSelectedMcVersion(null);
-      setMcSearchQuery("");
-      setVersionSearchQuery("");
+      setSearchQuery("");
     }
   }, [open, config.minecraftPath]);
 
@@ -286,94 +282,35 @@ export function VersionSelectorDialog({ open: controlledOpen, onOpenChange, comp
     }
   };
 
-  // 构建数据结构：按 mcVersion 组织，每个 mcVersion 下直接列出所有子版本
-  const mcTree = useMemo<McVersionNode[]>(() => {
-    const mcMap = new Map<string, ParsedVersion[]>();
-
-    for (const v of versions) {
-      if (!mcMap.has(v.mcVersion)) {
-        mcMap.set(v.mcVersion, []);
-      }
-      mcMap.get(v.mcVersion)!.push(v);
-    }
-
-    // 转换为数组并排序
-    return Array.from(mcMap.entries())
-      .map(([mcVersion, subVersions]) => ({
-        mcVersion,
-        subVersions,
-      }))
-      .sort((a, b) => compareMcVersionDesc(a.mcVersion, b.mcVersion));
-  }, [versions]);
-
-  // 当前选中 MC 节点
-  const currentMcNode = useMemo(
-    () => mcTree.find((n) => n.mcVersion === selectedMcVersion) || null,
-    [mcTree, selectedMcVersion]
-  );
-
-  // 当前版本列表
-  const currentVersionList = useMemo(() => {
-    if (!currentMcNode) return [];
-    return currentMcNode.subVersions;
-  }, [currentMcNode]);
-
-  // 第一步：过滤 MC 版本（同时搜索子版本实例名）
-  const filteredMcTree = useMemo(() => {
-    const q = mcSearchQuery.toLowerCase();
-    const wrapped = mcTree.map((n) => {
-      const matchingInstances: ParsedVersion[] = [];
-      if (q) {
-        for (const inst of n.subVersions) {
-          if (inst.name.toLowerCase().includes(q)) {
-            matchingInstances.push(inst);
-          }
-        }
-      }
-      return { node: n, matchingInstances, matchesMc: q ? n.mcVersion.toLowerCase().includes(q) : true };
+  const filteredVersions = useMemo(() => {
+    const sorted = [...versions].sort((a, b) => {
+      const byMc = compareMcVersionDesc(a.mcVersion, b.mcVersion);
+      if (byMc !== 0) return byMc;
+      return a.name.localeCompare(b.name);
     });
 
-    if (!q) return wrapped;
+    const q = searchQuery.trim().toLowerCase();
+    if (!q) return sorted;
 
-    return wrapped.filter((item) => item.matchesMc || item.matchingInstances.length > 0);
-  }, [mcTree, mcSearchQuery]);
-
-  // 第二步：过滤版本列表
-  const filteredVersionList = useMemo(() => {
-    if (!versionSearchQuery) return currentVersionList;
-    const q = versionSearchQuery.toLowerCase();
-    return currentVersionList.filter((v) =>
-      v.name.toLowerCase().includes(q) || v.loaderVersion.toLowerCase().includes(q)
+    return sorted.filter(
+      (v) =>
+        v.name.toLowerCase().includes(q) ||
+        v.mcVersion.toLowerCase().includes(q) ||
+        v.loaderVersion.toLowerCase().includes(q) ||
+        v.loaderType.toLowerCase().includes(q)
     );
-  }, [currentVersionList, versionSearchQuery]);
-
-  const handleSelectMcVersion = (mcVersion: string) => {
-    setSelectedMcVersion(mcVersion);
-    setVersionSearchQuery("");
-    setStep("version");
-  };
+  }, [versions, searchQuery]);
 
   const handleSelectVersion = (version: ParsedVersion) => {
-    const isVanilla = version.loaderType === "vanilla";
-    updateConfig({
-      // 整合包目录名（如 PVZ_Survive）
-      versionName: version.name,
-      // 基础 Minecraft 版本（用于定位游戏 JAR）
-      minecraftVersion: version.mcVersion,
-      // 加载器类型：0=原版，1=modloader
-      loadType: isVanilla ? "0" : "1",
-      // modloader 文件夹名（如 PVZ_Survive），原版时为空
-      loadName: isVanilla ? "" : version.name,
-    });
+    updateConfig(versionToLaunchConfig(version));
     setOpen(false);
   };
 
-  const goBack = () => {
-    if (step === "version") {
-      setStep("mc");
-      setSelectedMcVersion(null);
-      setVersionSearchQuery("");
-    }
+  const handleOpenGameSettings = (e: React.MouseEvent, version: ParsedVersion) => {
+    e.stopPropagation();
+    updateConfig(versionToLaunchConfig(version));
+    setOpen(false);
+    router.push("/game-settings");
   };
 
   return (
@@ -394,7 +331,7 @@ export function VersionSelectorDialog({ open: controlledOpen, onOpenChange, comp
           </Button>
         </DialogTrigger>
       )}
-      <DialogContent className="max-w-md max-h-[80vh] overflow-hidden">
+      <DialogContent className="max-w-4xl w-[min(896px,95vw)] max-h-[85vh] overflow-hidden">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <PackageOpen className="size-4 text-primary" />
@@ -403,142 +340,58 @@ export function VersionSelectorDialog({ open: controlledOpen, onOpenChange, comp
         </DialogHeader>
 
         <div className="space-y-4 overflow-hidden">
-          {/* 步骤标题 / 返回按钮 */}
-          {step !== "mc" && (
-            <div className="flex items-center gap-2 -mt-1">
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={goBack}
-                className="h-7 px-2 text-xs"
-              >
-                <ChevronLeft className="size-3.5 mr-0.5" />
-                {t("common.back")}
-              </Button>
-              <div className="text-xs text-muted-foreground">
-                {step === "version" && (
-                  <>
-                    MC {t("launch.versionSelector.version")}:{" "}
-                    <span className="font-medium text-foreground">
-                      {selectedMcVersion}
-                    </span>
-                  </>
-                )}
-              </div>
-            </div>
-          )}
-
-          {/* 搜索框（每步都显示） */}
           <div className="relative">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-muted-foreground" />
             <Input
-              placeholder={
-                step === "mc"
-                  ? t("launch.versionSelector.searchVanillaVersions")
-                  : t("launch.versionSelector.searchVersions")
-              }
-              value={
-                step === "mc"
-                  ? mcSearchQuery
-                  : versionSearchQuery
-              }
-              onChange={(e) => {
-                if (step === "mc") setMcSearchQuery(e.target.value);
-                else setVersionSearchQuery(e.target.value);
-              }}
+              placeholder={t("launch.versionSelector.searchVersions")}
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
               className="pl-9 text-xs"
             />
           </div>
 
-          {/* 主内容区 */}
-          <div className="max-h-96 overflow-y-auto overflow-x-hidden space-y-1">
+          <div className="max-h-[min(768px,62vh)] overflow-y-auto overflow-x-hidden space-y-1">
             {loading ? (
               <div className="flex items-center justify-center py-12">
                 <Loader2 className="size-6 animate-spin text-muted-foreground" />
               </div>
-            ) : step === "mc" ? (
-              filteredMcTree.length === 0 ? (
-                <div className="flex flex-col items-center justify-center py-12 text-center">
-                  <PackageOpen className="size-10 text-muted-foreground/40 mb-3" />
-                  <p className="text-sm text-muted-foreground mb-1">
-                    {mcSearchQuery ? t("launch.versionSelector.noMatchingVersionsFound") : t("launch.versionSidebar.noInstalledVersions")}
-                  </p>
+            ) : filteredVersions.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-12 text-center">
+                <PackageOpen className="size-10 text-muted-foreground/40 mb-3" />
+                <p className="text-sm text-muted-foreground mb-1">
+                  {searchQuery
+                    ? t("launch.versionSelector.noMatchingVersionsFound")
+                    : t("launch.versionSidebar.noInstalledVersions")}
+                </p>
+                {!searchQuery && (
                   <p className="text-xs text-muted-foreground/60">
                     {t("launch.versionSidebar.installAGameVersionFromDownloads")}
                   </p>
-                </div>
-              ) : (
-                filteredMcTree.map((item) => {
-                  const node = item.node;
-                  const totalCount = node.subVersions.length;
+                )}
+              </div>
+            ) : (
+              filteredVersions.map((version) => {
+                const isSelected =
+                  config.versionName === version.name &&
+                  (version.loaderType === "vanilla"
+                    ? config.loadType === "0"
+                    : config.loadName === version.name);
+                const display = LOADER_DISPLAY[version.loaderType];
 
-                  return (
-                    <motion.button
-                      key={node.mcVersion}
-                      onClick={() => handleSelectMcVersion(node.mcVersion)}
-                      className={cn(
-                        "w-full flex items-center gap-3 rounded-lg p-3 transition-colors text-left",
-                        "hover:bg-accent/50"
-                      )}
-                      whileHover={{ scale: 1.01 }}
-                      whileTap={{ scale: 0.99 }}
-                    >
-                      <LoaderIcon kind="vanilla" className="size-6 shrink-0" />
-
-                      <div className="flex-1 min-w-0 overflow-hidden">
-                        <div className="font-medium text-sm truncate">
-                          {node.mcVersion}
-                        </div>
-                        {mcSearchQuery && item.matchingInstances.length > 0 ? (
-                          <div className="text-[11px] text-muted-foreground/70 mt-1 flex flex-wrap gap-1">
-                            {item.matchingInstances.slice(0, 5).map((inst) => (
-                              <span
-                                key={inst.name}
-                                className="inline-block px-1.5 py-0.5 rounded bg-accent/60 text-foreground/80 truncate max-w-[120px]"
-                              >
-                                {inst.name}
-                              </span>
-                            ))}
-                            {item.matchingInstances.length > 5 && (
-                              <span className="text-muted-foreground/50">
-                                +{item.matchingInstances.length - 5}
-                              </span>
-                            )}
-                          </div>
-                        ) : (
-                          <div className="text-[11px] text-muted-foreground/70 mt-1">
-                            {t("launch.versionSelector.totalCountSubversions", { totalCount: totalCount })}
-                          </div>
-                        )}
-                      </div>
-
-                      <ChevronDown className="size-4 shrink-0 text-muted-foreground rotate-[-90deg]" />
-                    </motion.button>
-                  );
-                })
-              )
-            ) : step === "version" ? (
-              // 第二步：版本列表
-              filteredVersionList.length > 0 ? (
-                filteredVersionList.map((version) => {
-                  const isSelected =
-                    config.versionName === version.name &&
-                    (version.loaderType === "vanilla"
-                      ? config.loadType === "0"
-                      : config.loadName === version.name);
-                  const display = LOADER_DISPLAY[version.loaderType];
-
-                  return (
-                    <motion.button
-                      key={version.name}
+                return (
+                  <motion.div
+                    key={version.name}
+                    className={cn(
+                      "group w-full flex items-center gap-2 rounded-lg p-3 transition-colors",
+                      "hover:bg-accent/50",
+                      isSelected && "bg-accent text-accent-foreground"
+                    )}
+                    whileHover={{ scale: 1.005 }}
+                  >
+                    <button
+                      type="button"
                       onClick={() => handleSelectVersion(version)}
-                      className={cn(
-                        "w-full flex items-center gap-3 rounded-lg p-3 transition-colors text-left",
-                        "hover:bg-accent/50",
-                        isSelected && "bg-accent text-accent-foreground"
-                      )}
-                      whileHover={{ scale: 1.01 }}
-                      whileTap={{ scale: 0.99 }}
+                      className="flex flex-1 min-w-0 items-center gap-3 text-left"
                     >
                       {isSelected ? (
                         <div className="shrink-0 flex items-center">
@@ -552,10 +405,11 @@ export function VersionSelectorDialog({ open: controlledOpen, onOpenChange, comp
                       )}
 
                       <div className="flex-1 min-w-0 overflow-hidden">
-                        <div className="font-medium text-sm truncate">
-                          {version.name}
-                        </div>
-                        <div className="flex items-center gap-2 text-xs text-muted-foreground mt-0.5">
+                        <div className="font-medium text-sm truncate">{version.name}</div>
+                        <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground mt-0.5">
+                          <span className="text-[11px] text-muted-foreground/80">
+                            MC {version.mcVersion}
+                          </span>
                           {version.loaderType !== "vanilla" && (
                             <span className="text-[11px] text-muted-foreground/80">
                               {t("launch.versionSelector.loaderVersion")}: {version.loaderVersion}
@@ -572,18 +426,23 @@ export function VersionSelectorDialog({ open: controlledOpen, onOpenChange, comp
                           </span>
                         </div>
                       </div>
-                    </motion.button>
-                  );
-                })
-              ) : (
-                <div className="flex flex-col items-center justify-center py-12 text-center">
-                  <PackageOpen className="size-10 text-muted-foreground/40 mb-3" />
-                  <p className="text-sm text-muted-foreground">
-                    {versionSearchQuery ? t("launch.versionSelector.noMatchingVersionsFound") : t("launch.versionSelector.noVersionsAvailable")}
-                  </p>
-                </div>
-              )
-            ) : null}
+                    </button>
+
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="size-8 shrink-0 opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100"
+                      aria-label={t("sidebar.gameSettings")}
+                      title={t("sidebar.gameSettings")}
+                      onClick={(e) => handleOpenGameSettings(e, version)}
+                    >
+                      <Settings className="size-4" />
+                    </Button>
+                  </motion.div>
+                );
+              })
+            )}
           </div>
 
           {/* 刷新按钮 */}

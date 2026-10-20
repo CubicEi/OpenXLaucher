@@ -133,23 +133,51 @@ export function LaunchProvider({ children }: { children: React.ReactNode }) {
       tryMarkLoaded();
     });
 
-    void invoke<{
-      selected_java_path: string;
-      selected_minecraft_path: string;
-    }>("get_launcher_paths_config")
-      .then((pathsCfg) => {
-        if (cancelled) return;
-        setConfig((prev) => ({
-          ...prev,
-          ...(pathsCfg.selected_java_path ? { javaPath: pathsCfg.selected_java_path } : {}),
-          ...(pathsCfg.selected_minecraft_path ? { minecraftPath: pathsCfg.selected_minecraft_path } : {}),
-        }));
-      })
-      .catch(() => {})
-      .finally(() => {
+    const loadNativePaths = async () => {
+      if (!isTauriRuntime()) {
         nativePathsResolved = true;
         tryMarkLoaded();
-      });
+        return;
+      }
+      try {
+        const setup = await invoke<{
+          executed: boolean;
+          recommended_memory_mb: number;
+          selected_java_path: string;
+          selected_minecraft_path: string;
+        }>("run_portable_first_launch_setup");
+
+        const pathsCfg = await invoke<{
+          selected_java_path: string;
+          selected_minecraft_path: string;
+        }>("get_launcher_paths_config");
+
+        if (cancelled) return;
+
+        const useAutoMemory =
+          setup.executed ||
+          !savedConfig.maxMemory ||
+          savedConfig.maxMemory === DEFAULT_LAUNCH_CONFIG.maxMemory;
+
+        setConfig((prev) => ({
+          ...prev,
+          ...(useAutoMemory
+            ? { maxMemory: String(setup.recommended_memory_mb) }
+            : {}),
+          ...(pathsCfg.selected_java_path ? { javaPath: pathsCfg.selected_java_path } : {}),
+          ...(pathsCfg.selected_minecraft_path
+            ? { minecraftPath: pathsCfg.selected_minecraft_path }
+            : {}),
+        }));
+      } catch {
+        /* ignore */
+      } finally {
+        nativePathsResolved = true;
+        tryMarkLoaded();
+      }
+    };
+
+    void loadNativePaths();
     return () => { cancelled = true; };
   }, []);
 

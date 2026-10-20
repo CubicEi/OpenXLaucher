@@ -1,5 +1,9 @@
+use std::path::PathBuf;
+
 #[cfg(target_os = "linux")]
-use std::path::{Path, PathBuf};
+use std::path::Path;
+
+#[cfg(target_os = "linux")]
 
 #[cfg(target_os = "linux")]
 const APP_DIRECTORY_NAME: &str = "RTLauncher";
@@ -91,6 +95,41 @@ pub fn linux_cache_dir() -> PathBuf {
 #[cfg(target_os = "linux")]
 pub fn linux_minecraft_dir() -> PathBuf {
     linux_paths_from_environment()[3].clone()
+}
+
+/// Portable data root: `<launcher_exe_dir>/RTL` on Windows, `./RTL` elsewhere.
+pub fn portable_rtl_dir() -> PathBuf {
+    #[cfg(target_os = "windows")]
+    {
+        return std::env::current_exe()
+            .ok()
+            .and_then(|exe| exe.parent().map(|dir| dir.join("RTL")))
+            .unwrap_or_else(|| PathBuf::from("RTL"));
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        PathBuf::from("RTL")
+    }
+}
+
+pub fn portable_config_dir() -> PathBuf {
+    portable_rtl_dir().join("config")
+}
+
+pub fn portable_java_dir() -> PathBuf {
+    portable_rtl_dir().join("java")
+}
+
+pub fn launcher_exe_dir() -> PathBuf {
+    std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(|dir| dir.to_path_buf()))
+        .unwrap_or_else(|| PathBuf::from("."))
+}
+
+pub fn ensure_portable_dirs() {
+    let _ = std::fs::create_dir_all(portable_config_dir());
+    let _ = std::fs::create_dir_all(portable_java_dir());
 }
 
 #[cfg(all(test, target_os = "linux"))]

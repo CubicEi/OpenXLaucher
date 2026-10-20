@@ -609,7 +609,10 @@
     "deleteVersion": "删除版本",
     "pleaseClickTheTitleAboveToSelectAGame": "请先点击上方标题选择游戏版本",
     "afterConfigurationYouCanManageModsResourcePacksAnd": "配置完成后即可管理当前版本的模组、资源包等内容",
-    "goToModpackManagement": "进入整合包管理"
+    "goToModpackManagement": "进入整合包管理",
+    "coreSettings": "核心设置",
+    "coreSettingsPlaceholder": "更多核心设置将在此显示",
+    "featureEntries": "功能入口"
   },
   "checkUpdate": {
     "title": "检查更新",

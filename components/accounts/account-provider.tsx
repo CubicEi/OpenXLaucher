@@ -266,6 +266,14 @@ export function AccountProvider({ children }: { children: React.ReactNode }) {
           probeErrorMsg
         );
 
+        // 皮肤/披风探测超时 ≠ 凭据失效：网络慢时 probe 可能仍在进行，不应强制重新登录
+        if (probeErrorMsg.includes("SKIN_CAPE_PROBE_TIMEOUT")) {
+          console.log(
+            `[正版检测-前端] 步骤2：⚠ 皮肤与披风探测超时（非 token 失效），保持微软账号登录状态，跳过刷新与强制登录`
+          );
+          return;
+        }
+
         // 用户明确要求：如果【皮肤与披风】模块返回"账户 access_token 不存在，请重新登录"
         // 就直接调用 official.rs 强制玩家重新登录正版（跳过 refresh_token 静默刷新）
         const isMissingAccessToken =

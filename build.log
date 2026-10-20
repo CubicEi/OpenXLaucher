@@ -1,0 +1,55 @@
+
+
+> rtlauncher@0.1.2 build D:\programing\MCprojects\RTL_neo
+> next build
+
+▲ Next.js 16.1.6 (Turbopack)
+- Experiments (use with caution):
+  · optimizePackageImports
+
+  Creating an optimized production build ...
+✓ Compiled successfully in 12.3s
+  Running TypeScript ...
+  Collecting page data using 11 workers ...
+  Generating static pages using 11 workers (0/32) ...
+  Generating static pages using 11 workers (8/32) 
+  Generating static pages using 11 workers (16/32) 
+  Generating static pages using 11 workers (24/32) 
+✓ Generating static pages using 11 workers (32/32) in 1266.6ms
+  Finalizing page optimization ...
+
+Route (app)
+┌ ○ /
+├ ○ /_not-found
+├ ○ /api/english-search
+├ ○ /api/mod-detail
+├ ○ /api/mod-links
+├ ○ /check-update
+├ ○ /download
+├ ○ /download/detail
+├ ○ /game-settings
+├ ○ /game-settings/datapacks
+├ ○ /game-settings/modpacks
+├ ○ /game-settings/mods
+├ ○ /game-settings/resources
+├ ○ /game-settings/schematics
+├ ○ /game-settings/schematics/viewer
+├ ○ /game-settings/screenshots
+├ ○ /game-settings/shaders
+├ ○ /game-settings/worlds
+├ ○ /instance-settings/mods
+├ ○ /instance-settings/resources
+├ ○ /instance-settings/schematics
+├ ○ /instance-settings/screenshots
+├ ○ /instance-settings/shaders
+├ ○ /instance-settings/worlds
+├ ○ /launch
+├ ○ /multiplayer
+├ ○ /settings
+├ ○ /tools
+├ ○ /tools/browser
+└ ○ /tools/modpack-builder
+
+
+○  (Static)  prerendered as static content
+

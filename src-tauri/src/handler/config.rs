@@ -28,7 +28,15 @@ fn config_dir() -> String {
         .to_string_lossy()
         .to_string();
 
-    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    #[cfg(target_os = "windows")]
+    let dir = {
+        crate::app_paths::ensure_portable_dirs();
+        crate::app_paths::portable_config_dir()
+            .to_string_lossy()
+            .into_owned()
+    };
+
+    #[cfg(all(not(target_os = "macos"), not(target_os = "windows")))]
     let dir = "./RTL/config".to_string();
 
     let _ = fs::create_dir_all(&dir);
@@ -43,19 +51,17 @@ fn launcher_config_path() -> PathBuf {
 fn default_minecraft_path() -> String {
     #[cfg(target_os = "windows")]
     {
-        // Windows: %APPDATA%/.minecraft
+        let exe_mc = crate::app_paths::launcher_exe_dir().join(".minecraft");
+        if is_valid_minecraft_directory(&exe_mc) {
+            return exe_mc.to_string_lossy().into_owned();
+        }
         if let Ok(appdata) = std::env::var("APPDATA") {
             return std::path::PathBuf::from(appdata)
                 .join(".minecraft")
                 .to_string_lossy()
                 .to_string();
         }
-        // 回退到启动器所在目录
-        let exe_dir = std::env::current_exe()
-            .ok()
-            .and_then(|p| p.parent().map(|d| d.to_path_buf()))
-            .unwrap_or_else(|| std::path::PathBuf::from("."));
-        return exe_dir.join(".minecraft").to_string_lossy().to_string();
+        return exe_mc.to_string_lossy().into_owned();
     }
     #[cfg(target_os = "macos")]
     {
@@ -420,7 +426,9 @@ pub fn get_java_download_dir() -> Result<String, String> {
     };
 
     #[cfg(target_os = "windows")]
-    let dir = "./RTL/java".to_string();
+    let dir = crate::app_paths::portable_java_dir()
+        .to_string_lossy()
+        .into_owned();
 
     #[cfg(target_os = "linux")]
     let dir = crate::app_paths::linux_java_dir()
@@ -468,4 +476,68 @@ pub fn save_launcher_paths_config(config: LauncherPathsConfig) -> Result<(), Str
     
     let text = serde_json::to_string_pretty(&cfg).map_err(|e| e.to_string())?;
     fs::write(&path, text).map_err(|e| e.to_string())
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct PortableFirstLaunchResult {
+    pub executed: bool,
+    pub recommended_memory_mb: u64,
+    pub selected_java_path: String,
+    pub selected_minecraft_path: String,
+}
+
+/// 便携版首次启动：扫描 exe 同目录 `.minecraft`、自动搜索 Java，并写入 `RTL/config/launcher.json`。
+#[tauri::command]
+pub async fn run_portable_first_launch_setup() -> Result<PortableFirstLaunchResult, String> {
+    crate::app_paths::ensure_portable_dirs();
+    let memory = super::system::get_system_memory();
+
+    let config_path = launcher_config_path();
+    if config_path.exists() {
+        let cfg = get_launcher_paths_config();
+        return Ok(PortableFirstLaunchResult {
+            executed: false,
+            recommended_memory_mb: memory.recommended_mb,
+            selected_java_path: cfg.selected_java_path,
+            selected_minecraft_path: cfg.selected_minecraft_path,
+        });
+    }
+
+    let mut cfg = LauncherPathsConfig::default();
+    let portable_mc = crate::app_paths::launcher_exe_dir().join(".minecraft");
+    if is_valid_minecraft_directory(&portable_mc) {
+        let path = portable_mc.to_string_lossy().into_owned();
+        cfg.minecraft_paths = vec![path.clone()];
+        cfg.selected_minecraft_path = path;
+        cfg.default_minecraft_path = default_minecraft_path();
+    }
+
+    let installations = super::java_scanner::search_java_installations().await?;
+    if let Some(best) = installations.first() {
+        let java_path = best.path.clone();
+        if !cfg.java_paths.contains(&java_path) {
+            cfg.java_paths.push(java_path.clone());
+        }
+        cfg.selected_java_path = java_path;
+        cfg.java_installations.insert(
+            best.major_version.to_string(),
+            JavaInstallationInfo {
+                path: best.path.clone(),
+                version: best.version.clone(),
+                major_version: best.major_version,
+                vendor: best.vendor.clone(),
+                architecture: best.architecture.clone(),
+                java_type: best.java_type.clone(),
+            },
+        );
+    }
+
+    save_launcher_paths_config(cfg.clone())?;
+
+    Ok(PortableFirstLaunchResult {
+        executed: true,
+        recommended_memory_mb: memory.recommended_mb,
+        selected_java_path: cfg.selected_java_path,
+        selected_minecraft_path: cfg.selected_minecraft_path,
+    })
 }

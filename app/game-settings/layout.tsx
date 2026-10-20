@@ -1,18 +1,25 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { cn } from "@/lib/utils";
 import { useI18n, type Translation } from "@/components/i18n/use-i18n";
+import {
+  GAME_SETTINGS_CORE_HREF,
+  GAME_SETTINGS_FEATURE_NAV,
+} from "./feature-nav";
+import {
+  createInAppLinkHandler,
+  normalizeAppPathname,
+  onInAppLinkPointerDown,
+} from "@/lib/main-navigation-transition";
 
-const NAV_ITEMS = [
-  { href: "/game-settings/mods", label: "panel.mods" as Translation },
-  { href: "/game-settings/resources", label: "home.cardGrid.resourcePacks" as Translation },
-  { href: "/game-settings/worlds", label: "gameSettings.worlds" as Translation },
-  { href: "/game-settings/shaders", label: "home.cardGrid.shaders" as Translation },
-  { href: "/game-settings/datapacks", label: "gameSettings.datapacks" as Translation },
-  { href: "/game-settings/schematics", label: "home.cardGrid.schematics" as Translation },
-  { href: "/game-settings/screenshots", label: "home.cardGrid.screenshots" as Translation },
+const NAV_ITEMS: { href: string; label: Translation }[] = [
+  { href: GAME_SETTINGS_CORE_HREF, label: "gameSettings.coreSettings" },
+  ...GAME_SETTINGS_FEATURE_NAV.map((item) => ({
+    href: item.href,
+    label: item.label,
+  })),
 ];
 
 export default function GameSettingsLayout({
@@ -21,6 +28,8 @@ export default function GameSettingsLayout({
   children: React.ReactNode;
 }) {
   const pathname = usePathname();
+  const router = useRouter();
+  const currentPath = normalizeAppPathname(pathname);
   const { t } = useI18n();
 
   return (
@@ -33,10 +42,14 @@ export default function GameSettingsLayout({
             <Link
               key={item.href}
               href={item.href}
+              onPointerDown={onInAppLinkPointerDown}
+              onClick={createInAppLinkHandler(router, item.href, {
+                skipIfSamePath: true,
+              })}
               suppressHydrationWarning
               className={cn(
                 "px-3 py-1 rounded-md text-xs font-medium transition-colors whitespace-nowrap",
-                pathname === item.href
+                currentPath === normalizeAppPathname(item.href)
                   ? "bg-accent text-accent-foreground"
                   : "text-muted-foreground hover:text-foreground hover:bg-accent/50"
               )}
