@@ -8,17 +8,19 @@
 //! 5. After 5 successful game exits (code 0) for that backup entry, delete it
 
 use crate::handler::cache_paths::{get_mod_cache_dir, parse_mod_loader};
-use crate::handler::diagnostics::{download_file, search_curseforge, search_modrinth, ModSearchResult};
-use crate::handler::mod_parser::{parse_mods_in_dir, ModInfo};
-use crate::http_client::{get_with_retry, modrinth_client, RetryConfig};
+use crate::handler::diagnostics::{download_file, ModSearchResult};
+use crate::handler::mod_parser::{parse_mod, parse_mods_in_dir, ModInfo};
+use crate::handler::mod_platform::{
+    fetch_latest_search_result, list_compatible_versions, resolve_mod_platform,
+    ModRemoteVersionsResponse,
+};
 use serde::{Deserialize, Serialize};
-use sha1::{Digest, Sha1};
 use std::fs;
-use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
+use log::info;
 use tauri::{AppHandle, Emitter};
 
 const SUCCESS_THRESHOLD: u32 = 5;
@@ -135,20 +137,6 @@ fn sanitize_tag(s: &str) -> String {
         .collect()
 }
 
-fn file_sha1_hex(path: &Path) -> Option<String> {
-    let mut file = fs::File::open(path).ok()?;
-    let mut hasher = Sha1::new();
-    let mut buf = [0u8; 64 * 1024];
-    loop {
-        let n = file.read(&mut buf).ok()?;
-        if n == 0 {
-            break;
-        }
-        hasher.update(&buf[..n]);
-    }
-    Some(hex::encode(hasher.finalize()))
-}
-
 fn versions_differ(local: &str, remote: &str) -> bool {
     let local = local.trim();
     let remote = remote.trim();
@@ -171,163 +159,53 @@ fn versions_differ(local: &str, remote: &str) -> bool {
     }
 }
 
-async fn lookup_modrinth_by_hash(
-    sha1: &str,
-    mc_version: &str,
-    loader: &str,
-) -> Option<ModSearchResult> {
-    let client = modrinth_client().await;
-    let url = format!(
-        "https://api.modrinth.com/v2/version_file/{}?algorithm=sha1",
-        sha1
-    );
-    let response = get_with_retry(
-        &client,
-        &url,
-        Some(RetryConfig {
-            max_retries: 2,
-            initial_delay_ms: 400,
-            max_delay_ms: 2000,
-        }),
-    )
-    .await
-    .ok()?;
-    if !response.status().is_success() {
-        return None;
-    }
-    let text = response.text().await.ok()?;
-    let json: serde_json::Value = serde_json::from_str(&text).ok()?;
-    let project_id = json.get("project_id")?.as_str()?.to_string();
-
-    let versions_url = format!(
-        "https://api.modrinth.com/v2/project/{}/version?loaders=[\"{}\"]&game_versions=[\"{}\"]",
-        project_id,
-        loader.to_lowercase(),
-        mc_version
-    );
-    let versions_response = get_with_retry(
-        &client,
-        &versions_url,
-        Some(RetryConfig {
-            max_retries: 2,
-            initial_delay_ms: 400,
-            max_delay_ms: 2000,
-        }),
-    )
-    .await
-    .ok()?;
-    if !versions_response.status().is_success() {
-        return None;
-    }
-    let versions_text = versions_response.text().await.ok()?;
-    let versions_json: serde_json::Value = serde_json::from_str(&versions_text).ok()?;
-    let versions = versions_json.as_array()?;
-    let version = versions.first()?;
-
-    let game_versions = version
-        .get("game_versions")
-        .and_then(|v| v.as_array())
-        .cloned()
-        .unwrap_or_default();
-    let loaders = version
-        .get("loaders")
-        .and_then(|l| l.as_array())
-        .cloned()
-        .unwrap_or_default();
-
-    let matches_mc = game_versions.iter().any(|gv| {
-        gv.as_str()
-            .map(|s| s == mc_version)
-            .unwrap_or(false)
-    });
-    let matches_loader = loaders.iter().any(|l| {
-        l.as_str()
-            .map(|s| s.eq_ignore_ascii_case(loader))
-            .unwrap_or(false)
-    });
-    if !(matches_mc && matches_loader) {
-        // API query should already filter; still double-check.
-        if !matches_mc && !matches_loader {
-            return None;
-        }
-    }
-
-    let files_field = version.get("files").and_then(|f| f.as_array())?;
-    let file = files_field
-        .iter()
-        .find(|f| {
-            f.get("primary")
-                .and_then(|p| p.as_bool())
-                .unwrap_or(false)
-        })
-        .or_else(|| files_field.first())?;
-    let download_url = file.get("url").and_then(|u| u.as_str())?.to_string();
-    let file_name = file
-        .get("filename")
-        .and_then(|f| f.as_str())?
-        .to_string();
-    let version_number = version
-        .get("version_number")
-        .and_then(|v| v.as_str())?
-        .to_string();
-
-    Some(ModSearchResult {
-        source: "modrinth".to_string(),
-        mod_id: project_id.clone(),
-        slug: project_id,
-        title: String::new(),
-        download_url: Some(download_url),
-        file_name: Some(file_name),
-        mc_versions: game_versions
-            .iter()
-            .filter_map(|v| v.as_str().map(|s| s.to_string()))
-            .collect(),
-        loaders: loaders
-            .iter()
-            .filter_map(|l| l.as_str().map(|s| s.to_string()))
-            .collect(),
-        version_number: Some(version_number),
-    })
-}
-
 async fn find_latest_for_mod(
     mod_info: &ModInfo,
     jar_path: &Path,
     mc_version: &str,
     loader: &str,
 ) -> Option<ModSearchResult> {
-    if let Some(sha1) = file_sha1_hex(jar_path) {
-        if let Some(mut hit) = lookup_modrinth_by_hash(&sha1, mc_version, loader).await {
-            if hit.title.is_empty() {
-                hit.title = mod_info.name.clone();
-            }
-            hit.mod_id = mod_info.mod_id.clone();
-            return Some(hit);
-        }
-    }
+    let platform = resolve_mod_platform(mod_info, jar_path).await?;
+    fetch_latest_search_result(&platform, mc_version, loader).await
+}
 
-    // Prefer Modrinth by mod_id, then by display name; then CurseForge.
-    if let Some(hit) = search_modrinth(&mod_info.mod_id, mc_version, loader).await {
-        return Some(hit);
+#[tauri::command]
+pub async fn list_mod_remote_versions(
+    instance_dir: String,
+    file_name: String,
+    mc_version: String,
+    loader: String,
+) -> Result<ModRemoteVersionsResponse, String> {
+    let mc_version = mc_version.trim();
+    let loader = loader.trim();
+    if mc_version.is_empty() || loader.is_empty() {
+        return Err("缺少 Minecraft 版本或加载器".to_string());
     }
-    if !mod_info.name.is_empty()
-        && !mod_info.name.eq_ignore_ascii_case(&mod_info.mod_id)
-    {
-        if let Some(hit) = search_modrinth(&mod_info.name, mc_version, loader).await {
-            return Some(hit);
-        }
+    let jar_path = PathBuf::from(&instance_dir).join("mods").join(&file_name);
+    if !jar_path.is_file() {
+        return Err(format!("模组文件不存在: {}", file_name));
     }
-    if let Some(hit) = search_curseforge(&mod_info.mod_id, mc_version, loader).await {
-        return Some(hit);
+    let mod_info = parse_mod(jar_path.to_string_lossy().to_string())
+        .map_err(|e| e.to_string())?;
+    let resolved = resolve_mod_platform(&mod_info, &jar_path).await;
+    if let Some(platform) = resolved.as_ref() {
+        let versions = list_compatible_versions(platform, mc_version, loader).await;
+        let empty = versions.is_empty();
+        return Ok(ModRemoteVersionsResponse {
+            resolved: Some(platform.clone()),
+            versions,
+            message: if empty {
+                Some("未找到与当前实例兼容的远程版本".to_string())
+            } else {
+                None
+            },
+        });
     }
-    if !mod_info.name.is_empty()
-        && !mod_info.name.eq_ignore_ascii_case(&mod_info.mod_id)
-    {
-        if let Some(hit) = search_curseforge(&mod_info.name, mc_version, loader).await {
-            return Some(hit);
-        }
-    }
-    None
+    Ok(ModRemoteVersionsResponse {
+        resolved: None,
+        versions: Vec::new(),
+        message: Some("未能识别 Modrinth / CurseForge 项目（可尝试在百科或 jar 主页链接中核对）".to_string()),
+    })
 }
 
 fn to_update_info(mod_info: &ModInfo, remote: &ModSearchResult) -> Option<ModUpdateInfo> {

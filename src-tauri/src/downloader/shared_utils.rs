@@ -619,6 +619,8 @@ pub fn cleanup_vanilla_version_dir(mc_version: &str, minecraft_path: &Path) {
         let name = entry.file_name().to_string_lossy().to_string();
         let is_core_file = path.is_file()
             && (name == format!("{}.json", mc_version) || name == format!("{}.jar", mc_version));
+        // 下载流程会写入默认 options.txt（语言等），合并后删除中间原版目录时应视为可清理产物
+        let is_launcher_options = path.is_file() && name == "options.txt";
         let is_natives_dir =
             path.is_dir() && name == format!("{}-natives", mc_version);
         let is_empty_std_dir = path.is_dir()
@@ -636,7 +638,7 @@ pub fn cleanup_vanilla_version_dir(mc_version: &str, minecraft_path: &Path) {
             && fs::read_dir(&path)
                 .map(|mut d| d.next().is_none())
                 .unwrap_or(false);
-        if !(is_core_file || is_natives_dir || is_empty_std_dir) {
+        if !(is_core_file || is_launcher_options || is_natives_dir || is_empty_std_dir) {
             not_pristine = true;
             println!(
                 "[Cleanup] 原版目录含用户文件，跳过删除: {}",

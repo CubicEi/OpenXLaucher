@@ -26,6 +26,7 @@ import {
   type ModUpdatePayload,
 } from "@/components/download/download-provider";
 import { useI18n } from "@/components/i18n/use-i18n";
+import { ModRemoteVersionsSection } from "@/components/mods/mod-remote-versions-section";
 
 const MODS_CONFIG = {
   title: "panel.mods" as const,
@@ -47,11 +48,19 @@ const MODS_CONFIG = {
 function ModDetailPage({
   fileName,
   info,
+  instanceDir,
+  mcVersion,
+  modLoader,
   onBack,
+  onRefresh,
 }: {
   fileName: string;
   info: ModInfo;
+  instanceDir: string;
+  mcVersion: string;
+  modLoader: string;
   onBack: () => void;
+  onRefresh: () => void;
 }) {
   return (
     <motion.div
@@ -281,6 +290,15 @@ function ModDetailPage({
               <p className="text-sm text-muted-foreground">该模组无声明的依赖项</p>
             </div>
           )}
+
+          <ModRemoteVersionsSection
+            fileName={fileName}
+            info={info}
+            instanceDir={instanceDir}
+            mcVersion={mcVersion}
+            modLoader={modLoader}
+            onInstalled={onRefresh}
+          />
         </div>
       </motion.div>
     </motion.div>
@@ -415,6 +433,10 @@ export default function ModsPage() {
       <ModDetailPage
         fileName={selectedDetail.fileName}
         info={selectedDetail.info}
+        instanceDir={extra.instanceDir ?? ""}
+        mcVersion={extra.mcVersion ?? ""}
+        modLoader={extra.modLoader ?? ""}
+        onRefresh={() => extra.refresh()}
         onBack={() => {
           setSelectedDetail(null);
           setView("list");

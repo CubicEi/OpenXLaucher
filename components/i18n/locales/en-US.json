@@ -262,7 +262,15 @@
     "updatesFound": "{count} updates",
     "noUpdatesFound": "No updates found",
     "updateSourceNotFound": "Update source not found",
-    "updating": "Updating…"
+    "updating": "Updating…",
+    "remoteVersionsTitle": "Downloadable versions",
+    "remoteVersionsLoading": "Loading remote versions…",
+    "remoteVersionsResolved": "Resolved: {title} ({source})",
+    "remoteVersionInstall": "Install this version",
+    "remoteVersionCurrent": "Current",
+    "remoteVersionRelease": "Release",
+    "remoteVersionBeta": "Beta",
+    "remoteVersionAlpha": "Alpha"
   },
   "home": {
     "modLoader": "Mod loader",

@@ -175,6 +175,135 @@ pub struct ModSearchResult {
     pub mcmod_id: Option<i64>,
 }
 
+/// Row from moddata used for high-confidence platform slug resolution.
+#[derive(Debug, Clone)]
+pub struct ModdataHint {
+    pub slug: String,
+    pub chinese_name: String,
+    pub mcmod_id: Option<i64>,
+}
+
+/// Query moddata for platform hints (exact slug / Chinese name), not fuzzy LIKE search.
+pub(crate) fn query_moddata_for_platform_hint(
+    mod_id: &str,
+    display_name: &str,
+) -> Result<Vec<ModdataHint>, String> {
+    ensure_moddata_connection()?;
+
+    let lock = get_moddata_connection();
+    let guard = lock.lock().map_err(|e| e.to_string())?;
+    let conn = guard
+        .as_ref()
+        .ok_or_else(|| "数据库连接未初始化".to_string())?;
+
+    let mut results: Vec<ModdataHint> = Vec::new();
+    let mod_id_trimmed = mod_id.trim();
+    if !mod_id_trimmed.is_empty() {
+        let query = "SELECT slug, chinese_name, mcmod_id FROM mod_names \
+                     WHERE LOWER(slug) = LOWER(?1) \
+                     ORDER BY id ASC LIMIT 20";
+        let mut statement = conn
+            .prepare(query)
+            .map_err(|e| format!("准备查询失败: {}", e))?;
+        statement
+            .bind((1, mod_id_trimmed))
+            .map_err(|e| format!("绑定参数失败: {}", e))?;
+        while let State::Row = statement.next().map_err(|e| format!("查询失败: {}", e))? {
+            let slug = statement.read::<String, _>(0).unwrap_or_default();
+            let chinese_name = statement.read::<String, _>(1).unwrap_or_default();
+            let mcmod_id: Option<i64> = statement.read::<i64, _>(2).ok();
+            results.push(ModdataHint {
+                slug,
+                chinese_name,
+                mcmod_id,
+            });
+        }
+    }
+
+    let name_trimmed = display_name.trim();
+    let has_cjk = name_trimmed.chars().any(|c| {
+        let code = c as u32;
+        (0x4E00..=0x9FFF).contains(&code) || (0x3400..=0x4DBF).contains(&code)
+    });
+    if has_cjk && !name_trimmed.is_empty() {
+        let query = "SELECT slug, chinese_name, mcmod_id FROM mod_names \
+                     WHERE chinese_name = ?1 \
+                     ORDER BY id ASC LIMIT 20";
+        let mut statement = conn
+            .prepare(query)
+            .map_err(|e| format!("准备查询失败: {}", e))?;
+        statement
+            .bind((1, name_trimmed))
+            .map_err(|e| format!("绑定参数失败: {}", e))?;
+        while let State::Row = statement.next().map_err(|e| format!("查询失败: {}", e))? {
+            let slug = statement.read::<String, _>(0).unwrap_or_default();
+            let chinese_name = statement.read::<String, _>(1).unwrap_or_default();
+            let mcmod_id: Option<i64> = statement.read::<i64, _>(2).ok();
+            if !results.iter().any(|r| r.slug == slug && r.chinese_name == chinese_name) {
+                results.push(ModdataHint {
+                    slug,
+                    chinese_name,
+                    mcmod_id,
+                });
+            }
+        }
+    }
+
+    Ok(results)
+}
+
+#[derive(Debug, Clone)]
+pub struct ModdataPlatformHint {
+    pub slug: String,
+    pub mcmod_id: Option<i64>,
+}
+
+fn contains_chinese(s: &str) -> bool {
+    s.chars().any(|c| ('\u{4e00}'..='\u{9fff}').contains(&c))
+}
+
+fn names_highly_consistent(display_name: &str, chinese_name: &str) -> bool {
+    let display = display_name.trim();
+    let chinese = chinese_name.trim();
+    if display.is_empty() || chinese.is_empty() {
+        return false;
+    }
+    if display.eq_ignore_ascii_case(chinese) {
+        return true;
+    }
+    if contains_chinese(display) {
+        return display == chinese || display.contains(chinese) || chinese.contains(display);
+    }
+    false
+}
+
+/// High-confidence mapping from local mod metadata to a curated platform slug.
+pub fn lookup_moddata_platform_hint(mod_id: &str, display_name: &str) -> Option<ModdataPlatformHint> {
+    let candidates = query_moddata_for_platform_hint(mod_id, display_name).ok()?;
+    if candidates.is_empty() {
+        return None;
+    }
+    let mod_id = mod_id.trim();
+    for hint in &candidates {
+        if !mod_id.is_empty() && hint.slug.eq_ignore_ascii_case(mod_id) {
+            return Some(ModdataPlatformHint {
+                slug: hint.slug.clone(),
+                mcmod_id: hint.mcmod_id,
+            });
+        }
+    }
+    if candidates.len() == 1 {
+        let only = &candidates[0];
+        if names_highly_consistent(display_name, &only.chinese_name) {
+            return Some(ModdataPlatformHint {
+                slug: only.slug.clone(),
+                mcmod_id: only.mcmod_id,
+            });
+        }
+    }
+    None
+}
+
 /// 在 moddata.db 中按中文关键词模糊搜索
 /// 
 /// # 参数

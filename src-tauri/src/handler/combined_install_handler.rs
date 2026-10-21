@@ -447,22 +447,20 @@ async fn run_combined_install(
     if selections.iter().any(|s| s.loader_type == "fabric_api") {
         copy_version_mods_to_instance(&final_name, mc_version, minecraft_path);
         // fabric-api jar 是我们下载到原版 mods 目录的临时产物，复制到实例后删掉，
-        // 让原版目录保持干净，便于组包后整体清理
-        if final_name != mc_version {
-            let mc_mods = minecraft_path.join("versions").join(mc_version).join("mods");
-            let inst_mods = minecraft_path.join("versions").join(&final_name).join("mods");
-            if let Ok(entries) = fs::read_dir(&mc_mods) {
-                for entry in entries.flatten() {
-                    let src = entry.path();
-                    if !src.is_file() {
-                        continue;
-                    }
-                    let name = entry.file_name().to_string_lossy().to_string();
-                    if name.starts_with("fabric-api-") && name.ends_with(".jar") {
-                        let dst = inst_mods.join(&name);
-                        if dst.exists() {
-                            let _ = fs::remove_file(&src);
-                        }
+        // 让原版目录保持干净，便于组包后整体清理中间原版目录
+        let mc_mods = minecraft_path.join("versions").join(mc_version).join("mods");
+        let inst_mods = minecraft_path.join("versions").join(&final_name).join("mods");
+        if let Ok(entries) = fs::read_dir(&mc_mods) {
+            for entry in entries.flatten() {
+                let src = entry.path();
+                if !src.is_file() {
+                    continue;
+                }
+                let name = entry.file_name().to_string_lossy().to_string();
+                if name.starts_with("fabric-api-") && name.ends_with(".jar") {
+                    let dst = inst_mods.join(&name);
+                    if dst.exists() || final_name == mc_version {
+                        let _ = fs::remove_file(&src);
                     }
                 }
             }
@@ -485,9 +483,8 @@ async fn run_combined_install(
             cleanup_loader_version_dir(loader_ver, minecraft_path);
         }
     }
-    // 与 HMCL 一致：原版已完整并入合并实例（无 inheritsFrom、库全量合并、jar 已复制），
-    // 删除原版目录，版本列表只保留合并后的单个实例
-    if final_name != mc_version {
+    // 加载器/OptiFine 组包后：中间原版 versions/{mc} 仅用于下载与合并，成功后删除（失败不会走到此处）
+    if loader_target.is_some() && final_name != mc_version {
         cleanup_vanilla_version_dir(mc_version, minecraft_path);
     }
 
