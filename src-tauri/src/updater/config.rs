@@ -9,7 +9,8 @@ const MIN_CHECK_INTERVAL_SECONDS: i64 = 5;
 
 const LIGHTING_TEAM_UPDATE_ENDPOINT: &str =
     "http://update-service.lighting-team.com/api/v1/versions";
-const GITHUB_UPDATE_ENDPOINT: &str = "https://api.github.com/repos/cqw-acq/RTLauncher_new/releases";
+const GITHUB_UPDATE_ENDPOINT: &str =
+    "https://api.github.com/repos/CubicEi/OpenXLaucher/releases";
 const LIGHTING_TEAM_ASSET_HOST: &str =
     "7463-tcb-charcaius-d0gpaxdu6e2408df8-1306022435.tcb.qcloud.la";
 
@@ -129,7 +130,7 @@ pub fn is_trusted_release_asset_url(url: &str) -> bool {
     match host {
         "github.com" => parsed
             .path()
-            .starts_with("/cqw-acq/RTLauncher_new/releases/download/"),
+            .starts_with("/CubicEi/OpenXLaucher/releases/download/"),
         LIGHTING_TEAM_ASSET_HOST => parsed.path().starts_with("/RTL/releases/"),
         _ => false,
     }
@@ -139,7 +140,7 @@ pub fn config_dir() -> String {
     #[cfg(target_os = "macos")]
     let dir = {
         let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
-        format!("{}/Library/Application Support/RTLauncher/config", home)
+        format!("{}/Library/Application Support/OpenXLauncher/config", home)
     };
 
     #[cfg(target_os = "linux")]
@@ -156,7 +157,7 @@ pub fn config_dir() -> String {
     };
 
     #[cfg(all(not(target_os = "macos"), not(target_os = "linux"), not(target_os = "windows")))]
-    let dir = "./RTL/config".to_string();
+    let dir = "./OpenX/config".to_string();
 
     let _ = fs::create_dir_all(&dir);
     dir
@@ -401,7 +402,7 @@ mod tests {
     #[test]
     fn updater_accepts_only_configured_release_hosts() {
         assert!(is_trusted_download_url(
-            "https://github.com/cqw-acq/RTLauncher_new/releases/download/1.2.0/app.exe"
+            "https://github.com/CubicEi/OpenXLaucher/releases/download/1.2.0/app.exe"
         ));
         assert!(is_trusted_download_url(
             "https://release-assets.githubusercontent.com/github-production-release-asset/app.exe"
@@ -416,14 +417,14 @@ mod tests {
             "https://gitcode.com/bubulaladdi/RTLauncher/releases/download/1.2.0/app.exe"
         ));
         assert!(!is_trusted_download_url(
-            "https://example.com/RTLauncher/app.exe"
+            "https://example.com/OpenXLauncher/app.exe"
         ));
     }
 
     #[test]
     fn initial_asset_url_is_limited_to_the_configured_repository_or_bucket() {
         assert!(is_trusted_release_asset_url(
-            "https://github.com/cqw-acq/RTLauncher_new/releases/download/1.2.0/app.exe"
+            "https://github.com/CubicEi/OpenXLaucher/releases/download/1.2.0/app.exe"
         ));
         assert!(is_trusted_release_asset_url(
             "https://7463-tcb-charcaius-d0gpaxdu6e2408df8-1306022435.tcb.qcloud.la/RTL/releases/1.2.0/app.exe"

@@ -19,6 +19,53 @@ const MIRROR_URL: &str = "https://bmclapi2.bangbang93.com";
 
 // 过高的文件级并发会争用 Tokio 线程、文件描述符和磁盘，拖慢整个启动器。
 const MAX_CONCURRENT_DOWNLOADS: usize = 16;
+
+/// 安装/下载进度更新（percent 必填；stage/message 用于 UI 详情）。
+#[derive(Debug, Clone, Default)]
+pub struct ProgressUpdate {
+    pub percent: f64,
+    pub stage: Option<String>,
+    pub message: Option<String>,
+}
+
+impl ProgressUpdate {
+    pub fn percent(percent: f64) -> Self {
+        Self {
+            percent,
+            stage: None,
+            message: None,
+        }
+    }
+
+    pub fn with_stage(percent: f64, stage: impl Into<String>) -> Self {
+        Self {
+            percent,
+            stage: Some(stage.into()),
+            message: None,
+        }
+    }
+
+    pub fn with_detail(
+        percent: f64,
+        stage: impl Into<String>,
+        message: impl Into<String>,
+    ) -> Self {
+        Self {
+            percent,
+            stage: Some(stage.into()),
+            message: Some(message.into()),
+        }
+    }
+
+    pub fn remap(&self, base: f64, scale: f64) -> Self {
+        Self {
+            percent: base + self.percent * scale,
+            stage: self.stage.clone(),
+            message: self.message.clone(),
+        }
+    }
+}
+
 #[derive(Debug)]
 struct DownloadTask {
     urls: Vec<String>,
@@ -226,17 +273,27 @@ async fn check_sha1(file: &mut File, expected: &str) -> Result<bool, Box<dyn Err
 pub async fn process_version(
     version: &str,
     minecraft_path: &Path,
-    progress_tx: mpsc::Sender<f64>,
+    progress_tx: mpsc::Sender<ProgressUpdate>,
     cancel: Arc<AtomicBool>,
 ) -> Result<Vec<String>, Box<dyn Error + Send + Sync>> {
     let version_dir = minecraft_path.join("versions").join(version);
     fs::create_dir_all(&version_dir)?;
     let natives_dir = &version_dir.join(format!("{}-natives", version));
     fs::create_dir_all(&natives_dir)?;
+    let _ = progress_tx
+        .send(ProgressUpdate::with_detail(
+            0.0,
+            "获取版本清单",
+            format!("正在获取 {} 的版本信息", version),
+        ))
+        .await;
     let json_url = fetch_version_url(version).await?;
     let json_content = reqwest::get(&json_url).await?.text().await?;
     fs::write(version_dir.join(format!("{}.json", version)), &json_content)?;
     let version_data: VersionJson = serde_json::from_str(&json_content)?;
+    let _ = progress_tx
+        .send(ProgressUpdate::with_stage(1.0, "下载原版文件"))
+        .await;
     let assets_content = reqwest::get(&version_data.asset_index.url)
         .await?
         .text()
@@ -340,7 +397,15 @@ pub async fn process_version(
                 } else {
                     100.0
                 };
-                if tx.send(percent).await.is_err() {
+                if tx
+                    .send(ProgressUpdate::with_detail(
+                        percent,
+                        "下载原版文件",
+                        format!("已下载 {}/{} 个文件", done, total),
+                    ))
+                    .await
+                    .is_err()
+                {
                     break;
                 }
                 if done >= total {
@@ -369,8 +434,6 @@ pub async fn process_version(
         .collect::<Vec<_>>()
         .await;
     progress_reporter.abort();
-    let _ = progress_tx.send(100.0).await;
-    drop(progress_tx);
     let mut errors = Vec::new();
     for result in results {
         if let Err(e) = result {
@@ -386,6 +449,9 @@ pub async fn process_version(
         (done as f64 / total as f64) * 100.0,
         failed
     );
+    let _ = progress_tx
+        .send(ProgressUpdate::with_stage(98.0, "解压原生库"))
+        .await;
     let extract_result = extract_library_paths(
         minecraft_path.to_string_lossy().to_string(),
         version.to_string(),
@@ -400,6 +466,10 @@ pub async fn process_version(
         }
     }
     ensure_options_lang(&version_dir).await?;
+    let _ = progress_tx
+        .send(ProgressUpdate::with_stage(100.0, "安装原版 Minecraft"))
+        .await;
+    drop(progress_tx);
     Ok(errors)
 }
 

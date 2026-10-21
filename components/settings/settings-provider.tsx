@@ -94,8 +94,12 @@ export const BG_BLUR_MAX = 20;
 export const BG_OPACITY_MIN = 0;
 export const BG_OPACITY_MAX = 100;
 
-const STORAGE_KEY = "rtlauncher:settings:v4";
-const LEGACY_STORAGE_KEY = "rtlauncher:settings:v3";
+const STORAGE_KEY = "openxlauncher:settings:v4";
+const LEGACY_STORAGE_KEYS = [
+  "openxlauncher:settings:v3",
+  "rtlauncher:settings:v4",
+  "rtlauncher:settings:v3",
+] as const;
 
 type LegacySettings = {
   general?: Partial<GeneralSettings>;
@@ -384,11 +388,22 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
 
     try {
       const current = localStorage.getItem(STORAGE_KEY);
-      const legacy = current ? null : localStorage.getItem(LEGACY_STORAGE_KEY);
-      const raw = current ?? legacy;
+      let legacyRaw: string | null = null;
+      let legacyKey: string | null = null;
+      if (!current) {
+        for (const key of LEGACY_STORAGE_KEYS) {
+          const value = localStorage.getItem(key);
+          if (value != null) {
+            legacyRaw = value;
+            legacyKey = key;
+            break;
+          }
+        }
+      }
+      const raw = current ?? legacyRaw;
       if (raw) {
         const stored = JSON.parse(raw) as Partial<LauncherSettings>;
-        const parsed = legacy
+        const parsed = legacyKey?.endsWith(":v3")
           ? migrateSettingsV3(stored as LegacySettings)
           : stored;
         merged = {

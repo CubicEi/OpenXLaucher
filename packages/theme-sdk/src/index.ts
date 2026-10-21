@@ -2,7 +2,7 @@ export type {
   CoreRouteId,
   CoreSlotId,
   JsonValue,
-  RTLauncherThemeSDK,
+  OpenXLauncherThemeSDK,
   ThemeContext,
   ThemeDefinition,
   ThemeLifecycle,

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { motion } from "framer-motion";
 import {
   Puzzle,
@@ -19,6 +19,13 @@ import { useResourcePage, ResourcePageFallback } from "@/components/resource-pag
 import { fadeSlideUp } from "@/lib/motion";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { invoke } from "@tauri-apps/api/core";
+import { isTauriRuntime } from "@/lib/tauri-runtime";
+import {
+  useDownloadManager,
+  type ModUpdatePayload,
+} from "@/components/download/download-provider";
+import { useI18n } from "@/components/i18n/use-i18n";
 
 const MODS_CONFIG = {
   title: "panel.mods" as const,
@@ -281,9 +288,16 @@ function ModDetailPage({
 }
 
 export default function ModsPage() {
-  const { panel, loadingState } = useResourcePage(MODS_CONFIG);
+  const { t } = useI18n();
+  const { panel, loadingState, extra } = useResourcePage(MODS_CONFIG);
+  const { startModUpdate, startModUpdateAll } = useDownloadManager();
   const [view, setView] = useState<"list" | "detail">("list");
   const [selectedDetail, setSelectedDetail] = useState<{ fileName: string; info: ModInfo } | null>(null);
+
+  const [checkingUpdates, setCheckingUpdates] = useState(false);
+  const [updatesByFile, setUpdatesByFile] = useState<Map<string, ModUpdatePayload>>(new Map());
+  const [updatingFiles, setUpdatingFiles] = useState<Set<string>>(new Set());
+  const [checkMessage, setCheckMessage] = useState<string | null>(null);
 
   // 准备中状态：configLoaded=true 但 instances 还在扫描 / minecraftPath 待定
   const [preparingTimeout, setPreparingTimeout] = useState(false);
@@ -292,6 +306,83 @@ export default function ModsPage() {
     const t = window.setTimeout(() => setPreparingTimeout(true), 1200);
     return () => window.clearTimeout(t);
   }, [loadingState.configLoaded]);
+
+  const handleCheckUpdates = useCallback(async () => {
+    if (!isTauriRuntime()) return;
+    const { instanceDir, mcVersion, modLoader } = extra;
+    if (!instanceDir || !mcVersion || !modLoader) {
+      setCheckMessage(t("panel.updateSourceNotFound"));
+      return;
+    }
+    setCheckingUpdates(true);
+    setCheckMessage(null);
+    try {
+      const results = await invoke<ModUpdatePayload[]>("check_mods_updates", {
+        instanceDir,
+        mcVersion,
+        loader: modLoader,
+      });
+      const map = new Map<string, ModUpdatePayload>();
+      for (const item of results) {
+        map.set(item.fileName, item);
+      }
+      setUpdatesByFile(map);
+      setCheckMessage(
+        map.size > 0
+          ? t("panel.updatesFound", { count: map.size })
+          : t("panel.noUpdatesFound")
+      );
+    } catch (e) {
+      console.error("check_mods_updates failed:", e);
+      setCheckMessage(String(e));
+    } finally {
+      setCheckingUpdates(false);
+    }
+  }, [extra, t]);
+
+  const handleUpdateOne = useCallback(
+    async (fileName: string) => {
+      const update = updatesByFile.get(fileName);
+      const { instanceDir, mcVersion, modLoader } = extra;
+      if (!update || !instanceDir || !mcVersion || !modLoader) return;
+      setUpdatingFiles((prev) => new Set(prev).add(fileName));
+      try {
+        await startModUpdate(instanceDir, mcVersion, modLoader, update);
+        setUpdatesByFile((prev) => {
+          const next = new Map(prev);
+          next.delete(fileName);
+          return next;
+        });
+        extra.refresh();
+      } catch (e) {
+        console.error("update_mod failed:", e);
+      } finally {
+        setUpdatingFiles((prev) => {
+          const next = new Set(prev);
+          next.delete(fileName);
+          return next;
+        });
+      }
+    },
+    [updatesByFile, extra, startModUpdate]
+  );
+
+  const handleUpdateAll = useCallback(async () => {
+    const { instanceDir, mcVersion, modLoader } = extra;
+    if (!instanceDir || !mcVersion || !modLoader || updatesByFile.size === 0) return;
+    const updates = Array.from(updatesByFile.values());
+    const files = updates.map((u) => u.fileName);
+    setUpdatingFiles(new Set(files));
+    try {
+      await startModUpdateAll(instanceDir, mcVersion, modLoader, updates);
+      setUpdatesByFile(new Map());
+      extra.refresh();
+    } catch (e) {
+      console.error("update_mods failed:", e);
+    } finally {
+      setUpdatingFiles(new Set());
+    }
+  }, [extra, updatesByFile, startModUpdateAll]);
 
   const blockingInstanceScan =
     loadingState.instancesScanning && !loadingState.instanceDir;
@@ -338,10 +429,32 @@ export default function ModsPage() {
     setView("detail");
   };
 
+  const modUpdatesForPanel = new Map(
+    Array.from(updatesByFile.entries()).map(([file, u]) => [
+      file,
+      {
+        newVersion: u.newVersion,
+        currentVersion: u.currentVersion,
+        source: u.source,
+      },
+    ])
+  );
+
+  const leftDescription = checkMessage
+    ? `${panel.leftDescription} · ${checkMessage}`
+    : panel.leftDescription;
+
   return (
     <ResourcePanel
       {...panel}
+      leftDescription={leftDescription}
       onOpenModDetail={handleOpenDetail}
+      modUpdates={modUpdatesForPanel}
+      onCheckUpdates={handleCheckUpdates}
+      checkingUpdates={checkingUpdates}
+      onUpdateAll={handleUpdateAll}
+      onUpdateOne={handleUpdateOne}
+      updatingFiles={updatingFiles}
     />
   );
 }

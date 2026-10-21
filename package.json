@@ -1,6 +1,6 @@
 {
-  "name": "rtlauncher",
-  "version": "0.1.2",
+  "name": "openxlauncher",
+  "version": "0.2.0-beta",
   "private": true,
   "scripts": {
     "dev": "next dev -p 51515",

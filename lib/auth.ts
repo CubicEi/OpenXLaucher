@@ -5,13 +5,29 @@ import { invoke } from "@tauri-apps/api/core";
 
 // ======================== 类型定义 ========================
 
-/** 后端返回的账户信息 (LittleSkin) */
+/** 皮肤模型：classic=粗臂，slim=细臂 */
+export type SkinVariant = "classic" | "slim";
+
+/** 将后端/API 返回的 variant 归一化为 classic | slim */
+export function normalizeSkinVariant(
+  raw?: string | null
+): SkinVariant | undefined {
+  if (!raw) return undefined;
+  const v = raw.trim().toLowerCase();
+  if (v === "slim" || v === "alex") return "slim";
+  if (v === "classic" || v === "default" || v === "steve") return "classic";
+  return "classic";
+}
+
+/** 后端返回的账户信息 (LittleSkin / Microsoft) */
 export type AccountInfo = {
   name: string;
   uuid: string;
   auth_type: string;
   access_token: string;
   skin_url: string | null;
+  /** 皮肤模型 classic | slim（来自 profile） */
+  variant?: SkinVariant | string | null;
 };
 
 /** LittleSkin 账号密码登录结果（一个账号可能多个玩家） */
@@ -20,6 +36,8 @@ export type LittleSkinAccount = {
   uuid: string;
   access_token: string;
   skin_url: string | null;
+  /** 皮肤模型 classic | slim（来自 profile） */
+  variant?: SkinVariant | string | null;
 };
 
 /** 第三方认证服务器的角色 */
@@ -132,7 +150,7 @@ function isValidUuid(uuid: string): boolean {
 }
 
 /**
- * 获取玩家皮肤 base64（本地存储在 RTL/config/skins/{uuid}.png）
+ * 获取玩家皮肤 base64（本地存储在 OpenX/config/skins/{uuid}.png）
  * 用于前端 3D 皮肤展示
  * @param uuid 玩家 UUID
  * @returns data URI (data:image/png;base64,...)

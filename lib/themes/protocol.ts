@@ -64,7 +64,9 @@ export interface ThemeAuthor {
 }
 
 export interface ThemeEngineRequirements {
-  rtlauncher: string;
+  openxlauncher: string;
+  /** @deprecated Prefer `openxlauncher`. Accepted when loading legacy themes. */
+  rtlauncher?: string;
   themeApi: string;
   themeUi?: string;
 }
@@ -258,7 +260,7 @@ export interface ThemePlatformInfo {
   themeApiVersion: string;
 }
 
-export interface RTLauncherThemeSDK {
+export interface OpenXLauncherThemeSDK {
   accounts: {
     list(): Promise<readonly ThemeAccountSummary[]>;
     getActive(): Promise<ThemeAccountSummary | null>;
@@ -313,7 +315,7 @@ export interface RTLauncherThemeSDK {
 export interface ThemeContext {
   readonly manifest: ThemeManifest;
   readonly runtime: ThemeRuntimeInfo;
-  readonly sdk: RTLauncherThemeSDK;
+  readonly sdk: OpenXLauncherThemeSDK;
   readonly routes: ThemeRouteRegistryAPI;
   readonly slots: ThemeSlotRegistryAPI;
   readonly assets: ThemeAssetService;

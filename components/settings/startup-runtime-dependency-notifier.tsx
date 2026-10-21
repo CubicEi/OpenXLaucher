@@ -74,7 +74,7 @@ export function StartupRuntimeDependencyNotifier() {
 
         <div className="space-y-3 px-5 py-4">
           <p className="text-sm text-muted-foreground">
-            当前为便携/免安装模式，以下组件需单独安装。安装完成后请重新启动 RTLauncher。
+            当前为便携/免安装模式，以下组件需单独安装。安装完成后请重新启动 OpenXLauncher。
           </p>
 
           <ul className="space-y-3">

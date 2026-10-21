@@ -22,7 +22,7 @@ body:
     id: solution
     attributes:
       label: 建议方案
-      description: 请描述你希望 RTLauncher 如何解决这个问题。
+      description: 请描述你希望 OpenXLauncher 如何解决这个问题。
       placeholder: 希望能够……
     validations:
       required: true

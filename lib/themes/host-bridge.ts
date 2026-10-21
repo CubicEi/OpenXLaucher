@@ -20,8 +20,8 @@ export interface ThemeHostBridge {
 
 declare global {
   interface Window {
-    __RTL_THEME_HOST__?: ThemeHostBridge;
-    __RTL_THEME_REGISTER__?: (definition: ThemeDefinition) => void;
+    __OPENX_THEME_HOST__?: ThemeHostBridge;
+    __OPENX_THEME_REGISTER__?: (definition: ThemeDefinition) => void;
   }
 }
 
@@ -40,8 +40,8 @@ export function acquireThemeHostBridge(): () => void {
     throw new Error("The Theme host bridge requires a browser window.");
   }
   if (references === 0) {
-    previousBridge = window.__RTL_THEME_HOST__;
-    window.__RTL_THEME_HOST__ = HOST_BRIDGE;
+    previousBridge = window.__OPENX_THEME_HOST__;
+    window.__OPENX_THEME_HOST__ = HOST_BRIDGE;
   }
   references += 1;
   let released = false;
@@ -50,8 +50,8 @@ export function acquireThemeHostBridge(): () => void {
     released = true;
     references -= 1;
     if (references > 0) return;
-    if (previousBridge) window.__RTL_THEME_HOST__ = previousBridge;
-    else delete window.__RTL_THEME_HOST__;
+    if (previousBridge) window.__OPENX_THEME_HOST__ = previousBridge;
+    else delete window.__OPENX_THEME_HOST__;
     previousBridge = undefined;
   };
 }

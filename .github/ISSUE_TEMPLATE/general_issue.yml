@@ -40,8 +40,8 @@ body:
     id: environment
     attributes:
       label: 相关环境
-      description: 如有必要，请提供操作系统、RTLauncher 版本及其他相关版本。
-      placeholder: Windows 11 / RTLauncher 0.1.0
+      description: 如有必要，请提供操作系统、OpenXLauncher 版本及其他相关版本。
+      placeholder: Windows 11 / OpenXLauncher 0.1.0
 
   - type: textarea
     id: additional-context

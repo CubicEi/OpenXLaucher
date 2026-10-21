@@ -10,7 +10,7 @@ function manifest(style = false): ThemeManifest {
     name: "Nebula",
     version: "1.0.0",
     author: { name: "Example" },
-    engines: { rtlauncher: ">=0.2.0", themeApi: "^1.0.0" },
+    engines: { openxlauncher: ">=0.2.0", themeApi: "^1.0.0" },
     entry: {
       script: "dist/theme.js",
       style: style ? "dist/theme.css" : undefined,
@@ -59,33 +59,33 @@ function loaderHarness(register?: () => void) {
 
 afterEach(() => {
   vi.restoreAllMocks();
-  delete window.__RTL_THEME_REGISTER__;
+  delete window.__OPENX_THEME_REGISTER__;
 });
 
 describe("loadThemeBundle", () => {
   it("accepts exactly one matching registration", async () => {
     const registered = definition();
-    const harness = loaderHarness(() => window.__RTL_THEME_REGISTER__?.(registered));
+    const harness = loaderHarness(() => window.__OPENX_THEME_REGISTER__?.(registered));
 
     const loaded = await loadThemeBundle(manifest(), harness.dependencies);
 
     expect(loaded.definition).toBe(registered);
-    expect(window.__RTL_THEME_REGISTER__).toBeUndefined();
+    expect(window.__OPENX_THEME_REGISTER__).toBeUndefined();
     expect(harness.dependencies.reader.readText).toBeDefined();
     loaded.unload();
   });
 
   it("rejects an ID mismatch and duplicate registration", async () => {
     const mismatch = loaderHarness(() => {
-      window.__RTL_THEME_REGISTER__?.(definition({ id: "com.example.other" }));
+      window.__OPENX_THEME_REGISTER__?.(definition({ id: "com.example.other" }));
     });
     await expect(loadThemeBundle(manifest(), mismatch.dependencies)).rejects.toMatchObject({
       code: "THEME_BUNDLE_ID_MISMATCH",
     });
 
     const duplicate = loaderHarness(() => {
-      window.__RTL_THEME_REGISTER__?.(definition());
-      window.__RTL_THEME_REGISTER__?.(definition());
+      window.__OPENX_THEME_REGISTER__?.(definition());
+      window.__OPENX_THEME_REGISTER__?.(definition());
     });
     await expect(loadThemeBundle(manifest(), duplicate.dependencies)).rejects.toMatchObject({
       code: "THEME_BUNDLE_MULTIPLE_REGISTRATIONS",
@@ -101,7 +101,7 @@ describe("loadThemeBundle", () => {
   });
 
   it("activates CSS and removes all bundle resources on unload", async () => {
-    const harness = loaderHarness(() => window.__RTL_THEME_REGISTER__?.(definition()));
+    const harness = loaderHarness(() => window.__OPENX_THEME_REGISTER__?.(definition()));
     const loaded = await loadThemeBundle(manifest(true), harness.dependencies);
 
     expect(harness.append.mock.calls.some(([node]) => node instanceof HTMLLinkElement)).toBe(true);
@@ -113,7 +113,7 @@ describe("loadThemeBundle", () => {
   });
 
   it("creates and revokes package-scoped asset URLs", async () => {
-    const harness = loaderHarness(() => window.__RTL_THEME_REGISTER__?.(definition()));
+    const harness = loaderHarness(() => window.__OPENX_THEME_REGISTER__?.(definition()));
     const loaded = await loadThemeBundle(manifest(), harness.dependencies);
 
     const asset = await loaded.assets.url("assets/icon.png");

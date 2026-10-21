@@ -511,7 +511,7 @@ mod tests {
             "version": version,
             "author": { "name": "Example" },
             "engines": {
-                "rtlauncher": ">=0.2.0 <2.0.0",
+                "openxlauncher": ">=0.2.0 <2.0.0",
                 "themeApi": "^1.0.0"
             },
             "entry": { "script": "dist/theme.js", "style": "dist/theme.css" },
@@ -530,7 +530,7 @@ mod tests {
     }
 
     fn write_archive(directory: &Path, version: &str, script: &[u8]) -> PathBuf {
-        let archive_path = directory.join(format!("nebula-{version}.rtltheme"));
+        let archive_path = directory.join(format!("nebula-{version}.oxltheme"));
         let file = fs::File::create(&archive_path).expect("create archive");
         let mut writer = ZipWriter::new(file);
         let options = FileOptions::default().compression_method(CompressionMethod::Stored);

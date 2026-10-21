@@ -1,5 +1,5 @@
-import { Button } from "@rtlauncher/theme-ui";
-import { defineTheme, type ThemeSlotComponentProps } from "@rtlauncher/theme-sdk";
+import { Button } from "@openxlauncher/theme-ui";
+import { defineTheme, type ThemeSlotComponentProps } from "@openxlauncher/theme-sdk";
 
 function HelloAction({ slotId }: ThemeSlotComponentProps) {
   return (
@@ -14,7 +14,7 @@ function HelloAction({ slotId }: ThemeSlotComponentProps) {
 }
 
 export default defineTheme({
-  id: "com.rtlauncher.example.hello",
+  id: "com.openxlauncher.example.hello",
   version: "1.0.0",
   apiVersion: "1.0.0",
   setup(context) {

@@ -1,6 +1,6 @@
 #!/bin/bash
-# RTLauncher Linux 依赖安装脚本
-# 此脚本用于安装 RTLauncher 便携版所需的系统依赖
+# OpenXLauncher Linux 依赖安装脚本
+# 此脚本用于安装 OpenXLauncher 便携版所需的系统依赖
 
 set -e
 
@@ -78,4 +78,4 @@ case $OS in
 esac
 
 echo "✅ 依赖安装完成！"
-echo "现在可以运行 RTLauncher 了"
+echo "现在可以运行 OpenXLauncher 了"

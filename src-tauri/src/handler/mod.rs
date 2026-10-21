@@ -19,6 +19,7 @@ pub mod liteloader_handler;
 #[allow(dead_code, non_snake_case)]
 pub mod mod_links;
 pub mod mod_parser;
+pub mod mod_updates;
 #[allow(dead_code)]
 pub mod modpack_builder;
 #[allow(non_snake_case)]

@@ -47,7 +47,7 @@ pub fn append_runtime_log(
     Ok(())
 }
 
-/// Append one NDJSON line to `<exe_dir>/RTL/logs/launcher.log`.
+/// Append one NDJSON line to `<exe_dir>/OpenX/logs/launcher.log`.
 #[tauri::command]
 pub fn write_runtime_log(
     level: String,

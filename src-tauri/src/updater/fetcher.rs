@@ -405,9 +405,9 @@ impl UpdateFetcher {
     }
 
     /// 从 Release body 里解析出 SHA256SUMS 列表。支持以下格式（每行一条）：
-    ///   - `SHA256 (RTLauncher-windows-x86_64.zip) = a5c2d9...`
-    ///   - `a5c2d9f...  RTLauncher-windows-x86_64.zip`
-    ///   - `a5c2d9f... *RTLauncher-windows-x86_64.zip`
+    ///   - `SHA256 (OpenXLauncher-windows-x86_64.zip) = a5c2d9...`
+    ///   - `a5c2d9f...  OpenXLauncher-windows-x86_64.zip`
+    ///   - `a5c2d9f... *OpenXLauncher-windows-x86_64.zip`
     ///   - 代码块 ```SHA256SUMS ... ``` 包裹的块
     /// 返回 `(asset_filename_lowercase, lowercase_hex_hash_64)` 列表。
     fn parse_checksums_from_body(body: &str, tag: &str) -> Vec<(String, String)> {
@@ -493,7 +493,7 @@ impl UpdateFetcher {
             .get(endpoint)
             .header(
                 "User-Agent",
-                "RTLauncher updater (+https://github.com/cqw-acq/RTLauncher_new)",
+                "OpenXLauncher updater (+https://github.com/CubicEi/OpenXLaucher)",
             )
             .header("Accept", "application/vnd.github+json, application/json")
             .send()
@@ -1006,9 +1006,9 @@ impl UpdateFetcher {
         extracted: bool,
         exe_dir: &PathBuf,
     ) -> Result<(), String> {
-        let target_exe = exe_dir.join("RTLauncher.exe");
+        let target_exe = exe_dir.join("OpenXLauncher.exe");
         if target_exe.exists() {
-            let backup_path = backup_dir.join(format!("RTLauncher_backup_{}.exe", timestamp));
+            let backup_path = backup_dir.join(format!("OpenXLauncher_backup_{}.exe", timestamp));
             let _ = fs::copy(&target_exe, &backup_path);
         }
 
@@ -1062,10 +1062,10 @@ impl UpdateFetcher {
     ) -> Result<(), String> {
         if extracted {
             let target_app = self.find_app_bundle_in_dir(temp_dir)?;
-            let target_path = exe_dir.join("RTLauncher.app");
+            let target_path = exe_dir.join("OpenXLauncher.app");
 
             if target_path.exists() {
-                let backup_path = backup_dir.join(format!("RTLauncher_backup_{}.app", timestamp));
+                let backup_path = backup_dir.join(format!("OpenXLauncher_backup_{}.app", timestamp));
                 let _ = self.copy_dir_recursive(&target_path, &backup_path);
             }
 
@@ -1106,9 +1106,9 @@ impl UpdateFetcher {
 
             std::process::exit(0);
         } else {
-            let target_binary = exe_dir.join("RTLauncher");
+            let target_binary = exe_dir.join("OpenXLauncher");
             if target_binary.exists() {
-                let backup_path = backup_dir.join(format!("RTLauncher_backup_{}", timestamp));
+                let backup_path = backup_dir.join(format!("OpenXLauncher_backup_{}", timestamp));
                 let _ = fs::copy(&target_binary, &backup_path);
             }
 
@@ -1158,9 +1158,9 @@ impl UpdateFetcher {
         extracted: bool,
         exe_dir: &PathBuf,
     ) -> Result<(), String> {
-        let target_binary = exe_dir.join("RTLauncher");
+        let target_binary = exe_dir.join("OpenXLauncher");
         if target_binary.exists() {
-            let backup_path = backup_dir.join(format!("RTLauncher_backup_{}", timestamp));
+            let backup_path = backup_dir.join(format!("OpenXLauncher_backup_{}", timestamp));
             let _ = fs::copy(&target_binary, &backup_path);
         }
 
@@ -1296,17 +1296,17 @@ impl UpdateFetcher {
 
     fn find_executable_in_dir(&self, dir: &PathBuf, os: &str) -> Result<PathBuf, String> {
         let expected_name = match os {
-            "windows" => "RTLauncher.exe",
-            "macos" => "RTLauncher",
-            "linux" => "RTLauncher",
-            _ => "RTLauncher",
+            "windows" => "OpenXLauncher.exe",
+            "macos" => "OpenXLauncher",
+            "linux" => "OpenXLauncher",
+            _ => "OpenXLauncher",
         };
 
         let search_paths = vec![
             dir.join(expected_name),
-            dir.join("RTLauncher"),
+            dir.join("OpenXLauncher"),
             dir.join("bin").join(expected_name),
-            dir.join("bin").join("RTLauncher"),
+            dir.join("bin").join("OpenXLauncher"),
         ];
 
         for path in &search_paths {
@@ -1337,9 +1337,9 @@ impl UpdateFetcher {
 
     fn find_app_bundle_in_dir(&self, dir: &PathBuf) -> Result<PathBuf, String> {
         let search_paths = vec![
-            dir.join("RTLauncher.app"),
-            dir.join("RTLauncher-macos").join("RTLauncher.app"),
-            dir.join("RTLauncher-aarch64").join("RTLauncher.app"),
+            dir.join("OpenXLauncher.app"),
+            dir.join("OpenXLauncher-macos").join("OpenXLauncher.app"),
+            dir.join("OpenXLauncher-aarch64").join("OpenXLauncher.app"),
         ];
 
         for path in &search_paths {
@@ -1434,14 +1434,14 @@ mod tests {
                 "name":"Stable 1.2.0",
                 "body":{{
                     "update_info":"release notes",
-                    "sum":{{"RTLauncher_1.2.0_x64-setup.exe":"{HASH}"}}
+                    "sum":{{"OpenXLauncher_1.2.0_x64-setup.exe":"{HASH}"}}
                 }},
                 "prerelease":false,
                 "assets":[{{
-                    "name":"RTLauncher_1.2.0_x64-setup.exe",
+                    "name":"OpenXLauncher_1.2.0_x64-setup.exe",
                     "platform":"windows-x64",
                     "size":1234,
-                    "browser_download_url":"https://7463-tcb-charcaius-d0gpaxdu6e2408df8-1306022435.tcb.qcloud.la/RTL/releases/1.2.0/RTLauncher_1.2.0_x64-setup.exe"
+                    "browser_download_url":"https://7463-tcb-charcaius-d0gpaxdu6e2408df8-1306022435.tcb.qcloud.la/RTL/releases/1.2.0/OpenXLauncher_1.2.0_x64-setup.exe"
                 }}]
             }}"#
         );
@@ -1454,7 +1454,7 @@ mod tests {
         assert_eq!(
             releases[0]
                 .checksums
-                .get("rtlauncher_1.2.0_x64-setup.exe")
+                .get("openxlauncher_1.2.0_x64-setup.exe")
                 .map(String::as_str),
             Some(HASH)
         );
@@ -1472,9 +1472,9 @@ mod tests {
             "body":"GitHub release notes",
             "prerelease":false,
             "assets":[{
-                "name":"RTLauncher_1.1.9_x64-setup.exe",
+                "name":"OpenXLauncher_1.1.9_x64-setup.exe",
                 "size":4321,
-                "browser_download_url":"https://github.com/cqw-acq/RTLauncher_new/releases/download/v1.1.9/RTLauncher_1.1.9_x64-setup.exe"
+                "browser_download_url":"https://github.com/CubicEi/OpenXLaucher/releases/download/v1.1.9/OpenXLauncher_1.1.9_x64-setup.exe"
             }]
         }]"#;
 
@@ -1552,8 +1552,8 @@ mod tests {
             "tag_name":"1.2.0","name":"1.2.0",
             "body":{"update_info":"","sum":{}},"prerelease":false,
             "assets":[
-                {"name":"RTLauncher_1.2.0_aarch64.dmg","platform":"macos-aarch64","size":1,"browser_download_url":"https://7463-tcb-charcaius-d0gpaxdu6e2408df8-1306022435.tcb.qcloud.la/RTL/releases/1.2.0/arm.dmg"},
-                {"name":"RTLauncher_1.2.0_x64.dmg","platform":"macos-x64","size":1,"browser_download_url":"https://7463-tcb-charcaius-d0gpaxdu6e2408df8-1306022435.tcb.qcloud.la/RTL/releases/1.2.0/x64.dmg"}
+                {"name":"OpenXLauncher_1.2.0_aarch64.dmg","platform":"macos-aarch64","size":1,"browser_download_url":"https://7463-tcb-charcaius-d0gpaxdu6e2408df8-1306022435.tcb.qcloud.la/RTL/releases/1.2.0/arm.dmg"},
+                {"name":"OpenXLauncher_1.2.0_x64.dmg","platform":"macos-x64","size":1,"browser_download_url":"https://7463-tcb-charcaius-d0gpaxdu6e2408df8-1306022435.tcb.qcloud.la/RTL/releases/1.2.0/x64.dmg"}
             ]
         }"#;
         let releases = parse_release_response(json).expect("fixture must parse");
@@ -1561,17 +1561,17 @@ mod tests {
         assert_eq!(
             UpdateFetcher::select_asset(&releases[0], "macos-x86_64")
                 .map(|asset| asset.name.as_str()),
-            Some("RTLauncher_1.2.0_x64.dmg")
+            Some("OpenXLauncher_1.2.0_x64.dmg")
         );
     }
 
     #[test]
     fn signed_download_url_produces_a_plain_filename() {
-        let url = "https://7463-tcb-charcaius-d0gpaxdu6e2408df8-1306022435.tcb.qcloud.la/RTL/releases/1.2.0/RTLauncher_1.2.0_x64-setup.exe?sign=abc&t=123";
+        let url = "https://7463-tcb-charcaius-d0gpaxdu6e2408df8-1306022435.tcb.qcloud.la/RTL/releases/1.2.0/OpenXLauncher_1.2.0_x64-setup.exe?sign=abc&t=123";
 
         assert_eq!(
             filename_from_download_url(url).as_deref(),
-            Ok("RTLauncher_1.2.0_x64-setup.exe")
+            Ok("OpenXLauncher_1.2.0_x64-setup.exe")
         );
     }
 
@@ -1580,8 +1580,8 @@ mod tests {
         let json = r#"[{
             "tag_name":"1.2.0","name":"1.2.0","body":"","prerelease":false,
             "assets":[{
-                "name":"RTLauncher_1.2.0_arm64.dmg","size":1,
-                "browser_download_url":"https://github.com/cqw-acq/RTLauncher_new/releases/download/1.2.0/RTLauncher_1.2.0_arm64.dmg"
+                "name":"OpenXLauncher_1.2.0_arm64.dmg","size":1,
+                "browser_download_url":"https://github.com/CubicEi/OpenXLaucher/releases/download/1.2.0/OpenXLauncher_1.2.0_arm64.dmg"
             }]
         }]"#;
         let releases = parse_release_response(json).expect("fixture must parse");
@@ -1599,8 +1599,8 @@ mod tests {
             "tag_name":"1.2.0","name":"1.2.0",
             "body":"GitHub notes","prerelease":false,
             "assets":[{
-                "name":"RTLauncher_1.2.0_x64-setup.exe","size":1,
-                "browser_download_url":"https://github.com/cqw-acq/RTLauncher_new/releases/download/1.2.0/RTLauncher_1.2.0_x64-setup.exe"
+                "name":"OpenXLauncher_1.2.0_x64-setup.exe","size":1,
+                "browser_download_url":"https://github.com/CubicEi/OpenXLaucher/releases/download/1.2.0/OpenXLauncher_1.2.0_x64-setup.exe"
             }]
         }]"#;
         let mut releases = parse_release_response_for_source(primary, ReleaseSource::LightingTeam)
@@ -1613,7 +1613,7 @@ mod tests {
         let (release, asset) = select_latest_candidate(&releases, "1.1.0", "windows-x86_64")
             .expect("GitHub must supply the usable asset");
         assert_eq!(release.notes, "GitHub notes");
-        assert_eq!(asset.name, "RTLauncher_1.2.0_x64-setup.exe");
+        assert_eq!(asset.name, "OpenXLauncher_1.2.0_x64-setup.exe");
     }
 
     #[test]
@@ -1622,15 +1622,15 @@ mod tests {
             "tag_name":"1.2.0","name":"1.2.0 beta","body":{"update_info":"beta","sum":{}},
             "prerelease":true,
             "assets":[{
-                "name":"RTLauncher_1.2.0_x64-setup.exe","platform":"windows-x64","size":1,
-                "browser_download_url":"https://7463-tcb-charcaius-d0gpaxdu6e2408df8-1306022435.tcb.qcloud.la/RTL/releases/1.2.0/RTLauncher_1.2.0_x64-setup.exe"
+                "name":"OpenXLauncher_1.2.0_x64-setup.exe","platform":"windows-x64","size":1,
+                "browser_download_url":"https://7463-tcb-charcaius-d0gpaxdu6e2408df8-1306022435.tcb.qcloud.la/RTL/releases/1.2.0/OpenXLauncher_1.2.0_x64-setup.exe"
             }]
         }"#;
         let github = r#"[{
             "tag_name":"1.2.0","name":"1.2.0","body":"stable","prerelease":false,
             "assets":[{
-                "name":"RTLauncher_1.2.0_x64-setup.exe","size":1,
-                "browser_download_url":"https://github.com/cqw-acq/RTLauncher_new/releases/download/1.2.0/RTLauncher_1.2.0_x64-setup.exe"
+                "name":"OpenXLauncher_1.2.0_x64-setup.exe","size":1,
+                "browser_download_url":"https://github.com/CubicEi/OpenXLaucher/releases/download/1.2.0/OpenXLauncher_1.2.0_x64-setup.exe"
             }]
         }]"#;
         let mut releases = parse_release_response_for_source(primary, ReleaseSource::LightingTeam)
@@ -1650,7 +1650,7 @@ mod tests {
         let json = format!(
             r#"[{{
                 "tag_name":"1.2.0","name":"1.2.0",
-                "body":"```SHA256SUMS\n{HASH}  RTLauncher_1.2.0_x64-setup.exe\n```",
+                "body":"```SHA256SUMS\n{HASH}  OpenXLauncher_1.2.0_x64-setup.exe\n```",
                 "prerelease":false,"assets":[]
             }}]"#
         );
@@ -1659,7 +1659,7 @@ mod tests {
         assert_eq!(
             releases[0]
                 .checksums
-                .get("rtlauncher_1.2.0_x64-setup.exe")
+                .get("openxlauncher_1.2.0_x64-setup.exe")
                 .map(String::as_str),
             Some(HASH)
         );

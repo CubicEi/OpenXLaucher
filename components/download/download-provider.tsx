@@ -29,11 +29,26 @@ export interface DownloadTask {
   mcVersion: string;
   status: DownloadTaskStatus;
   progress?: number;
+  /** 当前阶段文案（如「下载原版文件」「安装 mod 加载器」） */
+  detail?: string;
   error?: string;
   /** 部分失败的文件数量 */
   failedCount?: number;
   /** 时间戳，用于排序 */
   startedAt: number;
+}
+
+/** Matches Rust `ModUpdateInfo` (camelCase serde). */
+export interface ModUpdatePayload {
+  fileName: string;
+  modId: string;
+  modName: string;
+  currentVersion: string;
+  newVersion: string;
+  source: string;
+  downloadUrl: string;
+  newFileName: string;
+  slug: string;
 }
 
 interface DownloadContextValue {
@@ -67,6 +82,20 @@ interface DownloadContextValue {
   startResourceDownload: (resourceKind: string, resourceSlug: string, resourceName: string, mcVersion: string, modLoader: string, downloadUrl: string) => Promise<number>;
   /** 整合包安装（异步） */
   startModpackDownload: (modpackName: string, path: string) => Promise<number>;
+  /** 单个模组更新（下载到临时目录后替换，进度走 mod-download 事件） */
+  startModUpdate: (
+    instanceDir: string,
+    mcVersion: string,
+    loader: string,
+    update: ModUpdatePayload
+  ) => Promise<number>;
+  /** 批量模组更新 */
+  startModUpdateAll: (
+    instanceDir: string,
+    mcVersion: string,
+    loader: string,
+    updates: ModUpdatePayload[]
+  ) => Promise<number>;
   /** 取消一个下载任务 */
   cancelDownload: (taskId: number) => Promise<void>;
   /** 清除所有已完成/失败/取消的任务 */
@@ -414,6 +443,44 @@ export function DownloadProvider({ children }: { children: React.ReactNode }) {
     [startModLoaderDownload]
   );
 
+  /** 单个模组更新 */
+  const startModUpdate = useCallback(
+    async (
+      instanceDir: string,
+      mcVersion: string,
+      loader: string,
+      update: ModUpdatePayload
+    ) => {
+      const label = `更新 ${update.modName} (${update.currentVersion} → ${update.newVersion})`;
+      return startModLoaderDownload({
+        label,
+        mcVersion,
+        tauriCommand: "update_mod",
+        params: { instanceDir, mcVersion, loader, update },
+      });
+    },
+    [startModLoaderDownload]
+  );
+
+  /** 批量模组更新 */
+  const startModUpdateAll = useCallback(
+    async (
+      instanceDir: string,
+      mcVersion: string,
+      loader: string,
+      updates: ModUpdatePayload[]
+    ) => {
+      const label = `更新模组 ×${updates.length}`;
+      return startModLoaderDownload({
+        label,
+        mcVersion,
+        tauriCommand: "update_mods",
+        params: { instanceDir, mcVersion, loader, updates },
+      });
+    },
+    [startModLoaderDownload]
+  );
+
   /** ========== 取消与清理 ========== */
   const cancelDownload = useCallback(
     async (taskId: number) => {
@@ -481,6 +548,8 @@ export function DownloadProvider({ children }: { children: React.ReactNode }) {
         startModDownload,
         startResourceDownload,
         startModpackDownload,
+        startModUpdate,
+        startModUpdateAll,
         cancelDownload,
         clearFinished,
         removeTask,

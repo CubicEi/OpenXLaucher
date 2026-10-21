@@ -387,7 +387,7 @@ pub struct DependencyDownloadResult {
     pub file_path: Option<String>,
 }
 
-async fn search_modrinth(query: &str, mc_version: &str, loader: &str) -> Option<ModSearchResult> {
+pub(crate) async fn search_modrinth(query: &str, mc_version: &str, loader: &str) -> Option<ModSearchResult> {
     let client = modrinth_client().await;
     let encoded_query = urlencoding::encode(query);
     let facets = format!(
@@ -511,7 +511,7 @@ async fn search_modrinth(query: &str, mc_version: &str, loader: &str) -> Option<
     None
 }
 
-async fn search_curseforge(query: &str, mc_version: &str, loader: &str) -> Option<ModSearchResult> {
+pub(crate) async fn search_curseforge(query: &str, mc_version: &str, loader: &str) -> Option<ModSearchResult> {
     let client = curseforge_client().await;
     let semaphore = global_semaphore().await;
     let encoded_query = urlencoding::encode(query);
@@ -619,7 +619,7 @@ async fn search_mod_both_sources(query: &str, mc_version: &str, loader: &str) ->
     (modrinth_result, curseforge_result)
 }
 
-async fn download_file(url: &str, dest_path: &Path) -> Result<(), String> {
+pub(crate) async fn download_file(url: &str, dest_path: &Path) -> Result<(), String> {
     let client = shared_client().await;
     let response = get_with_retry(
         &client,

@@ -7,13 +7,15 @@ pub mod official;
 use serde::{Deserialize, Serialize};
 
 /// 获取平台配置目录：
-/// - macOS: ~/Library/Application Support/RTLauncher/config
-/// - Linux/Windows: ./RTL/config
+/// - macOS: ~/Library/Application Support/OpenXLauncher/config
+/// - Linux: XDG config / OpenXLauncher
+/// - Windows: ./OpenX/config
 pub fn config_dir() -> String {
     #[cfg(target_os = "macos")]
     let dir = {
+        crate::app_paths::migrate_portable_layout();
         let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
-        format!("{}/Library/Application Support/RTLauncher/config", home)
+        format!("{}/Library/Application Support/OpenXLauncher/config", home)
     };
 
     #[cfg(target_os = "windows")]
@@ -24,8 +26,16 @@ pub fn config_dir() -> String {
             .into_owned()
     };
 
-    #[cfg(all(not(target_os = "macos"), not(target_os = "windows")))]
-    let dir = "./RTL/config".to_string();
+    #[cfg(target_os = "linux")]
+    let dir = {
+        crate::app_paths::migrate_portable_layout();
+        crate::app_paths::linux_config_dir()
+            .to_string_lossy()
+            .into_owned()
+    };
+
+    #[cfg(all(not(target_os = "macos"), not(target_os = "windows"), not(target_os = "linux")))]
+    let dir = "./OpenX/config".to_string();
 
     let _ = std::fs::create_dir_all(&dir);
     dir
@@ -49,6 +59,9 @@ pub struct AccountInfo {
     pub access_token: String,
     /// 皮肤 URL (可选)
     pub skin_url: Option<String>,
+    /// 皮肤模型: "classic"（粗臂）或 "slim"（细臂 / Alex）
+    #[serde(default)]
+    pub variant: Option<String>,
 }
 
 /// 第三方登录后获取到的角色列表

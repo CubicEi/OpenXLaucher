@@ -5,10 +5,10 @@ This example adds one action to `page.header.actions`. It shows the smallest sup
 Run these commands from the repository root:
 
 ```sh
-pnpm --filter @rtlauncher/theme-cli build
-pnpm --filter @rtlauncher/example-hello-theme validate
-pnpm --filter @rtlauncher/example-hello-theme build
-pnpm --filter @rtlauncher/example-hello-theme pack
+pnpm --filter @openxlauncher/theme-cli build
+pnpm --filter @openxlauncher/example-hello-theme validate
+pnpm --filter @openxlauncher/example-hello-theme build
+pnpm --filter @openxlauncher/example-hello-theme pack
 ```
 
-Install `hello-theme.rtltheme` from **Settings > Appearance > Frontend theme**.
+Install `hello-theme.oxltheme` from **Settings > Appearance > Frontend theme**.

@@ -1,8 +1,8 @@
-# RTLauncher
+# OpenXLauncher
 
 一款现代化的 Minecraft 桌面启动器，基于 **Tauri 2** (Rust) + **Next.js 16** 构建，轻量、快速且跨平台。
 
-如果需要更多支持,欢迎访问官方文档[RTL官网](rtlauncher.cfd/docs "Docs"),也可以加入RTL用户群:1013525092
+如果需要更多支持,欢迎访问官方文档，也可以加入用户群:1013525092
 
 ## 功能特性
 
@@ -53,7 +53,7 @@ pnpm tauri build
 # 项目结构
 
 ```
-RTLauncher/
+OpenXLauncher/
 ├── app/                        # Next.js App Router 页面
 ├── components/                 # React 组件
 │   ├── ui/                     # shadcn/ui 基础组件
@@ -79,7 +79,7 @@ RTLauncher/
 
 ### 运行日志（便携版）
 
-便携构建在 exe 同目录写入 `RTL/logs/launcher.log`（NDJSON，一行一条 JSON）。前端使用 `lib/runtime-log.ts` 的 `appLog` / `rtlLog`，Rust 侧使用 `handler/runtime_log.rs`。
+便携构建在 exe 同目录写入 `OpenX/logs/launcher.log`（NDJSON，一行一条 JSON）。前端使用 `lib/runtime-log.ts` 的 `appLog` / `rtlLog`，Rust 侧使用 `handler/runtime_log.rs`。
 
 ##  Crowdin 翻译同步
 

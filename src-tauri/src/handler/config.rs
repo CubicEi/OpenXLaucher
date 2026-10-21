@@ -19,14 +19,18 @@ pub struct JavaInstallationInfo {
 fn config_dir() -> String {
     #[cfg(target_os = "macos")]
     let dir = {
+        crate::app_paths::migrate_portable_layout();
         let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
-        format!("{}/Library/Application Support/RTLauncher/config", home)
+        format!("{}/Library/Application Support/OpenXLauncher/config", home)
     };
 
     #[cfg(target_os = "linux")]
-    let dir = crate::app_paths::linux_config_dir()
-        .to_string_lossy()
-        .to_string();
+    let dir = {
+        crate::app_paths::migrate_portable_layout();
+        crate::app_paths::linux_config_dir()
+            .to_string_lossy()
+            .to_string()
+    };
 
     #[cfg(target_os = "windows")]
     let dir = {
@@ -36,8 +40,8 @@ fn config_dir() -> String {
             .into_owned()
     };
 
-    #[cfg(all(not(target_os = "macos"), not(target_os = "windows")))]
-    let dir = "./RTL/config".to_string();
+    #[cfg(all(not(target_os = "macos"), not(target_os = "windows"), not(target_os = "linux")))]
+    let dir = "./OpenX/config".to_string();
 
     let _ = fs::create_dir_all(&dir);
     dir
@@ -47,21 +51,13 @@ fn launcher_config_path() -> PathBuf {
     PathBuf::from(config_dir()).join("launcher.json")
 }
 
-/// 获取平台默认游戏目录
+/// 获取平台默认游戏目录（与 get_minecraft_dir 一致：便携优先 exe 旁 `.minecraft`）
 fn default_minecraft_path() -> String {
     #[cfg(target_os = "windows")]
     {
-        let exe_mc = crate::app_paths::launcher_exe_dir().join(".minecraft");
-        if is_valid_minecraft_directory(&exe_mc) {
-            return exe_mc.to_string_lossy().into_owned();
-        }
-        if let Ok(appdata) = std::env::var("APPDATA") {
-            return std::path::PathBuf::from(appdata)
-                .join(".minecraft")
-                .to_string_lossy()
-                .to_string();
-        }
-        return exe_mc.to_string_lossy().into_owned();
+        return crate::app_paths::portable_game_minecraft_dir()
+            .to_string_lossy()
+            .into_owned();
     }
     #[cfg(target_os = "macos")]
     {
@@ -421,8 +417,9 @@ pub fn get_launcher_paths_config() -> LauncherPathsConfig {
 pub fn get_java_download_dir() -> Result<String, String> {
     #[cfg(target_os = "macos")]
     let dir = {
+        crate::app_paths::migrate_portable_layout();
         let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
-        format!("{}/Library/Application Support/RTLauncher/java", home)
+        format!("{}/Library/Application Support/OpenXLauncher/java", home)
     };
 
     #[cfg(target_os = "windows")]
@@ -486,7 +483,7 @@ pub struct PortableFirstLaunchResult {
     pub selected_minecraft_path: String,
 }
 
-/// 便携版首次启动：扫描 exe 同目录 `.minecraft`、自动搜索 Java，并写入 `RTL/config/launcher.json`。
+/// 便携版首次启动：创建 exe 同目录 `.minecraft` 并设为 preferred、自动搜索 Java，写入 `OpenX/config/launcher.json`。
 #[tauri::command]
 pub async fn run_portable_first_launch_setup() -> Result<PortableFirstLaunchResult, String> {
     crate::app_paths::ensure_portable_dirs();
@@ -504,13 +501,12 @@ pub async fn run_portable_first_launch_setup() -> Result<PortableFirstLaunchResu
     }
 
     let mut cfg = LauncherPathsConfig::default();
-    let portable_mc = crate::app_paths::launcher_exe_dir().join(".minecraft");
-    if is_valid_minecraft_directory(&portable_mc) {
-        let path = portable_mc.to_string_lossy().into_owned();
-        cfg.minecraft_paths = vec![path.clone()];
-        cfg.selected_minecraft_path = path;
-        cfg.default_minecraft_path = default_minecraft_path();
-    }
+    let portable_mc = crate::app_paths::portable_game_minecraft_dir();
+    fs::create_dir_all(&portable_mc).map_err(|e| format!("创建 .minecraft 失败: {}", e))?;
+    let path = portable_mc.to_string_lossy().into_owned();
+    cfg.minecraft_paths = vec![path.clone()];
+    cfg.selected_minecraft_path = path;
+    cfg.default_minecraft_path = default_minecraft_path();
 
     let installations = super::java_scanner::search_java_installations().await?;
     if let Some(best) = installations.first() {

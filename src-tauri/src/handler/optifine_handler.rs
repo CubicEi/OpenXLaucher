@@ -2,8 +2,11 @@ use crate::downloader::dwPatch::get_minecraft_dir;
 use crate::downloader::optifine_installer::{
     self, OptiFineVersionInfo,
 };
-use crate::downloader::original_dwl::process_version;
-use crate::downloader::shared_utils::{merge_version_jsons_to_instance, sanitize_instance_name};
+use crate::downloader::original_dwl::{process_version, ProgressUpdate};
+use crate::downloader::shared_utils::{
+    cleanup_loader_version_dir, cleanup_vanilla_version_dir, merge_version_jsons_to_instance,
+    sanitize_instance_name,
+};
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -32,6 +35,10 @@ pub struct OptifineVersion {
 struct OptifineDownloadProgressPayload {
     task_id: u64,
     percent: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    stage: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    message: Option<String>,
 }
 
 #[derive(Clone, Serialize)]
@@ -138,7 +145,7 @@ pub async fn download_and_install_optifine(
     std::fs::create_dir_all(&minecraft_path)
         .map_err(|e| format!("创建目录失败: {}", e))?;
 
-    let (tx, mut rx) = tokio::sync::mpsc::channel::<f64>(64);
+    let (tx, mut rx) = tokio::sync::mpsc::channel::<ProgressUpdate>(64);
     let cancel = Arc::new(AtomicBool::new(false));
 
     {
@@ -154,12 +161,14 @@ pub async fn download_and_install_optifine(
     let app_clone = app.clone();
     let task_id_clone = task_id;
     tokio::spawn(async move {
-        while let Some(percent) = rx.recv().await {
+        while let Some(update) = rx.recv().await {
             let _ = app_clone.emit(
                 "optifine-download-progress",
                 OptifineDownloadProgressPayload {
                     task_id: task_id_clone,
-                    percent,
+                    percent: update.percent,
+                    stage: update.stage,
+                    message: update.message,
                 },
             );
         }
@@ -170,6 +179,8 @@ pub async fn download_and_install_optifine(
         OptifineDownloadProgressPayload {
             task_id,
             percent: 0.0,
+            stage: Some("准备安装".to_string()),
+            message: None,
         },
     );
 
@@ -181,14 +192,25 @@ pub async fn download_and_install_optifine(
     let instance_name_cloned = instance_name.clone();
 
     tokio::spawn(async move {
-        let _ = tx.send(1.0).await;
+        let _ = tx
+            .send(ProgressUpdate::with_stage(1.0, "下载原版文件"))
+            .await;
 
         let result = {
-            let (tx1, mut rx1) = tokio::sync::mpsc::channel::<f64>(64);
+            let (tx1, mut rx1) = tokio::sync::mpsc::channel::<ProgressUpdate>(64);
             let tx_clone = tx.clone();
             tokio::spawn(async move {
-                while let Some(percent) = rx1.recv().await {
-                    let _ = tx_clone.send(1.0 + percent * 0.44).await;
+                while let Some(update) = rx1.recv().await {
+                    let remapped = update.remap(1.0, 0.44);
+                    let _ = tx_clone
+                        .send(ProgressUpdate {
+                            percent: remapped.percent,
+                            stage: remapped
+                                .stage
+                                .or_else(|| Some("下载原版文件".to_string())),
+                            message: remapped.message,
+                        })
+                        .await;
                 }
             });
             process_version(&version, &minecraft_path_clone, tx1, cancel_clone.clone()).await
@@ -216,11 +238,15 @@ pub async fn download_and_install_optifine(
             return;
         }
 
-        let _ = tx.send(48.0).await;
+        let _ = tx
+            .send(ProgressUpdate::with_stage(48.0, "安装原版 Minecraft"))
+            .await;
 
         let install_result = {
             let minecraft_path_str = minecraft_path_clone.to_string_lossy().to_string();
-            let _ = tx.send(50.0).await;
+            let _ = tx
+                .send(ProgressUpdate::with_stage(50.0, "安装 OptiFine"))
+                .await;
             let of_ver = optifine_ver.clone();
             let of_fallback = optifine_fallback_url.clone();
             let v = version.clone();
@@ -272,7 +298,9 @@ pub async fn download_and_install_optifine(
 
         match install_result {
             Ok(version_folder) => {
-                let _ = tx.send(100.0).await;
+                let _ = tx
+                    .send(ProgressUpdate::with_stage(100.0, "合并实例 / 清理中间版本"))
+                    .await;
                 println!("[OptiFine] 安装成功，版本目录: {}", version_folder);
 
                 if let Some(inst_name) = instance_name_cloned {
@@ -289,7 +317,15 @@ pub async fn download_and_install_optifine(
                         "optifine",
                         &minecraft_path_clone,
                     ) {
-                        Ok(_) => println!("[OptiFine] 实例 JSON 合并完成: {}", final_name),
+                        Ok(_) => {
+                            println!("[OptiFine] 实例 JSON 合并完成: {}", final_name);
+                            if final_name != version_folder {
+                                cleanup_loader_version_dir(&version_folder, &minecraft_path_clone);
+                            }
+                            if final_name != version {
+                                cleanup_vanilla_version_dir(&version, &minecraft_path_clone);
+                            }
+                        }
                         Err(e) => println!("[OptiFine] 警告: 合并实例 JSON 失败: {}", e),
                     }
                 }

@@ -80,11 +80,11 @@ const CURSEFORGE_API_KEY = "$2a$10$VTAFCxje5a1Jkqv0aGWjQ.fULedAEPctDqppOkNMRVv.e
 const CURSEFORGE_HEADERS = {
   "x-api-key": CURSEFORGE_API_KEY,
   Accept: "application/json",
-  "User-Agent": "RTLauncher/1.0",
+  "User-Agent": "OpenXLauncher/1.0",
 };
 const MODRINTH_HEADERS = {
   Accept: "application/json",
-  "User-Agent": "RTLauncher/1.0",
+  "User-Agent": "OpenXLauncher/1.0",
 };
 
 interface ParsedModrinthVersion {
@@ -1022,7 +1022,7 @@ export function ModpackBuilder({
           game: "minecraft",
           versionId: packVersion.trim(),
           name: trimmed,
-          summary: `RTLauncher Modrinth ${t("modpack.modpackBuilder.modpack")} - ${matchedVersion!.id}`,
+          summary: `OpenXLauncher Modrinth ${t("modpack.modpackBuilder.modpack")} - ${matchedVersion!.id}`,
           format: "modrinth",
           files: selectedModrinth.map((f) => ({
             path: f.path,

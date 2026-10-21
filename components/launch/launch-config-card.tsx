@@ -35,16 +35,28 @@ interface MemoryInfo {
   recommendedMB: number;
 }
 
-function useSystemMemory(): MemoryInfo {
+function useSystemMemory(autoMemory: boolean): MemoryInfo {
   const [info, setInfo] = useState<MemoryInfo>({ totalMB: 0, usedMB: 0, availableMB: 0, recommendedMB: 0 });
 
   useEffect(() => {
-    invoke<{ total_mb: number; used_mb: number; available_mb: number; recommended_mb: number }>("get_system_memory")
-      .then(({ total_mb, used_mb, available_mb, recommended_mb }) =>
-        setInfo({ totalMB: total_mb, usedMB: used_mb, availableMB: available_mb, recommendedMB: recommended_mb })
-      )
-      .catch(() => {});
-  }, []);
+    let cancelled = false;
+    const refresh = () => {
+      invoke<{ total_mb: number; used_mb: number; available_mb: number; recommended_mb: number }>("get_system_memory")
+        .then(({ total_mb, used_mb, available_mb, recommended_mb }) => {
+          if (!cancelled) {
+            setInfo({ totalMB: total_mb, usedMB: used_mb, availableMB: available_mb, recommendedMB: recommended_mb });
+          }
+        })
+        .catch(() => {});
+    };
+    refresh();
+    // 自动模式下周期性刷新推荐值，与启动前 auto_allocate 保持接近实时
+    const interval = autoMemory ? window.setInterval(refresh, 5000) : undefined;
+    return () => {
+      cancelled = true;
+      if (interval !== undefined) window.clearInterval(interval);
+    };
+  }, [autoMemory]);
 
   return info;
 }
@@ -111,9 +123,17 @@ function PathItem({
  */
 export function LaunchConfigCard() {
   const { t } = useI18n();
-  const { config, updateConfig } = useLaunchContext();
+  const { config, updateConfig, configLoaded } = useLaunchContext();
   const { selectedProfile } = useAccountContext();
-  const { totalMB, usedMB, availableMB, recommendedMB } = useSystemMemory();
+  const autoMemory = config.autoMemory !== false;
+  const { totalMB, usedMB, availableMB, recommendedMB } = useSystemMemory(autoMemory);
+
+  // 配置加载完成后再同步，避免启动瞬间用推荐值覆盖 localStorage 中的手动设置
+  useEffect(() => {
+    if (!configLoaded || !autoMemory || recommendedMB <= 0) return;
+    if (String(recommendedMB) === config.maxMemory) return;
+    updateConfig({ maxMemory: String(recommendedMB), autoMemory: true });
+  }, [configLoaded, autoMemory, recommendedMB, config.maxMemory, updateConfig]);
 
   const [pathsCfg, setPathsCfg] = useState<LauncherPathsConfig>({
     java_paths: [],
@@ -248,12 +268,20 @@ export function LaunchConfigCard() {
         ? selectedProfile.yggdrasilUrl || config.yggdrasilApi || ""
         : "";
 
+      let exportMaxMemory = config.maxMemory;
+      if (config.autoMemory !== false) {
+        try {
+          const mem = await invoke<{ recommended_mb: number }>("get_system_memory");
+          if (mem.recommended_mb > 0) exportMaxMemory = String(mem.recommended_mb);
+        } catch { /* keep saved */ }
+      }
+
       // 构建完整的启动命令参数
       const result = await invoke<string>("build_jvm_arguments", {
         minecraftPath: config.minecraftPath,
         javaPath: config.javaPath,
         wrapperPath: config.wrapperPath,
-        maxMemory: config.maxMemory,
+        maxMemory: exportMaxMemory,
         versionName: config.versionName,
         minecraftVersion: config.minecraftVersion,
         playerName: config.playerName || selectedProfile.name,
@@ -494,8 +522,13 @@ ${result}
         {/* 最大内存 */}
         <div className="space-y-1.5">
           <div className="flex items-center justify-between">
-            <Label className="text-xs text-muted-foreground">
+            <Label className="text-xs text-muted-foreground flex items-center gap-1.5">
               {t("launch.config.maximumMemory")} (MB)
+              {autoMemory && (
+                <span className="rounded px-1 py-0.5 text-[9px] font-medium bg-primary/10 text-primary leading-none">
+                  {t("launch.config.autoLabel")}
+                </span>
+              )}
             </Label>
             {totalMB > 0 && (
               <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
@@ -510,7 +543,8 @@ ${result}
             )}
           </div>
           {totalMB > 0 && availableMB > 0 && (() => {
-            const percentage = Math.min(100, (Number(config.maxMemory) / availableMB) * 100);
+            const displayMb = autoMemory && recommendedMB > 0 ? recommendedMB : Number(config.maxMemory);
+            const percentage = Math.min(100, (displayMb / availableMB) * 100);
             return (
               <div className="w-full h-1 rounded-full bg-muted overflow-hidden">
                 <div
@@ -526,46 +560,50 @@ ${result}
               min={1024}
               max={availableMB > 0 ? Math.max(1024, availableMB) : totalMB > 0 ? Math.max(1024, Math.floor(totalMB * 0.75)) : 32768}
               step={1}
-              value={Number(config.maxMemory) || 4096}
-              onChange={(e) => updateConfig({ maxMemory: e.target.value })}
+              value={Number(autoMemory && recommendedMB > 0 ? recommendedMB : config.maxMemory) || 4096}
+              onChange={(e) => updateConfig({ maxMemory: e.target.value, autoMemory: false })}
               className="flex-1 h-1.5 accent-primary cursor-pointer"
             />
             <Input
               type="number"
-              value={config.maxMemory}
-              onChange={(e) => updateConfig({ maxMemory: e.target.value })}
+              value={autoMemory && recommendedMB > 0 ? String(recommendedMB) : config.maxMemory}
+              onChange={(e) => updateConfig({ maxMemory: e.target.value, autoMemory: false })}
               className="w-20 text-xs h-8 text-center"
               min={512}
               max={availableMB > 0 ? availableMB : 65536}
             />
             <Button
-              variant="outline"
+              variant={autoMemory ? "default" : "outline"}
               size="sm"
               className="shrink-0 h-8 px-3 text-[10px] gap-1"
               disabled={recommendedMB === 0}
               onClick={() => {
                 if (recommendedMB > 0) {
-                  updateConfig({ maxMemory: String(recommendedMB) });
+                  updateConfig({ maxMemory: String(recommendedMB), autoMemory: true });
                 }
               }}
             >
               {t("launch.config.autoAllocate")}
               {recommendedMB > 0 && (
-                <span className="text-[9px] text-muted-foreground/70">
+                <span className={`text-[9px] ${autoMemory ? "text-primary-foreground/80" : "text-muted-foreground/70"}`}>
                   {recommendedMB >= 1024 ? `${(recommendedMB / 1024).toFixed(1)}GB` : `${recommendedMB}MB`}
                 </span>
               )}
             </Button>
           </div>
           <p className="text-[10px] text-muted-foreground">
-            {t("launch.config.recommended5075OfAvailableMemory")}
-            {availableMB > 0 && (() => {
-              return (
-                <span className="ml-1 text-muted-foreground/60">
-                  {t("launch.config.valueValue2MbRecommendedRecommendedMbMb", { value: Math.round(availableMB * 0.5), value2: Math.round(availableMB * 0.75), recommendedMb: recommendedMB })}
-                </span>
-              );
-            })()}
+            {autoMemory
+              ? t("launch.config.autoMemoryHint")
+              : t("launch.config.recommended5075OfAvailableMemory")}
+            {availableMB > 0 && (
+              <span className="ml-1 text-muted-foreground/60">
+                {t("launch.config.valueValue2MbRecommendedRecommendedMbMb", {
+                  value: Math.round(availableMB * 0.5),
+                  value2: Math.round(availableMB * 0.75),
+                  recommendedMb: recommendedMB,
+                })}
+              </span>
+            )}
           </p>
         </div>
 

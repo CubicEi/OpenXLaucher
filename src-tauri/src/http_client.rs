@@ -11,7 +11,7 @@ static GLOBAL_SEMAPHORE: OnceCell<Arc<Semaphore>> = OnceCell::const_new();
 fn base_client_builder() -> reqwest::ClientBuilder {
     reqwest::Client::builder()
         .user_agent(
-            "Mozilla/5.0 (compatible; RTLauncher/1.0; +https://github.com/bubulaladdi/RTLauncher)",
+            "Mozilla/5.0 (compatible; OpenXLauncher/1.0; +https://github.com/CubicEi/OpenXLaucher)",
         )
         .connect_timeout(Duration::from_secs(15))
         .pool_idle_timeout(Duration::from_secs(300))
@@ -82,7 +82,7 @@ pub async fn global_semaphore() -> Arc<Semaphore> {
 pub async fn resolve_redirect_url(url: &str) -> Result<String, String> {
     let client = reqwest::Client::builder()
         .user_agent(
-            "Mozilla/5.0 (compatible; RTLauncher/1.0; +https://github.com/bubulaladdi/RTLauncher)",
+            "Mozilla/5.0 (compatible; OpenXLauncher/1.0; +https://github.com/CubicEi/OpenXLaucher)",
         )
         .connect_timeout(Duration::from_secs(15))
         .timeout(Duration::from_secs(30))

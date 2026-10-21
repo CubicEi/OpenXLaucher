@@ -129,6 +129,8 @@
       "systemTotal": "System total",
       "available": "Available",
       "autoAllocate": "Auto allocate",
+      "autoLabel": "Auto",
+      "autoMemoryHint": "Allocated from available system memory; refreshed again before launch",
       "recommended5075OfAvailableMemory": "Recommended: 50%–75% of available memory",
       "valueValue2MbRecommendedRecommendedMbMb": "({value}–{value2} MB; recommended {recommendedMb} MB)",
       "gameVersion": "Game version",
@@ -189,6 +191,16 @@
       "gameLaunched": "Game launched!",
       "launchFailed": "Launch failed"
     },
+    "javaIncompatible": {
+      "title": "Incompatible Java version",
+      "description": "Version {version} requires Java {major}, but no matching installation was found.",
+      "hint": "Open the Download Center, or one-click download and launch the Zulu JDK installer.",
+      "openDownloadCenter": "Open Download Center (Java)",
+      "installZulu": "Install Zulu JDK {major}",
+      "installZuluGeneric": "Install Zulu JDK",
+      "installStarted": "Installer launched — rescan Java after it finishes",
+      "installFailed": "Install failed: {error}"
+    },
     "chooseAVersionConfigureLaunchSettingsAndBeginYour": "Choose a version, configure launch settings, and begin your Minecraft adventure",
     "log": {
       "title": "Launch Log",
@@ -241,7 +253,16 @@
     "failedToLoad": "Failed to load",
     "viewDetails": "View details",
     "rename": "Rename",
-    "goToParentFolder": "Go to parent folder"
+    "goToParentFolder": "Go to parent folder",
+    "checkUpdates": "Check updates",
+    "checkingUpdates": "Checking…",
+    "updateAll": "Update all",
+    "updateMod": "Update",
+    "updateAvailable": "Update available",
+    "updatesFound": "{count} updates",
+    "noUpdatesFound": "No updates found",
+    "updateSourceNotFound": "Update source not found",
+    "updating": "Updating…"
   },
   "home": {
     "modLoader": "Mod loader",
@@ -274,7 +295,7 @@
     "thisAccountHasNoPreviewableSkin": "This account has no previewable skin.",
     "signInToPreviewA3DSkin": "Sign in to preview a 3D skin.",
     "announcement": {
-      "welcomeToRtlauncher": "Welcome to RTLauncher",
+      "welcomeToOpenXLauncher": "Welcome to OpenXLauncher",
       "aModernMinecraftLauncherWithAPolishedSmoothExperience": "A modern Minecraft launcher with a polished, smooth experience.",
       "systemUpdate": "System update",
       "weRecentlyReleasedNewFeaturesAndImprovedTheExperience": "We recently released new features and improved the experience.",
@@ -293,7 +314,7 @@
       "worlds": "Worlds",
       "manageWorldSaves": "Manage world saves",
       "worldSaves6": "• World saves: 6",
-      "recentlyPlayedRtlWorld": "• Recently played: RTL World",
+      "recentlyPlayedRtlWorld": "• Recently played: OpenX World",
       "automaticBackups": "• Automatic backups",
       "resourcePacks": "Resource Packs",
       "manageGameTextures": "Manage game textures",
@@ -353,7 +374,7 @@
     },
     "themeManager": {
       "selectTheme": "Frontend theme",
-      "builtIn": "RTLauncher built-in",
+      "builtIn": "OpenXLauncher built-in",
       "development": "Development",
       "description": "Themes are trusted local React code. Unset routes and slots continue to use the built-in interface.",
       "install": "Install package",
@@ -622,7 +643,7 @@
   },
   "checkUpdate": {
     "title": "Check for Updates",
-    "subtitle": "Check if a new version of RTLauncher is available",
+    "subtitle": "Check if a new version of OpenXLauncher is available",
     "idle": "Idle",
     "checking": "Checking for updates...",
     "available": "Update available",
@@ -687,6 +708,10 @@
     "downloadPathNotReady": "Download path not ready, please try again later",
     "downloadFailed": "Download failed: {error}",
     "failedToGetJavaVersions": "Failed to get Java versions: {error}",
+    "javaMultiVendorHint": "Zulu / Temurin: download the installer and launch it. Oracle and Microsoft open the vendor site for a manual install.",
+    "javaManualInstall": "manual install",
+    "javaOpenedExternal": "Opened the {label} download page — finish the install manually",
+    "javaNoExternalUrl": "No download page available",
     "today": "Today",
     "daysAgo": "{count} days ago",
     "weeksAgo": "{count} weeks ago",
@@ -751,7 +776,7 @@
       "removeFromFavoritesNamed": "Remove from favorites: {name}",
       "empty": "Favorites is empty",
       "emptyHint": "Click the Star on a Mod file page to add that version to your favorites.",
-      "starTip": "See these stars? If you like RTLauncher, give us a star at github.com/cqw-acq/RTLauncher_new",
+      "starTip": "See these stars? If you like OpenXLauncher, give us a star at https://github.com/CubicEi/OpenXLaucher",
       "closeTip": "Dismiss tip"
     }
   }

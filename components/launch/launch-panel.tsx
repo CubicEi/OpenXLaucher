@@ -280,6 +280,9 @@ export function LaunchPanel() {
           <div className="rounded-lg bg-muted/50 p-2">
             <span className="block font-medium text-foreground">{t("launch.panel.memory")}</span>
             {config.maxMemory || t("common.notSet")} MB
+            {config.autoMemory !== false && (
+              <span className="ml-1 text-primary">({t("launch.config.autoLabel")})</span>
+            )}
           </div>
           <div className="rounded-lg bg-muted/50 p-2">
             <span className="block font-medium text-foreground">Java</span>

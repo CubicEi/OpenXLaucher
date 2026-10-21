@@ -1,19 +1,19 @@
 @echo off
 if /i not "%~1"=="__build__" (
-  start "RTLauncher Build" cmd /k call "%~f0" __build__
+  start "OpenXLauncher Build" cmd /k call "%~f0" __build__
   exit /b 0
 )
 
 setlocal EnableExtensions
 cd /d "%~dp0"
 
-title RTLauncher Portable Build
+title OpenXLauncher Portable Build
 set "LOG=%~dp0build.log"
 echo.>"%LOG%"
 
 echo.
 echo ========================================
-echo   RTLauncher - Portable EXE Build
+echo   OpenXLauncher - Portable EXE Build
 echo ========================================
 echo Log: %LOG%
 echo.

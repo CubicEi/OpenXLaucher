@@ -15,10 +15,12 @@ import {
   msHasAccountInDb,
   deleteCachedSkin,
   microsoftProbeAccountLogin,
+  normalizeSkinVariant,
   type LittleSkinAccount,
   type ThirdPartyAccountList,
   type DeviceCodeInfo,
 } from "@/lib/auth";
+import { readMigratedLocalStorage } from "@/lib/storage-migrate";
 import { LoginDialog } from "@/components/accounts/login-dialog";
 
 type LoginState = "idle" | "loading" | "error";
@@ -86,20 +88,28 @@ const AUTH_TYPE_LABELS: Record<AuthType, string> = {
   microsoft: "正版登录",
 };
 
-const STORAGE_KEY_PROFILES = "rtl_accounts";
-const STORAGE_KEY_SELECTED = "rtl_selected_account_id";
+const STORAGE_KEY_PROFILES = "openx_accounts";
+const STORAGE_KEY_SELECTED = "openx_selected_account_id";
+const LEGACY_STORAGE_KEY_PROFILES = ["rtl_accounts"] as const;
+const LEGACY_STORAGE_KEY_SELECTED = ["rtl_selected_account_id"] as const;
 
 function loadProfiles(): Account[] {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY_PROFILES);
-    if (raw) return JSON.parse(raw) as Account[];
+    const raw = readMigratedLocalStorage(STORAGE_KEY_PROFILES, LEGACY_STORAGE_KEY_PROFILES);
+    if (raw) {
+      const list = JSON.parse(raw) as Account[];
+      return list.map((p) => ({
+        ...p,
+        variant: normalizeSkinVariant(p.variant) ?? p.variant,
+      }));
+    }
   } catch {}
   return [];
 }
 
 function loadSelectedId(): string | null {
   try {
-    return localStorage.getItem(STORAGE_KEY_SELECTED);
+    return readMigratedLocalStorage(STORAGE_KEY_SELECTED, LEGACY_STORAGE_KEY_SELECTED);
   } catch {}
   return null;
 }
@@ -247,6 +257,22 @@ export function AccountProvider({ children }: { children: React.ReactNode }) {
           if (!probeResult.ok) {
             probeFailed = true;
             probeErrorMsg = probeResult.error;
+          } else {
+            // 试探成功时顺带写入 ACTIVE 皮肤的 slim/classic，供 3D 预览用
+            const active = probeResult.profile.skins.find(
+              (s) => s.state?.toUpperCase() === "ACTIVE"
+            ) ?? probeResult.profile.skins[0];
+            const probedVariant = normalizeSkinVariant(active?.variant);
+            if (probedVariant) {
+              setProfiles((prev) =>
+                prev.map((p) =>
+                  p.id === pid ? { ...p, variant: probedVariant } : p
+                )
+              );
+              setSelectedProfile((curr) =>
+                curr?.id === pid ? { ...curr, variant: probedVariant } : curr
+              );
+            }
           }
         } catch (e: unknown) {
           // 超时等异常也视为探测失败
@@ -304,6 +330,7 @@ export function AccountProvider({ children }: { children: React.ReactNode }) {
               try {
                 avatarSrc = (await getSkinBase64(puuid)) || undefined;
               } catch {}
+              const refreshedVariant = normalizeSkinVariant(refreshed.variant);
               setProfiles((prev) =>
                 prev.map((p) =>
                   p.id === pid
@@ -312,6 +339,7 @@ export function AccountProvider({ children }: { children: React.ReactNode }) {
                         name: refreshed.name || pName,
                         accessToken: refreshed.access_token,
                         skinUrl: avatarSrc ?? p.skinUrl,
+                        ...(refreshedVariant ? { variant: refreshedVariant } : {}),
                       }
                     : p
                 )
@@ -326,6 +354,7 @@ export function AccountProvider({ children }: { children: React.ReactNode }) {
                       name: refreshed.name || pName,
                       accessToken: refreshed.access_token,
                       skinUrl: avatarSrc ?? current.skinUrl,
+                      ...(refreshedVariant ? { variant: refreshedVariant } : {}),
                     }
                   : current
               );
@@ -420,6 +449,7 @@ export function AccountProvider({ children }: { children: React.ReactNode }) {
                 status: AUTH_TYPE_LABELS.microsoft,
                 accessToken: info.access_token,
                 skinUrl: avatarSrc ?? undefined,
+                variant: normalizeSkinVariant(info.variant),
               };
               setProfiles((prev) => {
                 const filtered = prev.filter(
@@ -565,6 +595,7 @@ export function AccountProvider({ children }: { children: React.ReactNode }) {
       accessToken: account.access_token,
       yggdrasilUrl: "https://littleskin.cn/api/yggdrasil",
       skinUrl: account.skin_url ?? undefined,
+      variant: normalizeSkinVariant(account.variant),
     };
     setProfiles((prev) => {
       const filtered = prev.filter((p) => p.uuid !== account.uuid || p.authType !== "littleskin");
@@ -614,6 +645,7 @@ export function AccountProvider({ children }: { children: React.ReactNode }) {
         accessToken: info.access_token,
         yggdrasilUrl: "https://littleskin.cn/api/yggdrasil",
         skinUrl: info.skin_url ?? undefined,
+        variant: normalizeSkinVariant(info.variant),
       };
       setProfiles((prev) => {
         const filtered = prev.filter(
@@ -778,6 +810,7 @@ export function AccountProvider({ children }: { children: React.ReactNode }) {
             status: AUTH_TYPE_LABELS.microsoft,
             accessToken: info.access_token,
             skinUrl: avatarSrc ?? undefined,
+            variant: normalizeSkinVariant(info.variant),
           };
           setProfiles((prev) => {
             const filtered = prev.filter(

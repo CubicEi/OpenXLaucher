@@ -871,6 +871,95 @@ fn update_version_json_id(text: &str, new_id: &str) -> Result<String, String> {
     serde_json::to_string_pretty(&value).map_err(|e| format!("序列化 version.json 失败: {}", e))
 }
 
+/// 版本目录重命名过程中的中间状态，用于任一步失败时回滚。
+struct VersionDirRenameTxn {
+    versions_root: PathBuf,
+    old_name: String,
+    new_name: String,
+    original_json: String,
+    json_updated: bool,
+    jar_renamed: bool,
+    natives_renamed: bool,
+    dir_renamed: bool,
+}
+
+impl VersionDirRenameTxn {
+    fn version_dir(&self) -> PathBuf {
+        if self.dir_renamed {
+            self.versions_root.join(&self.new_name)
+        } else {
+            self.versions_root.join(&self.old_name)
+        }
+    }
+
+    fn revert(&mut self) -> Vec<String> {
+        let mut failures = Vec::new();
+
+        if self.dir_renamed {
+            let from = self.versions_root.join(&self.new_name);
+            let to = self.versions_root.join(&self.old_name);
+            if let Err(e) = fs::rename(&from, &to) {
+                failures.push(format!("还原版本目录失败: {}", e));
+            } else {
+                self.dir_renamed = false;
+            }
+        }
+
+        let dir = self.versions_root.join(&self.old_name);
+
+        if self.natives_renamed {
+            let from = dir.join(format!("{}-natives", self.new_name));
+            let to = dir.join(format!("{}-natives", self.old_name));
+            if let Err(e) = fs::rename(&from, &to) {
+                failures.push(format!("还原 natives 目录失败: {}", e));
+            } else {
+                self.natives_renamed = false;
+            }
+        }
+
+        if self.jar_renamed {
+            let from = dir.join(format!("{}.jar", self.new_name));
+            let to = dir.join(format!("{}.jar", self.old_name));
+            if let Err(e) = fs::rename(&from, &to) {
+                failures.push(format!("还原 JAR 失败: {}", e));
+            } else {
+                self.jar_renamed = false;
+            }
+        }
+
+        if self.json_updated {
+            let old_json = dir.join(format!("{}.json", self.old_name));
+            let new_json = dir.join(format!("{}.json", self.new_name));
+            if let Err(e) = fs::write(&old_json, &self.original_json) {
+                failures.push(format!("还原 version.json 失败: {}", e));
+            } else {
+                if new_json != old_json {
+                    if let Err(e) = fs::remove_file(&new_json) {
+                        if e.kind() != io::ErrorKind::NotFound {
+                            failures.push(format!("删除临时 version.json 失败: {}", e));
+                        }
+                    }
+                }
+                self.json_updated = false;
+            }
+        }
+
+        failures
+    }
+}
+
+fn format_rename_error(step_error: String, rollback_failures: Vec<String>) -> String {
+    if rollback_failures.is_empty() {
+        step_error
+    } else {
+        format!(
+            "{}（已尝试还原先前更改，但部分还原失败: {}）",
+            step_error,
+            rollback_failures.join("; ")
+        )
+    }
+}
+
 /// 重命名已安装版本目录（versions 下的文件夹及其 json/jar/natives）
 #[tauri::command]
 pub fn vm_rename_version_dir(
@@ -902,44 +991,74 @@ pub fn vm_rename_version_dir(
         return Err(format!("找不到版本 JSON: {}", old_json.display()));
     }
 
-    let json_text = fs::read_to_string(&old_json)
+    let original_json = fs::read_to_string(&old_json)
         .map_err(|e| format!("读取 version.json 失败: {}", e))?;
-    let updated_json = update_version_json_id(&json_text, &new_name)?;
-    let new_json = old_dir.join(format!("{}.json", new_name));
-    fs::write(&new_json, updated_json).map_err(|e| format!("写入 version.json 失败: {}", e))?;
-    if new_json != old_json {
-        let _ = fs::remove_file(&old_json);
-    }
 
-    let old_jar = old_dir.join(format!("{}.jar", old_folder_name));
-    if old_jar.is_file() {
-        let new_jar = old_dir.join(format!("{}.jar", new_name));
-        if new_jar.exists() {
-            return Err(format!("目标 JAR 已存在: {}", new_jar.display()));
-        }
-        fs::rename(&old_jar, &new_jar).map_err(|e| format!("重命名 JAR 失败: {}", e))?;
-    }
+    let mut txn = VersionDirRenameTxn {
+        versions_root: versions_root.clone(),
+        old_name: old_folder_name.clone(),
+        new_name: new_name.clone(),
+        original_json,
+        json_updated: false,
+        jar_renamed: false,
+        natives_renamed: false,
+        dir_renamed: false,
+    };
 
-    let old_natives = old_dir.join(format!("{}-natives", old_folder_name));
-    if old_natives.is_dir() {
-        let new_natives = old_dir.join(format!("{}-natives", new_name));
-        if new_natives.exists() {
-            return Err(format!("目标 natives 目录已存在: {}", new_natives.display()));
+    let result: Result<(), String> = (|| {
+        let updated_json = update_version_json_id(&txn.original_json, &txn.new_name)?;
+        let work_dir = txn.version_dir();
+        let new_json = work_dir.join(format!("{}.json", txn.new_name));
+        fs::write(&new_json, updated_json)
+            .map_err(|e| format!("写入 version.json 失败: {}", e))?;
+        if new_json != old_json {
+            fs::remove_file(&old_json).map_err(|e| format!("删除旧 version.json 失败: {}", e))?;
         }
-        fs::rename(&old_natives, &new_natives)
-            .map_err(|e| format!("重命名 natives 目录失败: {}", e))?;
-    }
+        txn.json_updated = true;
 
-    fs::rename(&old_dir, &new_dir).map_err(|e| {
-        if e.kind() == io::ErrorKind::PermissionDenied {
-            format!(
-                "无法重命名版本目录（文件可能正在使用中）: {}",
-                e
-            )
-        } else {
-            format!("重命名版本目录失败: {}", e)
+        let old_jar = work_dir.join(format!("{}.jar", txn.old_name));
+        if old_jar.is_file() {
+            let new_jar = work_dir.join(format!("{}.jar", txn.new_name));
+            if new_jar.exists() {
+                return Err(format!("目标 JAR 已存在: {}", new_jar.display()));
+            }
+            fs::rename(&old_jar, &new_jar).map_err(|e| format!("重命名 JAR 失败: {}", e))?;
+            txn.jar_renamed = true;
         }
-    })?;
+
+        let old_natives = work_dir.join(format!("{}-natives", txn.old_name));
+        if old_natives.is_dir() {
+            let new_natives = work_dir.join(format!("{}-natives", txn.new_name));
+            if new_natives.exists() {
+                return Err(format!(
+                    "目标 natives 目录已存在: {}",
+                    new_natives.display()
+                ));
+            }
+            fs::rename(&old_natives, &new_natives)
+                .map_err(|e| format!("重命名 natives 目录失败: {}", e))?;
+            txn.natives_renamed = true;
+        }
+
+        let work_dir = txn.version_dir();
+        let old_dir = work_dir.clone();
+        let new_dir = versions_root.join(&txn.new_name);
+        fs::rename(&old_dir, &new_dir).map_err(|e| {
+            if e.kind() == io::ErrorKind::PermissionDenied {
+                format!("无法重命名版本目录（文件可能正在使用中）: {}", e)
+            } else {
+                format!("重命名版本目录失败: {}", e)
+            }
+        })?;
+        txn.dir_renamed = true;
+
+        Ok(())
+    })();
+
+    if let Err(step_error) = result {
+        let rollback_failures = txn.revert();
+        return Err(format_rename_error(step_error, rollback_failures));
+    }
 
     println!(
         "[Version] 已重命名版本目录: {} -> {}",
@@ -1745,5 +1864,68 @@ mod tests {
             detect_loader_from_arguments(&version),
             Some("NeoForge")
         );
+    }
+
+    fn write_minimal_version_dir(mc_root: &std::path::Path, folder_name: &str) {
+        use std::fs;
+        let dir = mc_root.join("versions").join(folder_name);
+        fs::create_dir_all(&dir).expect("create version dir");
+        let json = format!(r#"{{"id":"{}"}}"#, folder_name);
+        fs::write(dir.join(format!("{}.json", folder_name)), json).expect("write json");
+        fs::write(dir.join(format!("{}.jar", folder_name)), b"jar").expect("write jar");
+        fs::create_dir(dir.join(format!("{}-natives", folder_name))).expect("create natives");
+    }
+
+    #[test]
+    fn vm_rename_version_dir_renames_all_artifacts() {
+        use super::vm_rename_version_dir;
+        use tempfile::TempDir;
+
+        let root = TempDir::new().expect("temp dir");
+        let mc = root.path();
+        write_minimal_version_dir(mc, "old-pack");
+
+        let new_name = vm_rename_version_dir(
+            mc.to_string_lossy().into_owned(),
+            "old-pack".to_string(),
+            "new-pack".to_string(),
+        )
+        .expect("rename should succeed");
+
+        assert_eq!(new_name, "new-pack");
+        let dir = mc.join("versions").join("new-pack");
+        assert!(dir.join("new-pack.json").is_file());
+        assert!(dir.join("new-pack.jar").is_file());
+        assert!(dir.join("new-pack-natives").is_dir());
+        assert!(!mc.join("versions").join("old-pack").exists());
+    }
+
+    #[test]
+    fn vm_rename_version_dir_rolls_back_on_failure() {
+        use super::vm_rename_version_dir;
+        use tempfile::TempDir;
+
+        let root = TempDir::new().expect("temp dir");
+        let mc = root.path();
+        write_minimal_version_dir(mc, "old-pack");
+
+        let old_dir = mc.join("versions").join("old-pack");
+        fs::write(old_dir.join("new-pack-natives"), b"block").expect("block natives rename");
+
+        let err = vm_rename_version_dir(
+            mc.to_string_lossy().into_owned(),
+            "old-pack".to_string(),
+            "new-pack".to_string(),
+        )
+        .expect_err("rename should fail");
+
+        assert!(err.contains("natives"));
+        assert!(old_dir.is_dir());
+        assert!(old_dir.join("old-pack.json").is_file());
+        let json_text = fs::read_to_string(old_dir.join("old-pack.json")).expect("read json");
+        assert!(json_text.contains("\"id\":\"old-pack\""));
+        assert!(old_dir.join("old-pack.jar").is_file());
+        assert!(old_dir.join("old-pack-natives").is_dir());
+        assert!(!mc.join("versions").join("new-pack").exists());
     }
 }

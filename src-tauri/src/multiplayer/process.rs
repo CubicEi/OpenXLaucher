@@ -98,11 +98,11 @@ fn start_openp2p_with_args(args: &[String]) -> Result<String, String> {
     logs::clear_buffer();
     clear_openp2p_log_files(&working_dir);
     append_log_str(&format!(
-        "[RTLauncher] 正在启动 openp2p...\n\
-         [RTLauncher]   可执行文件: {}\n\
-         [RTLauncher]   工作目录: {}\n\
-         [RTLauncher]   参数: {:?}\n\
-         [RTLauncher]   日志目录: {}/log/\n\n",
+        "[OpenXLauncher] 正在启动 openp2p...\n\
+         [OpenXLauncher]   可执行文件: {}\n\
+         [OpenXLauncher]   工作目录: {}\n\
+         [OpenXLauncher]   参数: {:?}\n\
+         [OpenXLauncher]   日志目录: {}/log/\n\n",
         path_str,
         working_dir.display(),
         args,
@@ -161,20 +161,20 @@ fn start_openp2p_with_args(args: &[String]) -> Result<String, String> {
                     .map_err(|_| "无法锁定进程句柄".to_string())?;
                 *guard = Some(child);
             }
-            append_log_str("[RTLauncher] ✅ openp2p 进程已启动，正在捕获输出...\n");
-            append_log_str("[RTLauncher] (右侧日志窗口会持续显示 openp2p 的所有输出)\n\n");
+            append_log_str("[OpenXLauncher] ✅ openp2p 进程已启动，正在捕获输出...\n");
+            append_log_str("[OpenXLauncher] (右侧日志窗口会持续显示 openp2p 的所有输出)\n\n");
             Ok(path_str)
         }
         Err(e) => {
             let is_elevation_error = cfg!(target_os = "windows") && e.raw_os_error() == Some(740);
             if is_elevation_error {
-                append_log_str("[RTLauncher] ⚠ openp2p.exe 需要管理员权限才能运行\n");
-                append_log_str("[RTLauncher]   正在以管理员身份重新启动（会弹出 UAC 提示）...\n");
+                append_log_str("[OpenXLauncher] ⚠ openp2p.exe 需要管理员权限才能运行\n");
+                append_log_str("[OpenXLauncher]   正在以管理员身份重新启动（会弹出 UAC 提示）...\n");
                 append_log_str(
-                    "[RTLauncher]   注意：以管理员权限启动后，无法通过管道捕获 stdout\n",
+                    "[OpenXLauncher]   注意：以管理员权限启动后，无法通过管道捕获 stdout\n",
                 );
                 append_log_str(
-                    "[RTLauncher]   将改为读取 openp2p 自己生成的日志文件来获取反馈\n\n",
+                    "[OpenXLauncher]   将改为读取 openp2p 自己生成的日志文件来获取反馈\n\n",
                 );
                 #[cfg(target_os = "windows")]
                 {
@@ -219,16 +219,16 @@ fn start_openp2p_with_args(args: &[String]) -> Result<String, String> {
                     if (result as i32) <= 32 {
                         let err = Error::last_os_error();
                         let err_msg = format!(
-                            "[RTLauncher] ❌ 以管理员身份启动也失败: {}\n\
-                             [RTLauncher]   请尝试手动以管理员身份运行此程序（右键 → 以管理员身份运行）\n",
+                            "[OpenXLauncher] ❌ 以管理员身份启动也失败: {}\n\
+                             [OpenXLauncher]   请尝试手动以管理员身份运行此程序（右键 → 以管理员身份运行）\n",
                             err
                         );
                         append_log_str(&err_msg);
                         return Err(err_msg);
                     }
-                    append_log_str("[RTLauncher] ✅ openp2p 已以管理员权限启动\n");
-                    append_log_str("[RTLauncher]   正在等待 openp2p 生成日志文件...\n");
-                    append_log_str("[RTLauncher]   (如果长时间无输出，请检查 openp2p.exe 是否被杀毒软件拦截)\n\n");
+                    append_log_str("[OpenXLauncher] ✅ openp2p 已以管理员权限启动\n");
+                    append_log_str("[OpenXLauncher]   正在等待 openp2p 生成日志文件...\n");
+                    append_log_str("[OpenXLauncher]   (如果长时间无输出，请检查 openp2p.exe 是否被杀毒软件拦截)\n\n");
                     {
                         let mut guard = OPENP2P_PROCESS
                             .lock()
@@ -240,8 +240,8 @@ fn start_openp2p_with_args(args: &[String]) -> Result<String, String> {
                 #[cfg(not(target_os = "windows"))]
                 {
                     let err_msg = format!(
-                        "[RTLauncher] ❌ 启动失败: {}\n\
-                         [RTLauncher]   请尝试以 sudo/管理员权限运行此程序\n",
+                        "[OpenXLauncher] ❌ 启动失败: {}\n\
+                         [OpenXLauncher]   请尝试以 sudo/管理员权限运行此程序\n",
                         e
                     );
                     append_log_str(&err_msg);
@@ -249,13 +249,13 @@ fn start_openp2p_with_args(args: &[String]) -> Result<String, String> {
                 }
             } else {
                 let err_msg = format!(
-                    "[RTLauncher] ❌ 启动失败 (系统错误: {})\n\
-                     [RTLauncher]   可执行文件路径: {}\n\
-                     [RTLauncher]   工作目录: {}\n\
-                     [RTLauncher]   请确认:\n\
-                     [RTLauncher]   1. {} 存在且与当前操作系统及 CPU 架构匹配\n\
-                     [RTLauncher]   2. 当前用户具备该文件的执行权限\n\
-                     [RTLauncher]   3. 文件未被系统安全工具拦截\n",
+                    "[OpenXLauncher] ❌ 启动失败 (系统错误: {})\n\
+                     [OpenXLauncher]   可执行文件路径: {}\n\
+                     [OpenXLauncher]   工作目录: {}\n\
+                     [OpenXLauncher]   请确认:\n\
+                     [OpenXLauncher]   1. {} 存在且与当前操作系统及 CPU 架构匹配\n\
+                     [OpenXLauncher]   2. 当前用户具备该文件的执行权限\n\
+                     [OpenXLauncher]   3. 文件未被系统安全工具拦截\n",
                     e,
                     path_str,
                     working_dir.display(),
@@ -317,7 +317,7 @@ fn kill_all_openp2p_processes() -> Result<(), String> {
         // 这台机器上的 taskkill/tasklist 会返回“分页文件太小”，因此绕开这两个命令，
         // 使用管理员 PowerShell 的 Process API 重复结束守护/工作进程。
         let working_dir = get_openp2p_dir()?;
-        let stop_script = working_dir.join(".rtlauncher-stop-openp2p.ps1");
+        let stop_script = working_dir.join(".OpenXLauncher-stop-openp2p.ps1");
         let script = r#"$ErrorActionPreference = 'SilentlyContinue'
 for ($i = 0; $i -lt 20; $i++) {
   Get-Process -Name openp2p -ErrorAction SilentlyContinue | Stop-Process -Force
@@ -350,7 +350,7 @@ for ($i = 0; $i -lt 20; $i++) {
             .encode_wide()
             .chain(std::iter::once(0))
             .collect();
-        append_log_str("[RTLauncher] 请求管理员权限，通过进程 API 结束 OpenP2P...\n");
+        append_log_str("[OpenXLauncher] 请求管理员权限，通过进程 API 结束 OpenP2P...\n");
         let work_dir_wide: Vec<u16> = working_dir
             .as_os_str()
             .encode_wide()
@@ -424,7 +424,7 @@ for ($i = 0; $i -lt 20; $i++) {
 #[command]
 pub async fn mp_stop_openp2p() -> Result<(), String> {
     let working_dir = get_openp2p_dir().ok();
-    append_log_str("[RTLauncher] 正在停止 openp2p 进程（含保护线程）...\n");
+    append_log_str("[OpenXLauncher] 正在停止 openp2p 进程（含保护线程）...\n");
     {
         if let Ok(mut guard) = OPENP2P_PROCESS.lock() {
             if let Some(child) = guard.as_mut() {
@@ -439,7 +439,7 @@ pub async fn mp_stop_openp2p() -> Result<(), String> {
     if let Some(dir) = &working_dir {
         clear_openp2p_log_files(dir);
     }
-    append_log_str("[RTLauncher] ✅ openp2p 进程（含所有保护线程）已终止\n");
+    append_log_str("[OpenXLauncher] ✅ openp2p 进程（含所有保护线程）已终止\n");
     Ok(())
 }
 #[command]
@@ -454,7 +454,7 @@ pub fn mp_is_openp2p_running() -> bool {
                     *guard = None;
                 }
                 Err(e) => {
-                    append_log_str(&format!("[RTLauncher] 检查进程句柄失败: {}\n", e));
+                    append_log_str(&format!("[OpenXLauncher] 检查进程句柄失败: {}\n", e));
                 }
             }
         }
@@ -527,7 +527,7 @@ mod tests {
                 "-token",
                 "11661058147873189554",
                 "-appname",
-                "RTlauncher",
+                "OpenXLauncher",
                 "-peernode",
                 "room",
                 "-dstip",
@@ -566,7 +566,7 @@ mod tests {
             .expect("system clock should be after unix epoch")
             .as_nanos();
         let path = std::env::temp_dir().join(format!(
-            "rtlauncher-openp2p-log-{}-{}.txt",
+            "OpenXLauncher-openp2p-log-{}-{}.txt",
             std::process::id(),
             unique
         ));

@@ -224,7 +224,7 @@ fn download_if_missing(url: &str, target: &Path) -> Result<()> {
         fs::create_dir_all(parent).ok();
     }
     let client = BClient::builder()
-        .user_agent("RTLauncher/1.0")
+        .user_agent("OpenXLauncher/1.0")
         .build()
         .context("Failed to build reqwest blocking client ")?;
     let mut resp = client

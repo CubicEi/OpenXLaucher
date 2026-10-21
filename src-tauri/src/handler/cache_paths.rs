@@ -55,20 +55,17 @@ fn cache_base_dir() -> Result<PathBuf, String> {
         }
     }
 
-    // 2) Fall back to the platform default location.
+    // 2) Fall back to launcher-side OpenX/minecraft (NOT game `.minecraft`).
     #[cfg(target_os = "windows")]
     {
-        let exe_dir = std::env::current_exe()
-            .map_err(|e| e.to_string())?
-            .parent()
-            .map(|d| d.to_path_buf())
-            .unwrap_or_else(|| PathBuf::from("."));
-        return Ok(exe_dir.join("minecraft"));
+        crate::app_paths::ensure_portable_dirs();
+        return Ok(crate::app_paths::portable_minecraft_data_dir());
     }
     #[cfg(target_os = "macos")]
     {
+        crate::app_paths::migrate_portable_layout();
         let home = std::env::var("HOME").map_err(|e| e.to_string())?;
-        return Ok(PathBuf::from(home).join("Library/Application Support/RTLauncher"));
+        return Ok(PathBuf::from(home).join("Library/Application Support/OpenXLauncher"));
     }
     // Runtime cache must not live below `src-tauri` during development: Tauri's
     // file watcher treats cache writes as source changes and restarts the app.
@@ -78,7 +75,7 @@ fn cache_base_dir() -> Result<PathBuf, String> {
     }
     #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
     {
-        Ok(PathBuf::from("./minecraft"))
+        Ok(crate::app_paths::portable_minecraft_data_dir())
     }
 }
 

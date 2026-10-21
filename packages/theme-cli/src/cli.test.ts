@@ -18,7 +18,7 @@ import {
 const temporaryDirectories: string[] = [];
 
 async function fixture(): Promise<string> {
-  const root = await mkdtemp(join(tmpdir(), "rtl-theme-cli-"));
+  const root = await mkdtemp(join(tmpdir(), "oxl-theme-cli-"));
   temporaryDirectories.push(root);
   await mkdir(join(root, "src"));
   await writeFile(join(root, "manifest.json"), JSON.stringify({
@@ -27,14 +27,14 @@ async function fixture(): Promise<string> {
     name: "Hello",
     version: "1.0.0",
     author: { name: "Example" },
-    engines: { rtlauncher: ">=1.0.0", themeApi: "^1.0.0" },
+    engines: { openxlauncher: ">=1.0.0", themeApi: "^1.0.0" },
     entry: { script: "src/theme.tsx", style: "src/theme.css" },
     supports: { colorSchemes: ["light", "dark"] },
   }, null, 2));
   await writeFile(join(root, "src/theme.tsx"), `
     import React from "react";
-    import { Button } from "@rtlauncher/theme-ui";
-    import { defineTheme } from "@rtlauncher/theme-sdk";
+    import { Button } from "@openxlauncher/theme-ui";
+    import { defineTheme } from "@openxlauncher/theme-sdk";
     export default defineTheme({
       id: "com.example.hello", version: "1.0.0", apiVersion: "1.0.0",
       setup(context) {
@@ -68,8 +68,8 @@ describe("Theme author CLI", () => {
     const result = await buildTheme(root);
     const script = await readFile(result.scriptPath, "utf8");
 
-    expect(script).toContain("__RTL_THEME_HOST__");
-    expect(script).toContain("__RTL_THEME_REGISTER__");
+    expect(script).toContain("__OPENX_THEME_HOST__");
+    expect(script).toContain("__OPENX_THEME_REGISTER__");
     expect(script).not.toContain('require("react")');
   });
 
@@ -82,17 +82,17 @@ describe("Theme author CLI", () => {
 
     expect(manifest.integrity.files["dist/theme.js"]).toBe(`sha256-${digest}`);
     expect(await readFile(result.stylePath!, "utf8")).toContain(
-      '@scope ([data-rtl-theme="com.example.hello"])',
+      '@scope ([data-openx-theme="com.example.hello"])',
     );
     expect(scopeThemeCss("com.example.hello", ".x{}"))
-      .toContain('[data-rtl-theme="com.example.hello"]');
+      .toContain('[data-openx-theme="com.example.hello"]');
   });
 
   it("creates deterministic archives that can be inspected", async () => {
     const root = await fixture();
     await buildTheme(root);
-    const first = await packTheme(root, join(root, "first.rtltheme"));
-    const second = await packTheme(root, join(root, "second.rtltheme"));
+    const first = await packTheme(root, join(root, "first.oxltheme"));
+    const second = await packTheme(root, join(root, "second.oxltheme"));
 
     expect(await readFile(first)).toEqual(await readFile(second));
     const inspection = await inspectThemeArchive(first);
@@ -107,14 +107,14 @@ describe("Theme author CLI", () => {
 
   it("marks an archive without integrity data as invalid", async () => {
     const root = await fixture();
-    const archivePath = join(root, "no-integrity.rtltheme");
+    const archivePath = join(root, "no-integrity.oxltheme");
     const manifest = {
       schemaVersion: "1.0",
       id: "com.example.hello",
       name: "Hello",
       version: "1.0.0",
       author: { name: "Example" },
-      engines: { rtlauncher: ">=1.0.0", themeApi: "^1.0.0" },
+      engines: { openxlauncher: ">=1.0.0", themeApi: "^1.0.0" },
       entry: { script: "dist/theme.js" },
       supports: { colorSchemes: ["light"] },
     };

@@ -59,7 +59,7 @@ pub fn check_runtime_dependencies() -> RuntimeDependencyReport {
                 id: "webview2".into(),
                 name: "Microsoft Edge WebView2 运行时".into(),
                 description:
-                    "便携版启动器界面依赖 WebView2。请安装 Evergreen 运行时后重新启动 RTLauncher。"
+                    "便携版启动器界面依赖 WebView2。请安装 Evergreen 运行时后重新启动 OpenXLauncher。"
                         .into(),
                 download_url: "https://go.microsoft.com/fwlink/p/?LinkId=2124703".into(),
             });

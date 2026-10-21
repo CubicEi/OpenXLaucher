@@ -4,9 +4,10 @@ use std::path::PathBuf;
 use std::path::Path;
 
 #[cfg(target_os = "linux")]
+const APP_DIRECTORY_NAME: &str = "OpenXLauncher";
 
-#[cfg(target_os = "linux")]
-const APP_DIRECTORY_NAME: &str = "RTLauncher";
+const PORTABLE_DATA_DIR_NAME: &str = "OpenX";
+const LEGACY_PORTABLE_DATA_DIR_NAME: &str = "RTL";
 
 #[cfg(target_os = "linux")]
 struct LinuxXdgDirs<'a> {
@@ -97,33 +98,6 @@ pub fn linux_minecraft_dir() -> PathBuf {
     linux_paths_from_environment()[3].clone()
 }
 
-/// Portable data root: `<launcher_exe_dir>/RTL` on Windows, `./RTL` elsewhere.
-pub fn portable_rtl_dir() -> PathBuf {
-    #[cfg(target_os = "windows")]
-    {
-        return std::env::current_exe()
-            .ok()
-            .and_then(|exe| exe.parent().map(|dir| dir.join("RTL")))
-            .unwrap_or_else(|| PathBuf::from("RTL"));
-    }
-    #[cfg(not(target_os = "windows"))]
-    {
-        PathBuf::from("RTL")
-    }
-}
-
-pub fn portable_config_dir() -> PathBuf {
-    portable_rtl_dir().join("config")
-}
-
-pub fn portable_java_dir() -> PathBuf {
-    portable_rtl_dir().join("java")
-}
-
-pub fn portable_logs_dir() -> PathBuf {
-    portable_rtl_dir().join("logs")
-}
-
 pub fn launcher_exe_dir() -> PathBuf {
     std::env::current_exe()
         .ok()
@@ -131,10 +105,137 @@ pub fn launcher_exe_dir() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("."))
 }
 
+/// Portable data root: `<launcher_exe_dir>/OpenX` on Windows, `./OpenX` elsewhere.
+pub fn portable_data_dir() -> PathBuf {
+    #[cfg(target_os = "windows")]
+    {
+        return launcher_exe_dir().join(PORTABLE_DATA_DIR_NAME);
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        PathBuf::from(PORTABLE_DATA_DIR_NAME)
+    }
+}
+
+fn legacy_portable_data_dir() -> PathBuf {
+    #[cfg(target_os = "windows")]
+    {
+        return launcher_exe_dir().join(LEGACY_PORTABLE_DATA_DIR_NAME);
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        PathBuf::from(LEGACY_PORTABLE_DATA_DIR_NAME)
+    }
+}
+
+/// Launcher-side cache/data root under OpenX (NOT the game `.minecraft` directory).
+pub fn portable_minecraft_data_dir() -> PathBuf {
+    portable_data_dir().join("minecraft")
+}
+
+pub fn portable_config_dir() -> PathBuf {
+    portable_data_dir().join("config")
+}
+
+pub fn portable_java_dir() -> PathBuf {
+    portable_data_dir().join("java")
+}
+
+pub fn portable_logs_dir() -> PathBuf {
+    portable_data_dir().join("logs")
+}
+
+/// Preferred portable game directory next to the launcher executable.
+pub fn portable_game_minecraft_dir() -> PathBuf {
+    launcher_exe_dir().join(".minecraft")
+}
+
+fn rename_or_copy_dir(src: &std::path::Path, dest: &std::path::Path) {
+    if dest.exists() || !src.exists() {
+        return;
+    }
+    if let Some(parent) = dest.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    if std::fs::rename(src, dest).is_ok() {
+        return;
+    }
+    // Cross-device rename can fail; fall back to recursive copy then remove.
+    if copy_dir_recursive(src, dest).is_ok() {
+        let _ = std::fs::remove_dir_all(src);
+    }
+}
+
+fn copy_dir_recursive(src: &std::path::Path, dest: &std::path::Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(dest)?;
+    for entry in std::fs::read_dir(src)? {
+        let entry = entry?;
+        let entry_path = entry.path();
+        let dest_path = dest.join(entry.file_name());
+        if entry_path.is_dir() {
+            copy_dir_recursive(&entry_path, &dest_path)?;
+        } else {
+            std::fs::copy(&entry_path, &dest_path)?;
+        }
+    }
+    Ok(())
+}
+
+/// Migrate legacy portable layouts:
+/// - `RTL/` → `OpenX/`
+/// - `<exe_dir>/minecraft` → `OpenX/minecraft`
+#[cfg(target_os = "macos")]
+fn migrate_macos_app_support() {
+    if let Ok(home) = std::env::var("HOME") {
+        let old = PathBuf::from(&home).join("Library/Application Support/OpenXLauncher");
+        let new = PathBuf::from(&home).join("Library/Application Support/OpenXLauncher");
+        rename_or_copy_dir(&old, &new);
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn migrate_linux_xdg_dirs() {
+    if let Ok(home) = std::env::var("HOME") {
+        let home = PathBuf::from(home);
+        rename_or_copy_dir(
+            &home.join(".config/OpenXLauncher"),
+            &home.join(".config/OpenXLauncher"),
+        );
+        rename_or_copy_dir(
+            &home.join(".local/share/OpenXLauncher"),
+            &home.join(".local/share/OpenXLauncher"),
+        );
+        rename_or_copy_dir(
+            &home.join(".cache/OpenXLauncher"),
+            &home.join(".cache/OpenXLauncher"),
+        );
+    }
+}
+
+pub fn migrate_portable_layout() {
+    let new_root = portable_data_dir();
+    let old_root = legacy_portable_data_dir();
+    rename_or_copy_dir(&old_root, &new_root);
+
+    let new_mc = portable_minecraft_data_dir();
+    let old_mc = launcher_exe_dir().join("minecraft");
+    // Avoid treating OpenX/minecraft as the legacy root when already migrated.
+    if old_mc != new_mc {
+        rename_or_copy_dir(&old_mc, &new_mc);
+    }
+
+    #[cfg(target_os = "macos")]
+    migrate_macos_app_support();
+    #[cfg(target_os = "linux")]
+    migrate_linux_xdg_dirs();
+}
+
 pub fn ensure_portable_dirs() {
+    migrate_portable_layout();
     let _ = std::fs::create_dir_all(portable_config_dir());
     let _ = std::fs::create_dir_all(portable_java_dir());
     let _ = std::fs::create_dir_all(portable_logs_dir());
+    let _ = std::fs::create_dir_all(portable_minecraft_data_dir());
 }
 
 #[cfg(all(test, target_os = "linux"))]
@@ -145,15 +246,15 @@ mod tests {
     #[test]
     fn linux_writable_paths_are_absolute_and_outside_appimage_mount() {
         let home = Path::new("/home/tester");
-        let appdir = Path::new("/tmp/.mount_RTLaun");
+        let appdir = Path::new("/tmp/.mount_OpenXLa");
 
         let paths = linux_writable_paths(None, Some(home));
 
         assert!(paths.iter().all(|path| path.is_absolute()));
         assert!(paths.iter().all(|path| !path.starts_with(appdir)));
-        assert_eq!(paths[0], home.join(".config/RTLauncher"));
-        assert_eq!(paths[1], home.join(".local/share/RTLauncher/java"));
-        assert_eq!(paths[2], home.join(".cache/RTLauncher"));
+        assert_eq!(paths[0], home.join(".config/OpenXLauncher"));
+        assert_eq!(paths[1], home.join(".local/share/OpenXLauncher/java"));
+        assert_eq!(paths[2], home.join(".cache/OpenXLauncher"));
         assert_eq!(paths[3], home.join(".minecraft"));
     }
 
@@ -168,9 +269,9 @@ mod tests {
 
         let paths = linux_writable_paths(Some(xdg), Some(home));
 
-        assert_eq!(paths[0], Path::new("/mnt/config/RTLauncher"));
-        assert_eq!(paths[1], Path::new("/mnt/data/RTLauncher/java"));
-        assert_eq!(paths[2], Path::new("/mnt/cache/RTLauncher"));
+        assert_eq!(paths[0], Path::new("/mnt/config/OpenXLauncher"));
+        assert_eq!(paths[1], Path::new("/mnt/data/OpenXLauncher/java"));
+        assert_eq!(paths[2], Path::new("/mnt/cache/OpenXLauncher"));
         assert_eq!(paths[3], home.join(".minecraft"));
     }
 

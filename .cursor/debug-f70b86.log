@@ -1,8 +1,0 @@
-{"sessionId":"f70b86","location":"runtime-log:mods-scan","message":"vm_scan_instances start","data":{"instancesPath":"/minecraft/versions/navigation-test"},"timestamp":1792458787660,"hypothesisId":"F"}
-{"sessionId":"f70b86","location":"runtime-log:mods-scan","message":"vm_scan_instances start","data":{"instancesPath":"/minecraft/versions/navigation-test"},"timestamp":1792458787677,"hypothesisId":"F"}
-{"sessionId":"f70b86","location":"runtime-log:mods-scan","message":"vm_scan_instances done (frontend)","data":{"instancesPath":"/minecraft/versions/navigation-test","count":1,"elapsedMs":28},"timestamp":1792458787688,"hypothesisId":"F"}
-{"sessionId":"f70b86","location":"runtime-log:mods-scan","message":"vm_scan_instances done (frontend)","data":{"instancesPath":"/minecraft/versions/navigation-test","count":1,"elapsedMs":12},"timestamp":1792458787689,"hypothesisId":"F"}
-{"sessionId":"f70b86","location":"runtime-log:mods-scan","message":"vm_scan_instances start","data":{"instancesPath":"/minecraft/versions/navigation-test"},"timestamp":1792459897924,"hypothesisId":"F"}
-{"sessionId":"f70b86","location":"runtime-log:mods-scan","message":"vm_scan_instances start","data":{"instancesPath":"/minecraft/versions/navigation-test"},"timestamp":1792459897940,"hypothesisId":"F"}
-{"sessionId":"f70b86","location":"runtime-log:mods-scan","message":"vm_scan_instances done (frontend)","data":{"instancesPath":"/minecraft/versions/navigation-test","count":1,"elapsedMs":27},"timestamp":1792459897951,"hypothesisId":"F"}
-{"sessionId":"f70b86","location":"runtime-log:mods-scan","message":"vm_scan_instances done (frontend)","data":{"instancesPath":"/minecraft/versions/navigation-test","count":1,"elapsedMs":12},"timestamp":1792459897952,"hypothesisId":"F"}

@@ -1,6 +1,6 @@
 # Theme SDK 1.0 参考
 
-本文面向 RTLauncher Theme 开发者，说明 `@rtlauncher/theme-sdk` 的公开接口、生命周期、返回值和资源清理规则。开始第一个 Theme 前，请先阅读 [Theme 开发者快速上手](./DEVELOPER-GUIDE.zh-CN.md)。
+本文面向 OpenXLauncher Theme 开发者，说明 `@openxlauncher/theme-sdk` 的公开接口、生命周期、返回值和资源清理规则。开始第一个 Theme 前，请先阅读 [Theme 开发者快速上手](./DEVELOPER-GUIDE.zh-CN.md)。
 
 ## 1. 导入与版本
 
@@ -13,7 +13,7 @@ import {
   type ThemeContext,
   type ThemeRouteComponentProps,
   type ThemeSlotComponentProps,
-} from "@rtlauncher/theme-sdk";
+} from "@openxlauncher/theme-sdk";
 ```
 
 包根目录公开以下常用类型：
@@ -24,7 +24,7 @@ import {
 | `ThemeDefinition` | Theme 的 ID、版本、API 版本和 `setup`。 |
 | `ThemeContext` | `setup` 收到的全部主程序能力。 |
 | `ThemeLifecycle` | `activate`、`deactivate` 和 `dispose`。 |
-| `RTLauncherThemeSDK` | `context.sdk` 的稳定服务接口。 |
+| `OpenXLauncherThemeSDK` | `context.sdk` 的稳定服务接口。 |
 | `ThemeManifest` | 已校验的清单结构。 |
 | `ThemeRouteComponentProps` | Theme 路由组件的参数。 |
 | `ThemeSlotComponentProps<T>` | Theme 插槽组件的数据和子内容。 |
@@ -43,7 +43,7 @@ Theme 定义中的 `id` 和 `version` 必须与 `manifest.json` 完全一致。�
 | --- | --- | --- |
 | `manifest` | `ThemeManifest` | 当前 Theme 的只读清单。 |
 | `runtime` | `ThemeRuntimeInfo` | 主程序版本、平台、开发模式和准备时的活动 Theme。 |
-| `sdk` | `RTLauncherThemeSDK` | 账号、实例、启动、下载和其他稳定服务。 |
+| `sdk` | `OpenXLauncherThemeSDK` | 账号、实例、启动、下载和其他稳定服务。 |
 | `routes` | `ThemeRouteRegistryAPI` | 替换、包装或新增路由。 |
 | `slots` | `ThemeSlotRegistryAPI` | 向公开插槽注册组件。 |
 | `assets` | `ThemeAssetService` | 读取 Theme 包内资源并释放 URL。 |
@@ -54,7 +54,7 @@ Theme 定义中的 `id` 和 `version` 必须与 `manifest.json` 完全一致。�
 `context.settings` 和 `context.sdk.settings` 不是同一个服务：
 
 - `context.settings` 只保存当前 Theme 的数据。
-- `context.sdk.settings` 读取和修改 RTLauncher 的公开设置。
+- `context.sdk.settings` 读取和修改 OpenXLauncher 的公开设置。
 
 `context.events` 与 `context.sdk.events` 指向同一个 Theme 专用事件服务。
 
@@ -357,7 +357,7 @@ context.sdk.router.back();
 const location = context.sdk.router.getLocation();
 ```
 
-`navigate(target)` 使用 RTLauncher 路由器导航，`back()` 返回历史记录上一项，`getLocation()` 同步返回当前路径。Theme 自己新增的页面应使用 `/theme/` 命名空间。
+`navigate(target)` 使用 OpenXLauncher 路由器导航，`back()` 返回历史记录上一项，`getLocation()` 同步返回当前路径。Theme 自己新增的页面应使用 `/theme/` 命名空间。
 
 ### `sdk.settings`
 
@@ -374,7 +374,7 @@ await context.sdk.settings.update({
 
 | 方法 | 返回值 | 说明 |
 | --- | --- | --- |
-| `get()` | 只读对象 | 同步读取 RTLauncher 设置快照。 |
+| `get()` | 只读对象 | 同步读取 OpenXLauncher 设置快照。 |
 | `update(patch)` | `Promise<void>` | 更新公开设置分区。 |
 | `subscribe(listener)` | 取消函数 | 设置变化时通知；监听器不接收参数。 |
 
@@ -432,7 +432,7 @@ const { os, appVersion, themeApiVersion } = context.sdk.platform;
 `unsafe.invoke` 是受限的原生命令入口，不属于稳定兼容层。使用它需要同时满足两个条件：
 
 1. Theme 在清单 `permissions.unsafeCommands` 中请求命令。
-2. RTLauncher 主程序允许该命令。
+2. OpenXLauncher 主程序允许该命令。
 
 ```json
 {
@@ -537,8 +537,8 @@ setup(context) {
 
 ## 13. 兼容性建议
 
-- 只使用 `@rtlauncher/theme-sdk`、`@rtlauncher/theme-ui` 和文档明确公开的能力。
-- 不要读取 `window.__RTL_THEME_HOST__` 或直接调用内部 Tauri 命令。
+- 只使用 `@openxlauncher/theme-sdk`、`@openxlauncher/theme-ui` 和文档明确公开的能力。
+- 不要读取 `window.__OPENX_THEME_HOST__` 或直接调用内部 Tauri 命令。
 - 对可选字段提供默认值。
 - 把私有清单数据放在带反向域名键的 `extensions` 中。
 - 新功能先检测 API 版本或能力，再提供回退路径。

@@ -532,6 +532,14 @@ pub(super) fn build_jvm_arguments_inner(
 ) -> anyhow::Result<Vec<String>> {
     let minecraft_path_buf = PathBuf::from(minecraft_path);
     let (effective_max_memory_mb, memory_warning) = resolve_max_memory_mb(max_memory)?;
+    info!("JVM max heap (-Xmx): {effective_max_memory_mb}MB (requested: {max_memory})");
+    let _ = app_handle.emit(
+        "game-log",
+        GameLogEvent {
+            level: "info".to_string(),
+            message: format!("实际分配最大内存: {effective_max_memory_mb}MB"),
+        },
+    );
     if let Some(warning) = memory_warning.as_ref() {
         warn!("{warning}");
         let _ = app_handle.emit(
@@ -747,7 +755,7 @@ pub(super) fn build_jvm_arguments_inner(
                                             replaced = replaced
                                                 .replace("${natives_directory}", natives_dir);
                                             replaced =
-                                                replaced.replace("${launcher_name}", "RTLauncher");
+                                                replaced.replace("${launcher_name}", "OpenXLauncher");
                                             replaced = replaced.replace(
                                                 "${launcher_version}",
                                                 env!("CARGO_PKG_VERSION"),
@@ -1457,7 +1465,7 @@ pub(super) fn build_jvm_arguments_inner(
                     .unwrap_or(&String::new()),
             )
             .replace("${user_type}", user_type)
-            .replace("${version_type}", "RTL");
+            .replace("${version_type}", "OpenX");
 
         // 将剩余的${}格式参数转换为{}格式
         let re = Regex::new(r"\$\{[^}]+\}").unwrap();
@@ -1921,7 +1929,7 @@ pub(super) fn build_jvm_arguments_inner(
                 result = result.replace("${library_directory}", &library_dir);
                 result = result.replace("${natives_directory}", &jvm_natives_dir);
                 result = result.replace("${version_name}", &version_name);
-                result = result.replace("${launcher_name}", "RTLauncher");
+                result = result.replace("${launcher_name}", "OpenXLauncher");
                 result = result.replace("${launcher_version}", env!("CARGO_PKG_VERSION"));
 
                 // ===== 关键修复：替换 ${classpath} 占位符 =====
@@ -2513,7 +2521,7 @@ pub(super) fn build_jvm_arguments_inner(
 
 /// 判断 Mojang arguments 中的一组规则是否允许当前参数。
 ///
-/// RTLauncher 当前没有启用 demo、Quick Play 等可选 feature，因此 feature
+/// OpenXLauncher 当前没有启用 demo、Quick Play 等可选 feature，因此 feature
 /// 的实际值统一按 false 处理。这样 `is_demo_user: true` 对应的 `--demo`
 /// 不会被误加到正常启动参数中。
 pub(super) fn launcher_rules_allow(rules: Option<&serde_json::Value>) -> bool {

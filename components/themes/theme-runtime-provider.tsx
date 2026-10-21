@@ -349,8 +349,8 @@ function ThemeRuntimeProviderCore({
   }, [mutableState, packages, refreshThemes, reloadTheme, snapshot.activeThemeId]);
 
   useEffect(() => {
-    document.documentElement.setAttribute("data-rtl-theme", snapshot.activeThemeId);
-    return () => document.documentElement.removeAttribute("data-rtl-theme");
+    document.documentElement.setAttribute("data-openx-theme", snapshot.activeThemeId);
+    return () => document.documentElement.removeAttribute("data-openx-theme");
   }, [snapshot.activeThemeId]);
 
   const value = useMemo<ThemeRuntimeContextValue>(() => ({
@@ -492,10 +492,18 @@ function ConnectedThemeRuntimeProvider({ children }: { children: ReactNode }) {
 }
 
 function createThemeSettingsService(themeId: string): ThemeSettingsService {
-  const key = `rtlauncher:theme-settings:${themeId}`;
+  const key = `openxlauncher:theme-settings:${themeId}`;
+  const legacyKey = `rtlauncher:theme-settings:${themeId}`;
   const listeners = new Set<(value: JsonValue) => void>();
   const read = (): JsonValue => {
-    const stored = localStorage.getItem(key);
+    let stored = localStorage.getItem(key);
+    if (stored == null) {
+      const legacy = localStorage.getItem(legacyKey);
+      if (legacy != null) {
+        localStorage.setItem(key, legacy);
+        stored = legacy;
+      }
+    }
     return stored ? JSON.parse(stored) as JsonValue : {};
   };
   return {

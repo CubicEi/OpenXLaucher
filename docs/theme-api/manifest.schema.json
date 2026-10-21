@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://rtlauncher.example/schemas/theme-manifest-1.0.json",
-  "title": "RTLauncher Theme manifest",
+  "$id": "https://OpenXLauncher.example/schemas/theme-manifest-1.0.json",
+  "title": "OpenXLauncher Theme manifest",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -81,9 +81,9 @@
     "engines": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["rtlauncher", "themeApi"],
+      "required": ["openxlauncher", "themeApi"],
       "properties": {
-        "rtlauncher": { "type": "string", "minLength": 1 },
+        "openxlauncher": { "type": "string", "minLength": 1 },
         "themeApi": { "type": "string", "minLength": 1 },
         "themeUi": { "type": "string", "minLength": 1 }
       }

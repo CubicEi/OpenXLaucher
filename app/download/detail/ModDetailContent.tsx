@@ -462,7 +462,7 @@ export default function ModDetailContent({ modId }: { modId: string }) {
         headers: {
           'x-api-key': '$2a$10$VTAFCxje5a1Jkqv0aGWjQ.fULedAEPctDqppOkNMRVv.edVnG7KQ6',
           Accept: 'application/json',
-          'User-Agent': 'RTLauncher',
+          'User-Agent': 'OpenXLauncher',
         },
       })
         .then((r) => (r.ok ? r.json() : null))

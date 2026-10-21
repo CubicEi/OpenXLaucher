@@ -647,7 +647,8 @@ pub async fn install_parsed_modpack(
             let json_path = version_dir.join(format!("{}.json", mc_ver));
             let jar_path = version_dir.join(format!("{}.jar", mc_ver));
             if !json_path.exists() || !jar_path.exists() {
-                let (tx_local, mut rx_local) = tokio::sync::mpsc::channel::<f64>(64);
+                let (tx_local, mut rx_local) =
+                    tokio::sync::mpsc::channel::<crate::downloader::original_dwl::ProgressUpdate>(64);
                 let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
                 let tx_forward = tx_clone.clone();
                 let forward = tokio::spawn(async move {
@@ -772,6 +773,7 @@ pub async fn install_parsed_modpack(
                         &fabric_ver,
                         &mc_dir_str,
                         true,
+                        None,
                     )
                     .await
                     .map_err(|e| anyhow!("Fabric 安装失败: {}", e))?;

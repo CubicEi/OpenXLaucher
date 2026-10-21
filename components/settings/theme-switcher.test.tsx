@@ -37,7 +37,7 @@ function createRuntime(activeThemeId = "builtin.default"): ThemeRuntimeContextVa
         name: "Nebula",
         version: "1.0.0",
         author: { name: "Example" },
-        engines: { rtlauncher: ">=0.2.0", themeApi: "^1.0.0" },
+        engines: { openxlauncher: ">=0.2.0", themeApi: "^1.0.0" },
         entry: { script: "dist/theme.js" },
         supports: { colorSchemes: ["light", "dark"] },
       },
@@ -133,13 +133,13 @@ describe("ThemeSwitcher", () => {
 
   it("installs an archive and refreshes the package list", async () => {
     runtime = createRuntime();
-    const actions = operations({ pickArchive: vi.fn(async () => "/tmp/nebula.rtltheme") });
+    const actions = operations({ pickArchive: vi.fn(async () => "/tmp/nebula.oxltheme") });
     render(<ThemeSwitcher operations={actions} />);
 
     fireEvent.click(screen.getByRole("button", { name: "settings.themeManager.install" }));
 
     await waitFor(() => {
-      expect(actions.installArchive).toHaveBeenCalledWith("/tmp/nebula.rtltheme");
+      expect(actions.installArchive).toHaveBeenCalledWith("/tmp/nebula.oxltheme");
       expect(runtime.refreshThemes).toHaveBeenCalledOnce();
     });
   });

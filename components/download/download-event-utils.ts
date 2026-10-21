@@ -70,6 +70,7 @@ export function makeStartDownloadFn(
               taskId: returnedTaskId,
               status: eventTask?.status ?? localTask.status,
               progress: eventTask?.progress ?? localTask.progress,
+              detail: eventTask?.detail ?? localTask.detail,
               error: eventTask?.error ?? localTask.error,
               failedCount: eventTask?.failedCount ?? localTask.failedCount,
             }];

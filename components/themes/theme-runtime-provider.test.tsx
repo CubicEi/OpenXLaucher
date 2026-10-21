@@ -15,7 +15,7 @@ function manifest(id: string): ThemeManifest {
     name: id,
     version: "1.0.0",
     author: { name: "Test" },
-    engines: { rtlauncher: ">=0.2.0", themeApi: "^1.0.0" },
+    engines: { openxlauncher: ">=0.2.0", themeApi: "^1.0.0" },
     entry: { script: "dist/theme.js" },
     supports: { colorSchemes: ["light", "dark"] },
   };
@@ -84,7 +84,7 @@ function Probe() {
 
 afterEach(() => {
   cleanup();
-  document.documentElement.removeAttribute("data-rtl-theme");
+  document.documentElement.removeAttribute("data-openx-theme");
 });
 
 describe("ThemeRuntimeProvider", () => {
@@ -168,7 +168,7 @@ describe("ThemeRuntimeProvider", () => {
     );
 
     await waitFor(() => {
-      expect(document.documentElement.getAttribute("data-rtl-theme")).toBe(
+      expect(document.documentElement.getAttribute("data-openx-theme")).toBe(
         "com.example.nebula",
       );
     });

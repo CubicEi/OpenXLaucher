@@ -1,3 +1,5 @@
+import { readMigratedLocalStorage } from "@/lib/storage-migrate";
+
 export interface ModFavorite {
   id: string;
   slug: string;
@@ -9,13 +11,14 @@ export interface ModFavorite {
   addedAt: number;
 }
 
-const STORAGE_KEY = "rtlauncher.mod-favorites.v1";
-const CHANGE_EVENT = "rtlauncher:mod-favorites-changed";
+const STORAGE_KEY = "openxlauncher.mod-favorites.v1";
+const LEGACY_STORAGE_KEYS = ["rtlauncher.mod-favorites.v1"] as const;
+const CHANGE_EVENT = "openxlauncher:mod-favorites-changed";
 
 export function readModFavorites(): ModFavorite[] {
   if (typeof window === "undefined") return [];
   try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
+    const raw = readMigratedLocalStorage(STORAGE_KEY, LEGACY_STORAGE_KEYS);
     const parsed: unknown = raw ? JSON.parse(raw) : [];
     return Array.isArray(parsed) ? parsed.filter(isModFavorite) : [];
   } catch {

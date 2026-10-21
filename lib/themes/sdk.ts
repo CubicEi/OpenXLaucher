@@ -1,6 +1,6 @@
 import type {
   JsonValue,
-  RTLauncherThemeSDK,
+  OpenXLauncherThemeSDK,
   ThemeDownloadTask,
   ThemePlatformInfo,
 } from "./protocol";
@@ -83,13 +83,25 @@ function storageKey(themeId: string, key: string): string {
       "Theme storage keys can contain letters, numbers, dots, underscores, and hyphens.",
     );
   }
-  return `rtlauncher:theme:${themeId}:${key}`;
+  return `openxlauncher:theme:${themeId}:${key}`;
+}
+
+function readThemeStorage(storage: Storage, themeId: string, key: string): string | null {
+  const next = storageKey(themeId, key);
+  const current = storage.getItem(next);
+  if (current != null) return current;
+  const legacy = storage.getItem(`rtlauncher:theme:${themeId}:${key}`);
+  if (legacy != null) {
+    storage.setItem(next, legacy);
+    return legacy;
+  }
+  return null;
 }
 
 export function createThemeSDK(
   themeId: string,
   dependencies: ThemeSDKDependencies,
-): RTLauncherThemeSDK {
+): OpenXLauncherThemeSDK {
   const allowedUnsafeCommands = new Set(
     (dependencies.allowedUnsafeCommands ?? []).filter((command) =>
       HOST_APPROVED_UNSAFE_COMMANDS.has(command)
@@ -160,7 +172,7 @@ export function createThemeSDK(
     },
     storage: {
       async get<T extends JsonValue>(key: string): Promise<T | null> {
-        const raw = dependencies.storage.getItem(storageKey(themeId, key));
+        const raw = readThemeStorage(dependencies.storage, themeId, key);
         if (raw === null) return null;
         try {
           return JSON.parse(raw) as T;

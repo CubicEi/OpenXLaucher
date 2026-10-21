@@ -98,7 +98,7 @@ export async function loadThemeBundle(
   };
 
   try {
-    if (window.__RTL_THEME_REGISTER__) {
+    if (window.__OPENX_THEME_REGISTER__) {
       throw new ThemeBundleError(
         "THEME_BUNDLE_LOAD_BUSY",
         "Another Theme bundle is being registered.",
@@ -113,9 +113,9 @@ export async function loadThemeBundle(
     script.dataset.themeId = manifest.id;
 
     let registered: ThemeDefinition | undefined;
-    const previousRegistration = window.__RTL_THEME_REGISTER__;
+    const previousRegistration = window.__OPENX_THEME_REGISTER__;
     const definition = await new Promise<ThemeDefinition>((resolve, reject) => {
-      window.__RTL_THEME_REGISTER__ = (candidate) => {
+      window.__OPENX_THEME_REGISTER__ = (candidate) => {
         if (registered) {
           reject(new ThemeBundleError(
             "THEME_BUNDLE_MULTIPLE_REGISTRATIONS",
@@ -153,8 +153,8 @@ export async function loadThemeBundle(
         reject(error);
       }
     }).finally(() => {
-      if (previousRegistration) window.__RTL_THEME_REGISTER__ = previousRegistration;
-      else delete window.__RTL_THEME_REGISTER__;
+      if (previousRegistration) window.__OPENX_THEME_REGISTER__ = previousRegistration;
+      else delete window.__OPENX_THEME_REGISTER__;
     });
 
     if (manifest.entry.style) {

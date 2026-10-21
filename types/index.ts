@@ -10,6 +10,9 @@ export type AuthType = "littleskin" | "third_party" | "offline" | "microsoft";
 /**
  * 账户相关类型定义
  */
+/** 皮肤模型：classic=粗臂 Steve，slim=细臂 Alex */
+export type SkinVariant = "classic" | "slim";
+
 export type Account = {
   id: string;
   name: string;
@@ -24,6 +27,8 @@ export type Account = {
   yggdrasilUrl?: string;
   /** 皮肤 URL */
   skinUrl?: string | null;
+  /** 皮肤模型（来自 MS / LittleSkin profile） */
+  variant?: SkinVariant;
 };
 
 /**
@@ -184,6 +189,8 @@ export type LaunchConfig = {
   wrapperPath: string;
   /** 最大内存 (MB) */
   maxMemory: string;
+  /** 是否按系统可用内存自动分配 -Xmx（默认 true） */
+  autoMemory: boolean;
   /** 游戏版本名 */
   versionName: string;
   /** 基础 Minecraft 版本（用于定位游戏 JAR） */

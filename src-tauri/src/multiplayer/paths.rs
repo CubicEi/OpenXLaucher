@@ -4,10 +4,13 @@ use std::path::{Path, PathBuf};
 use super::OPENP2P_BIN;
 
 fn legacy_bridge_dir() -> Option<PathBuf> {
-    env::current_exe()
-        .ok()?
-        .parent()
-        .map(|parent| parent.join("RTL").join("bridge"))
+    let exe_dir = env::current_exe().ok()?.parent()?.to_path_buf();
+    // Prefer migrated OpenX/bridge; fall back to legacy RTL/bridge.
+    let openx = exe_dir.join("OpenX").join("bridge");
+    if openx.join(OPENP2P_BIN).is_file() {
+        return Some(openx);
+    }
+    Some(exe_dir.join("RTL").join("bridge"))
 }
 
 fn preferred_bridge_dir() -> PathBuf {
@@ -16,8 +19,8 @@ fn preferred_bridge_dir() -> PathBuf {
         return env::var_os("LOCALAPPDATA")
             .or_else(|| env::var_os("APPDATA"))
             .map(PathBuf::from)
-            .map(|base| base.join("RTLauncher").join("bridge"))
-            .unwrap_or_else(|| env::temp_dir().join("RTLauncher").join("bridge"));
+            .map(|base| base.join("OpenXLauncher").join("bridge"))
+            .unwrap_or_else(|| env::temp_dir().join("OpenXLauncher").join("bridge"));
     }
 
     #[cfg(target_os = "macos")]
@@ -28,10 +31,10 @@ fn preferred_bridge_dir() -> PathBuf {
             .map(|home| {
                 home.join("Library")
                     .join("Application Support")
-                    .join("RTLauncher")
+                    .join("OpenXLauncher")
                     .join("bridge")
             })
-            .unwrap_or_else(|| env::temp_dir().join("RTLauncher").join("bridge"));
+            .unwrap_or_else(|| env::temp_dir().join("OpenXLauncher").join("bridge"));
     }
 
     #[cfg(target_os = "linux")]

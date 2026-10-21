@@ -25,7 +25,9 @@ export function AboutSection() {
       try {
         const { getVersion } = await import("@tauri-apps/api/app");
         const v = await getVersion();
-        setVersion(v);
+        // 0.2.0-beta → display "beta 0.2"
+        const m = /^(\d+)\.(\d+)\.\d+-beta$/i.exec(v.trim());
+        setVersion(m ? `beta ${m[1]}.${m[2]}` : v);
       } catch {
         setVersion("dev");
       }
@@ -94,7 +96,7 @@ export function AboutSection() {
             <Sparkles className="size-4" />
           </div>
           <div className="flex-1 min-w-0">
-            <div className="text-sm font-medium">RTLauncher</div>
+            <div className="text-sm font-medium">OpenXLauncher</div>
             <div className="text-xs text-muted-foreground">
               {t("settings.about.version")} <span className="font-mono">{version ?? "—"}</span>
             </div>

@@ -20,7 +20,7 @@ function validManifest(): Record<string, unknown> {
     version: "1.2.0",
     author: { name: "Example Studio", url: "https://example.com" },
     engines: {
-      rtlauncher: ">=0.2.0 <1.0.0",
+      openxlauncher: ">=0.2.0 <1.0.0",
       themeApi: "^1.0.0",
     },
     entry: {
@@ -104,7 +104,7 @@ describe("validateThemeManifest", () => {
   it.each([
     ["schemaVersion", "2.0", "THEME_SCHEMA_INCOMPATIBLE"],
     ["themeApi", "^2.0.0", "THEME_API_INCOMPATIBLE"],
-    ["rtlauncher", ">=1.0.0", "THEME_APP_INCOMPATIBLE"],
+    ["openxlauncher", ">=1.0.0", "THEME_APP_INCOMPATIBLE"],
   ])("rejects an incompatible %s", (field, value, code) => {
     const manifest = validManifest();
     if (field === "schemaVersion") {

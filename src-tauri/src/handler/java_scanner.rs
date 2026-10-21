@@ -520,7 +520,7 @@ fn get_macos_search_paths(paths: &mut Vec<PathBuf>) {
         if sdkman_java.exists() {
             paths.push(sdkman_java);
         }
-        paths.push(PathBuf::from(&home).join("Library/Application Support/RTLauncher/java"));
+        paths.push(PathBuf::from(&home).join("Library/Application Support/OpenXLauncher/java"));
     }
 }
 #[allow(unused)]

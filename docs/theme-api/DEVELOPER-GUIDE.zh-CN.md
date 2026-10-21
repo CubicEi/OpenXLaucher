@@ -1,8 +1,8 @@
 # Theme 开发者快速上手
 
-本指南说明如何在 RTLauncher 仓库中创建、调试和打包一个前端 Theme。完整协议请参阅 [Theme API 1.0](./README.zh-CN.md)，SDK 方法请参阅 [Theme SDK 1.0 参考](./SDK-REFERENCE.zh-CN.md)，清单字段定义请参阅 [manifest.schema.json](./manifest.schema.json)。
+本指南说明如何在 OpenXLauncher 仓库中创建、调试和打包一个前端 Theme。完整协议请参阅 [Theme API 1.0](./README.zh-CN.md)，SDK 方法请参阅 [Theme SDK 1.0 参考](./SDK-REFERENCE.zh-CN.md)，清单字段定义请参阅 [manifest.schema.json](./manifest.schema.json)。
 
-> 当前 Theme SDK、UI 组件和 CLI 是仓库内工作区包。请先在 RTLauncher 仓库中开发 Theme。
+> 当前 Theme SDK、UI 组件和 CLI 是仓库内工作区包。请先在 OpenXLauncher 仓库中开发 Theme。
 
 ## 1. 准备工作区
 
@@ -10,7 +10,7 @@
 
 ```sh
 pnpm install
-pnpm --filter @rtlauncher/theme-cli build
+pnpm --filter @openxlauncher/theme-cli build
 ```
 
 最快的起点是复制 Hello Theme：
@@ -44,7 +44,7 @@ my-theme
   "version": "1.0.0",
   "author": { "name": "Example" },
   "engines": {
-    "rtlauncher": ">=1.0.0 <2.0.0",
+    "openxlauncher": ">=1.0.0 <2.0.0",
     "themeApi": "^1.0.0",
     "themeUi": "^1.0.0"
   },
@@ -72,8 +72,8 @@ my-theme
 使用 `defineTheme` 导出一个 Theme 定义。下面的示例向页面标题栏添加一个按钮：
 
 ```tsx
-import { Button } from "@rtlauncher/theme-ui";
-import { defineTheme, type ThemeSlotComponentProps } from "@rtlauncher/theme-sdk";
+import { Button } from "@openxlauncher/theme-ui";
+import { defineTheme, type ThemeSlotComponentProps } from "@openxlauncher/theme-sdk";
 
 function PageAction({ slotId }: ThemeSlotComponentProps) {
   return <Button onClick={() => window.alert(slotId)}>My Theme</Button>;
@@ -110,21 +110,21 @@ export default defineTheme({
 Theme CSS 会在构建时放入以下作用域：
 
 ```css
-@scope ([data-rtl-theme="com.example.my-theme"]) {
+@scope ([data-openx-theme="com.example.my-theme"]) {
   /* Theme CSS */
 }
 ```
 
-源码 CSS 不需要手动添加这个作用域。请优先使用主程序提供的颜色变量和 `@rtlauncher/theme-ui` 组件，以保持浅色和深色模式兼容。
+源码 CSS 不需要手动添加这个作用域。请优先使用主程序提供的颜色变量和 `@openxlauncher/theme-ui` 组件，以保持浅色和深色模式兼容。
 
 ## 5. 校验、构建和打包
 
 从仓库根目录运行：
 
 ```sh
-pnpm --filter @rtlauncher/example-hello-theme validate
-pnpm --filter @rtlauncher/example-hello-theme build
-pnpm --filter @rtlauncher/example-hello-theme pack
+pnpm --filter @openxlauncher/example-hello-theme validate
+pnpm --filter @openxlauncher/example-hello-theme build
+pnpm --filter @openxlauncher/example-hello-theme pack
 ```
 
 如果你修改了示例包名，请在命令中使用新的包名。也可以直接调用已经构建的 CLI：
@@ -132,24 +132,24 @@ pnpm --filter @rtlauncher/example-hello-theme pack
 ```sh
 node packages/theme-cli/dist/cli.js validate examples/themes/my-theme
 node packages/theme-cli/dist/cli.js build examples/themes/my-theme
-node packages/theme-cli/dist/cli.js pack examples/themes/my-theme my-theme.rtltheme
-node packages/theme-cli/dist/cli.js inspect my-theme.rtltheme
+node packages/theme-cli/dist/cli.js pack examples/themes/my-theme my-theme.oxltheme
+node packages/theme-cli/dist/cli.js inspect my-theme.oxltheme
 ```
 
-`build` 会生成 `build/manifest.json`、`build/dist/theme.js` 和可选的 `build/dist/theme.css`。`pack` 会生成可安装的 `.rtltheme` 归档。
+`build` 会生成 `build/manifest.json`、`build/dist/theme.js` 和可选的 `build/dist/theme.css`。`pack` 会生成可安装的 `.oxltheme` 归档。
 
 `inspect` 输出中的 `integrityValid` 必须为 `true`。不要手动修改已经打包的文件；任何修改都会使 SHA-256 校验失败。
 
-## 6. 在 RTLauncher 中调试
+## 6. 在 OpenXLauncher 中调试
 
 打开“设置 → 外观 → 前端 Theme”：
 
 1. 完成一次构建，然后选择“添加开发目录”，并选择 `examples/themes/my-theme/build`。
 2. 在 Theme 下拉列表中选择新 Theme，并确认信任提示。
 3. 修改源码后先重新构建，再选择“重新加载”。
-4. 测试完成后，用“安装 Theme”选择 `.rtltheme` 归档，验证正式安装流程。
+4. 测试完成后，用“安装 Theme”选择 `.oxltheme` 归档，验证正式安装流程。
 
-RTLauncher 会按 Theme ID 和版本保存信任状态。修改版本后，用户需要重新确认信任。
+OpenXLauncher 会按 Theme ID 和版本保存信任状态。修改版本后，用户需要重新确认信任。
 
 如果 Theme 无法激活，主程序会保留原有界面。页面或插槽渲染失败时，对应区域会回退到内置内容。界面左下角的恢复按钮始终可以切换回内置 Theme。
 

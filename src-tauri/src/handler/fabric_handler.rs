@@ -1,7 +1,8 @@
 use crate::downloader::dwPatch::get_minecraft_dir;
 use crate::downloader::fabric_installer;
 use crate::downloader::shared_utils::{
-    copy_version_mods_to_instance, merge_version_jsons_to_instance, sanitize_instance_name,
+    cleanup_loader_version_dir, cleanup_vanilla_version_dir, copy_version_mods_to_instance,
+    merge_version_jsons_to_instance, sanitize_instance_name,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -25,6 +26,10 @@ pub struct FabricVersion {
 struct FabricDownloadProgressPayload {
     task_id: u64,
     percent: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    stage: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    message: Option<String>,
 }
 
 #[derive(Clone, Serialize)]
@@ -93,6 +98,7 @@ pub async fn install_fabric_loader(
         &loader_version,
         &minecraft_path.to_string_lossy().to_string(),
         use_mirror,
+        None,
     )
     .await
     .map_err(|e| format!("安装 Fabric Loader 失败: {}", e))?;
@@ -143,7 +149,8 @@ pub async fn download_and_install_fabric(
     let minecraft_path = get_minecraft_dir()?;
     std::fs::create_dir_all(&minecraft_path).map_err(|e| format!("创建目录失败: {}", e))?;
 
-    let (tx, mut rx) = tokio::sync::mpsc::channel::<f64>(64);
+    let (tx, mut rx) =
+        tokio::sync::mpsc::channel::<crate::downloader::original_dwl::ProgressUpdate>(64);
     let cancel = Arc::new(AtomicBool::new(false));
 
     // 注册活跃任务
@@ -158,12 +165,14 @@ pub async fn download_and_install_fabric(
     let app_clone = app.clone();
     let task_id_clone = task_id;
     tokio::spawn(async move {
-        while let Some(percent) = rx.recv().await {
+        while let Some(update) = rx.recv().await {
             let _ = app_clone.emit(
                 "fabric-download-progress",
                 FabricDownloadProgressPayload {
                     task_id: task_id_clone,
-                    percent,
+                    percent: update.percent,
+                    stage: update.stage,
+                    message: update.message,
                 },
             );
         }
@@ -175,6 +184,8 @@ pub async fn download_and_install_fabric(
         FabricDownloadProgressPayload {
             task_id,
             percent: 0.0,
+            stage: Some("准备安装".to_string()),
+            message: None,
         },
     );
 
@@ -195,10 +206,20 @@ pub async fn download_and_install_fabric(
         let version_a = version.clone();
         let mc_path_a = minecraft_path_clone.clone();
         let original_handle = tokio::spawn(async move {
-            let (tx1, mut rx1) = tokio::sync::mpsc::channel::<f64>(64);
+            let (tx1, mut rx1) =
+                tokio::sync::mpsc::channel::<crate::downloader::original_dwl::ProgressUpdate>(64);
             tokio::spawn(async move {
-                while let Some(percent) = rx1.recv().await {
-                    let _ = tx_for_original.send(percent * 0.6).await;
+                while let Some(update) = rx1.recv().await {
+                    let remapped = update.remap(0.0, 0.6);
+                    let _ = tx_for_original
+                        .send(crate::downloader::original_dwl::ProgressUpdate {
+                            percent: remapped.percent,
+                            stage: remapped
+                                .stage
+                                .or_else(|| Some("下载原版文件".to_string())),
+                            message: remapped.message,
+                        })
+                        .await;
                 }
             });
             crate::downloader::original_dwl::process_version(
@@ -219,21 +240,44 @@ pub async fn download_and_install_fabric(
         let api_ver_b = api_ver.clone();
         let mc_path_b = minecraft_path_clone.clone();
         let fabric_handle = tokio::spawn(async move {
-            let _ = tx_for_fabric.send(60.0).await;
+            let _ = tx_for_fabric
+                .send(crate::downloader::original_dwl::ProgressUpdate::with_stage(
+                    60.0,
+                    "下载 mod 加载器安装文件",
+                ))
+                .await;
 
             let minecraft_path_str = mc_path_b.to_string_lossy().to_string();
 
-            // 安装 Fabric Loader (60-80%)
+            // 安装 Fabric Loader (60-80%) — 透传进度 channel
+            let (tx_loader, mut rx_loader) = tokio::sync::mpsc::channel::<f64>(64);
+            let tx_fwd = tx_for_fabric.clone();
+            tokio::spawn(async move {
+                while let Some(percent) = rx_loader.recv().await {
+                    let _ = tx_fwd
+                        .send(crate::downloader::original_dwl::ProgressUpdate::with_stage(
+                            60.0 + percent * 0.2,
+                            "安装 mod 加载器",
+                        ))
+                        .await;
+                }
+            });
             let loader_dir = fabric_installer::install_fabric_loader(
                 &version_b,
                 &loader_ver_b,
                 &minecraft_path_str,
                 true,
+                Some(tx_loader),
             )
             .await
             .map_err(|e| format!("Fabric Loader 安装失败: {}", e))?;
 
-            let _ = tx_for_fabric.send(80.0).await;
+            let _ = tx_for_fabric
+                .send(crate::downloader::original_dwl::ProgressUpdate::with_stage(
+                    80.0,
+                    "安装 Fabric API",
+                ))
+                .await;
 
             // 安装 Fabric API (80-100%)
             if let Some(api_ver) = api_ver_b {
@@ -242,7 +286,12 @@ pub async fn download_and_install_fabric(
                     .map_err(|e| format!("Fabric API 安装失败: {}", e))?;
             }
 
-            let _ = tx_for_fabric.send(100.0).await;
+            let _ = tx_for_fabric
+                .send(crate::downloader::original_dwl::ProgressUpdate::with_stage(
+                    100.0,
+                    "合并实例 / 清理中间版本",
+                ))
+                .await;
             Ok::<String, String>(loader_dir)
         });
 
@@ -312,6 +361,15 @@ pub async fn download_and_install_fabric(
                                     &version,
                                     &minecraft_path_clone,
                                 );
+                            }
+                            if final_name != loader_version_name {
+                                cleanup_loader_version_dir(
+                                    &loader_version_name,
+                                    &minecraft_path_clone,
+                                );
+                            }
+                            if final_name != version {
+                                cleanup_vanilla_version_dir(&version, &minecraft_path_clone);
                             }
                         }
                         Err(e) => println!("[Fabric] 警告: 合并实例 JSON 失败: {}", e),

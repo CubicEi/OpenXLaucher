@@ -129,6 +129,8 @@
       "systemTotal": "系统总计",
       "available": "可用",
       "autoAllocate": "自动分配",
+      "autoLabel": "自动",
+      "autoMemoryHint": "已按系统可用内存自动分配，启动前会再次刷新",
       "recommended5075OfAvailableMemory": "建议分配可用内存的 50%–75%",
       "valueValue2MbRecommendedRecommendedMbMb": "（{value}–{value2} MB，推荐 {recommendedMb} MB）",
       "gameVersion": "游戏版本",
@@ -189,6 +191,16 @@
       "gameLaunched": "游戏已启动！",
       "launchFailed": "启动失败"
     },
+    "javaIncompatible": {
+      "title": "Java 版本不兼容",
+      "description": "版本 {version} 需要 Java {major}，当前环境未找到匹配的安装。",
+      "hint": "可前往下载中心安装，或一键下载并启动 Zulu JDK 安装程序。",
+      "openDownloadCenter": "打开下载中心 Java 页",
+      "installZulu": "一键安装 Zulu JDK {major}",
+      "installZuluGeneric": "一键安装 Zulu JDK",
+      "installStarted": "安装程序已启动，完成后请重新扫描 Java",
+      "installFailed": "安装失败：{error}"
+    },
     "chooseAVersionConfigureLaunchSettingsAndBeginYour": "选择版本，配置启动参数，开始你的 Minecraft 之旅",
     "log": {
       "title": "启动日志",
@@ -241,7 +253,16 @@
     "failedToLoad": "读取失败",
     "viewDetails": "查看详细信息",
     "rename": "重命名",
-    "goToParentFolder": "返回上一级目录"
+    "goToParentFolder": "返回上一级目录",
+    "checkUpdates": "检查更新",
+    "checkingUpdates": "正在检查…",
+    "updateAll": "全部更新",
+    "updateMod": "更新",
+    "updateAvailable": "有更新",
+    "updatesFound": "{count} 个可更新",
+    "noUpdatesFound": "未发现可用更新",
+    "updateSourceNotFound": "未找到更新源",
+    "updating": "更新中…"
   },
   "home": {
     "modLoader": "模组加载器",
@@ -274,7 +295,7 @@
     "thisAccountHasNoPreviewableSkin": "该账户暂无可预览的皮肤",
     "signInToPreviewA3DSkin": "登录后即可预览 3D 皮肤",
     "announcement": {
-      "welcomeToRtlauncher": "欢迎使用 RTLauncher",
+      "welcomeToOpenXLauncher": "欢迎使用 OpenXLauncher",
       "aModernMinecraftLauncherWithAPolishedSmoothExperience": "全新的 Minecraft 启动器，提供现代化的设计和流畅的体验。",
       "systemUpdate": "系统更新",
       "weRecentlyReleasedNewFeaturesAndImprovedTheExperience": "我们最近发布了新功能，改善了用户体验。",
@@ -293,7 +314,7 @@
       "worlds": "世界",
       "manageWorldSaves": "存档管理",
       "worldSaves6": "• 游戏存档：6个",
-      "recentlyPlayedRtlWorld": "• 最近游戏：RTL World",
+      "recentlyPlayedRtlWorld": "• 最近游戏：OpenX World",
       "automaticBackups": "• 自动备份",
       "resourcePacks": "资源包",
       "manageGameTextures": "游戏材质管理",
@@ -353,7 +374,7 @@
     },
     "themeManager": {
       "selectTheme": "前端主题",
-      "builtIn": "RTLauncher 内置主题",
+      "builtIn": "OpenXLauncher 内置主题",
       "development": "开发模式",
       "description": "主题是受信任的本地 React 代码。主题未覆盖的路由和插槽会继续使用内置界面。",
       "install": "安装主题包",
@@ -622,7 +643,7 @@
   },
   "checkUpdate": {
     "title": "检查更新",
-    "subtitle": "检查 RTLauncher 是否有新版本可用",
+    "subtitle": "检查 OpenXLauncher 是否有新版本可用",
     "idle": "待检查",
     "checking": "正在检查更新...",
     "available": "有新版本可用",
@@ -687,6 +708,10 @@
     "downloadPathNotReady": "下载路径尚未就绪，请稍后重试",
     "downloadFailed": "下载失败：{error}",
     "failedToGetJavaVersions": "获取 Java 版本失败：{error}",
+    "javaMultiVendorHint": "支持 Zulu / Temurin 一键下载安装包并启动安装程序；Oracle 与 Microsoft 将打开官网（需手动完成）",
+    "javaManualInstall": "需手动安装",
+    "javaOpenedExternal": "已打开 {label} 下载页面，请手动完成安装",
+    "javaNoExternalUrl": "未找到对应下载页面",
     "today": "今天",
     "daysAgo": "{count} 天前",
     "weeksAgo": "{count} 周前",
@@ -751,7 +776,7 @@
       "removeFromFavoritesNamed": "移出收藏夹：{name}",
       "empty": "收藏夹还是空的",
       "emptyHint": "在 Mod 文件选择页点击 Star，即可将指定版本加入收藏。",
-      "starTip": "看到这些 Star 了吗？喜欢 RTLauncher 的话，就到 github.com/cqw-acq/RTLauncher_new 给我们点个 Star 吧",
+      "starTip": "看到这些 Star 了吗？喜欢 OpenXLauncher 的话，就到 https://github.com/CubicEi/OpenXLaucher 给我们点个 Star 吧",
       "closeTip": "关闭提示"
     }
   }

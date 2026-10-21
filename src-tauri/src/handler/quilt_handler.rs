@@ -1,6 +1,9 @@
 use crate::downloader::dwPatch::get_minecraft_dir;
 use crate::downloader::quilt_installer;
-use crate::downloader::shared_utils::{merge_version_jsons_to_instance, sanitize_instance_name};
+use crate::downloader::shared_utils::{
+    cleanup_loader_version_dir, cleanup_vanilla_version_dir, merge_version_jsons_to_instance,
+    sanitize_instance_name,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -23,6 +26,10 @@ pub struct QuiltVersion {
 struct QuiltDownloadProgressPayload {
     task_id: u64,
     percent: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    stage: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    message: Option<String>,
 }
 
 #[derive(Clone, Serialize)]
@@ -138,7 +145,8 @@ pub async fn download_and_install_quilt(
     let minecraft_path = get_minecraft_dir()?;
     std::fs::create_dir_all(&minecraft_path).map_err(|e| format!("创建目录失败: {}", e))?;
 
-    let (tx, mut rx) = tokio::sync::mpsc::channel::<f64>(64);
+    let (tx, mut rx) =
+        tokio::sync::mpsc::channel::<crate::downloader::original_dwl::ProgressUpdate>(64);
     let cancel = Arc::new(AtomicBool::new(false));
 
     // 注册活跃任务
@@ -153,12 +161,14 @@ pub async fn download_and_install_quilt(
     let app_clone = app.clone();
     let task_id_clone = task_id;
     tokio::spawn(async move {
-        while let Some(percent) = rx.recv().await {
+        while let Some(update) = rx.recv().await {
             let _ = app_clone.emit(
                 "quilt-download-progress",
                 QuiltDownloadProgressPayload {
                     task_id: task_id_clone,
-                    percent,
+                    percent: update.percent,
+                    stage: update.stage,
+                    message: update.message,
                 },
             );
         }
@@ -170,6 +180,8 @@ pub async fn download_and_install_quilt(
         QuiltDownloadProgressPayload {
             task_id,
             percent: 0.0,
+            stage: Some("准备安装".to_string()),
+            message: None,
         },
     );
 
@@ -190,10 +202,20 @@ pub async fn download_and_install_quilt(
         let version_a = version.clone();
         let mc_path_a = minecraft_path_clone.clone();
         let original_handle = tokio::spawn(async move {
-            let (tx1, mut rx1) = tokio::sync::mpsc::channel::<f64>(64);
+            let (tx1, mut rx1) =
+                tokio::sync::mpsc::channel::<crate::downloader::original_dwl::ProgressUpdate>(64);
             tokio::spawn(async move {
-                while let Some(percent) = rx1.recv().await {
-                    let _ = tx_for_original.send(percent * 0.6).await;
+                while let Some(update) = rx1.recv().await {
+                    let remapped = update.remap(0.0, 0.6);
+                    let _ = tx_for_original
+                        .send(crate::downloader::original_dwl::ProgressUpdate {
+                            percent: remapped.percent,
+                            stage: remapped
+                                .stage
+                                .or_else(|| Some("下载原版文件".to_string())),
+                            message: remapped.message,
+                        })
+                        .await;
                 }
             });
             crate::downloader::original_dwl::process_version(
@@ -214,7 +236,12 @@ pub async fn download_and_install_quilt(
         let api_ver_b = api_ver.clone();
         let mc_path_b = minecraft_path_clone.clone();
         let quilt_handle = tokio::spawn(async move {
-            let _ = tx_for_quilt.send(60.0).await;
+            let _ = tx_for_quilt
+                .send(crate::downloader::original_dwl::ProgressUpdate::with_stage(
+                    60.0,
+                    "下载 mod 加载器安装文件",
+                ))
+                .await;
 
             let minecraft_path_str = mc_path_b.to_string_lossy().to_string();
 
@@ -225,7 +252,12 @@ pub async fn download_and_install_quilt(
                 tokio::spawn(async move {
                     while let Some(percent) = sub_rx.recv().await {
                         let mapped = 60.0 + percent * 0.25;
-                        let _ = sub_tx_out.send(mapped).await;
+                        let _ = sub_tx_out
+                            .send(crate::downloader::original_dwl::ProgressUpdate::with_stage(
+                                mapped,
+                                "安装 mod 加载器",
+                            ))
+                            .await;
                     }
                 });
                 quilt_installer::install_quilt_loader(
@@ -238,7 +270,12 @@ pub async fn download_and_install_quilt(
                 .map_err(|e| format!("Quilt Loader 安装失败: {}", e))?
             };
 
-            let _ = tx_for_quilt.send(85.0).await;
+            let _ = tx_for_quilt
+                .send(crate::downloader::original_dwl::ProgressUpdate::with_stage(
+                    85.0,
+                    "安装 Quilt API",
+                ))
+                .await;
 
             // 安装 Quilt API (85-100%)，使用子进度 channel
             if let Some(api_ver) = api_ver_b {
@@ -247,7 +284,12 @@ pub async fn download_and_install_quilt(
                 tokio::spawn(async move {
                     while let Some(percent) = sub_rx.recv().await {
                         let mapped = 85.0 + percent * 0.15;
-                        let _ = sub_tx_out.send(mapped).await;
+                        let _ = sub_tx_out
+                            .send(crate::downloader::original_dwl::ProgressUpdate::with_stage(
+                                mapped,
+                                "安装 Quilt API",
+                            ))
+                            .await;
                     }
                 });
                 quilt_installer::install_quilt_api(
@@ -260,7 +302,12 @@ pub async fn download_and_install_quilt(
                 .map_err(|e| format!("Quilt API 安装失败: {}", e))?;
             }
 
-            let _ = tx_for_quilt.send(100.0).await;
+            let _ = tx_for_quilt
+                .send(crate::downloader::original_dwl::ProgressUpdate::with_stage(
+                    100.0,
+                    "合并实例 / 清理中间版本",
+                ))
+                .await;
             Ok::<String, String>(loader_dir)
         });
 
@@ -321,7 +368,18 @@ pub async fn download_and_install_quilt(
                         "quilt",
                         &minecraft_path_clone,
                     ) {
-                        Ok(_) => println!("[Quilt] 实例 JSON 合并完成: {}", final_name),
+                        Ok(_) => {
+                            println!("[Quilt] 实例 JSON 合并完成: {}", final_name);
+                            if final_name != loader_version_name {
+                                cleanup_loader_version_dir(
+                                    &loader_version_name,
+                                    &minecraft_path_clone,
+                                );
+                            }
+                            if final_name != version {
+                                cleanup_vanilla_version_dir(&version, &minecraft_path_clone);
+                            }
+                        }
                         Err(e) => println!("[Quilt] 警告: 合并实例 JSON 失败: {}", e),
                     }
                 }

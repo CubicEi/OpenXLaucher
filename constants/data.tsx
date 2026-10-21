@@ -28,7 +28,7 @@ export const INSTANCE_CARDS: InstanceCard[] = [
     title: "世界",
     description: "存档管理",
     href: "/instance-settings/worlds",
-    stats: ["• 游戏存档：6个", "• 最近游戏：RTL World", "• 自动备份"],
+    stats: ["• 游戏存档：6个", "• 最近游戏：OpenX World", "• 自动备份"],
     colorFrom: "rgba(251, 146, 60, 0.1)",
     colorTo: "rgba(251, 191, 36, 0.1)",
     iconBgColor: "bg-amber-50 dark:bg-amber-900/20",

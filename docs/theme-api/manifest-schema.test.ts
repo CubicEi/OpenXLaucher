@@ -19,7 +19,7 @@ const validManifest = {
   name: "Nebula",
   version: "1.2.0",
   author: { name: "Example" },
-  engines: { rtlauncher: ">=1.0.0 <2.0.0", themeApi: "^1.0.0" },
+  engines: { openxlauncher: ">=1.0.0 <2.0.0", themeApi: "^1.0.0" },
   entry: { script: "dist/theme.js", style: "dist/theme.css" },
   supports: { colorSchemes: ["light", "dark"] },
 };

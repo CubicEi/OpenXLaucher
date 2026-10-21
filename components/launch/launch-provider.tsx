@@ -13,6 +13,7 @@ import { listen } from "@tauri-apps/api/event";
 import { useAccountContext } from "@/components/accounts/account-provider";
 import { isTauriRuntime } from "@/lib/tauri-runtime";
 import { appLog } from "@/lib/runtime-log";
+import { readMigratedLocalStorage } from "@/lib/storage-migrate";
 import { log4jParser } from "@/components/launch/log4j-progress-parser";
 import { useI18n } from "@/components/i18n/use-i18n";
 import { analyzeLaunchLogs } from "@/components/launch/launch-analyzer";
@@ -42,6 +43,7 @@ const DEFAULT_LAUNCH_CONFIG: LaunchConfig = {
   javaPath: "",
   wrapperPath: "",
   maxMemory: "2048",
+  autoMemory: true,
   versionName: "",
   minecraftVersion: "",
   loadType: "0",
@@ -109,9 +111,9 @@ export function LaunchProvider({ children }: { children: React.ReactNode }) {
     let cancelled = false;
     let savedConfig: Partial<LaunchConfig> = {};
     try {
-      const saved = localStorage.getItem("rtl-launch-config");
+      const saved = readMigratedLocalStorage("openx-launch-config", ["rtl-launch-config"]);
       if (saved) savedConfig = JSON.parse(saved);
-      const savedTime = localStorage.getItem("rtl-last-launch-time");
+      const savedTime = readMigratedLocalStorage("openx-last-launch-time", ["rtl-last-launch-time"]);
       if (savedTime) setLastLaunchTime(savedTime);
     } catch { /* ignore */ }
 
@@ -159,14 +161,18 @@ export function LaunchProvider({ children }: { children: React.ReactNode }) {
 
         if (cancelled) return;
 
-        const useAutoMemory =
-          setup.executed ||
-          !savedConfig.maxMemory ||
-          savedConfig.maxMemory === DEFAULT_LAUNCH_CONFIG.maxMemory;
+        // 旧配置无 autoMemory 字段时默认 true；若用户曾手动改过 maxMemory 则视为关闭自动。
+        const autoMemory =
+          typeof savedConfig.autoMemory === "boolean"
+            ? savedConfig.autoMemory
+            : setup.executed ||
+              !savedConfig.maxMemory ||
+              savedConfig.maxMemory === DEFAULT_LAUNCH_CONFIG.maxMemory;
 
         setConfig((prev) => ({
           ...prev,
-          ...(useAutoMemory
+          autoMemory,
+          ...(autoMemory
             ? { maxMemory: String(setup.recommended_memory_mb) }
             : {}),
           ...(pathsCfg.selected_java_path ? { javaPath: pathsCfg.selected_java_path } : {}),
@@ -211,7 +217,7 @@ export function LaunchProvider({ children }: { children: React.ReactNode }) {
       const next = { ...prev, ...patch };
       // 持久化到 localStorage
       try {
-        localStorage.setItem("rtl-launch-config", JSON.stringify(next));
+        localStorage.setItem("openx-launch-config", JSON.stringify(next));
       } catch {
         // ignore
       }
@@ -281,7 +287,7 @@ export function LaunchProvider({ children }: { children: React.ReactNode }) {
       setLastLaunchTime(timeStr);
       setLaunchEndedAt(now);
       setLastExitCode(exitCode);
-      try { localStorage.setItem("rtl-last-launch-time", timeStr); } catch { /* ignore */ }
+      try { localStorage.setItem("openx-last-launch-time", timeStr); } catch { /* ignore */ }
       setStatus(exitCode === 0 || hadFullyStarted ? "stopped" : "error");
       setProgress(null); // 清理进度状态
       log4jParser.reset(); // 重置日志解析器
@@ -404,10 +410,28 @@ export function LaunchProvider({ children }: { children: React.ReactNode }) {
       addLog("info", t("launch.provider.preparingLaunchArguments"));
 
       try {
+        // autoMemory：启动前按当前系统可用内存 / auto_allocate 刷新 -Xmx
+        let launchMaxMemory = merged.maxMemory;
+        if (merged.autoMemory !== false && isTauriRuntime()) {
+          try {
+            const mem = await invoke<{ recommended_mb: number }>("get_system_memory");
+            if (mem.recommended_mb > 0) {
+              launchMaxMemory = String(mem.recommended_mb);
+              updateConfig({ maxMemory: launchMaxMemory, autoMemory: true });
+            }
+          } catch {
+            /* keep saved maxMemory */
+          }
+        }
+
         setStatus("launching");
         addLog("info", t("launch.provider.launchVersionVersionName", { versionName: merged.versionName }));
         addLog("info", t("launch.provider.playerName", { name: selectedProfile.name }));
-        addLog("info", t("launch.provider.maximumMemoryMaxMemoryMb", { maxMemory: merged.maxMemory }));
+        addLog(
+          "info",
+          t("launch.provider.maximumMemoryMaxMemoryMb", { maxMemory: launchMaxMemory }) +
+            (merged.autoMemory !== false ? ` (${t("launch.config.autoLabel")})` : ""),
+        );
 
         if (merged.loadType !== "0") {
           addLog("info", t("launch.provider.loaderLoadName", { loadName: merged.loadName }));
@@ -431,7 +455,7 @@ export function LaunchProvider({ children }: { children: React.ReactNode }) {
           minecraftPath: merged.minecraftPath,
           javaPath: merged.javaPath,
           wrapperPath: merged.wrapperPath,
-          maxMemory: merged.maxMemory,
+          maxMemory: launchMaxMemory,
           versionName: merged.versionName,
           minecraftVersion: merged.minecraftVersion,
           playerName: merged.playerName || selectedProfile.name,
@@ -459,7 +483,7 @@ export function LaunchProvider({ children }: { children: React.ReactNode }) {
         addLog("error", `${t("launch.provider.launchFailed")}: ${msg}`);
       }
     },
-    [config, selectedProfile, addLog, t]
+    [config, selectedProfile, addLog, t, updateConfig]
   );
 
   const generateReport = useCallback<() => LaunchAnalysisReport>(

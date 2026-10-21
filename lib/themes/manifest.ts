@@ -275,10 +275,18 @@ export function validateThemeManifest(
   if (!isRecord(value.engines)) {
     pushIssue(issues, "THEME_MANIFEST_INVALID", "engines", "engines must be an object.");
   } else {
-    if (requireString(value.engines.rtlauncher, "engines.rtlauncher", issues)) {
-      if (!satisfiesVersionRange(host.appVersion, value.engines.rtlauncher)) {
-        pushIssue(issues, "THEME_APP_INCOMPATIBLE", "engines.rtlauncher", "RTLauncher version is outside the supported range.");
+    const appEngineReq =
+      (typeof value.engines.openxlauncher === "string" && value.engines.openxlauncher) ||
+      (typeof value.engines.rtlauncher === "string" && value.engines.rtlauncher) ||
+      (typeof (value.engines as { OpenXLauncher?: unknown }).OpenXLauncher === "string" &&
+        (value.engines as { OpenXLauncher: string }).OpenXLauncher) ||
+      "";
+    if (requireString(appEngineReq, "engines.openxlauncher", issues)) {
+      if (!satisfiesVersionRange(host.appVersion, appEngineReq)) {
+        pushIssue(issues, "THEME_APP_INCOMPATIBLE", "engines.openxlauncher", "OpenXLauncher version is outside the supported range.");
       }
+      // Normalize legacy keys onto openxlauncher for downstream consumers.
+      (value.engines as { openxlauncher: string }).openxlauncher = appEngineReq;
     }
     if (requireString(value.engines.themeApi, "engines.themeApi", issues)) {
       if (!satisfiesVersionRange(host.themeApiVersion, value.engines.themeApi)) {

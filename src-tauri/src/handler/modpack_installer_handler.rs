@@ -244,6 +244,7 @@ pub fn install_modpack_from_zip_cmd(app: AppHandle, path: String) -> Result<u64,
                 task_id,
                 percent: 0.0,
                 stage: "初始化".to_string(),
+                message: None,
                 total_files: 0,
                 downloaded_files: 0,
                 current_file: String::new(),
@@ -269,12 +270,18 @@ pub fn install_modpack_from_zip_cmd(app: AppHandle, path: String) -> Result<u64,
                     }
                 };
                 let percent = percent.clamp(0.0, 100.0);
+                let message = if fname.is_empty() {
+                    None
+                } else {
+                    Some(fname.clone())
+                };
                 let _ = app_for_progress.emit(
                     "modpack-progress",
                     ModpackProgressPayload {
                         task_id,
                         percent,
                         stage,
+                        message,
                         total_files: total,
                         downloaded_files: downloaded,
                         current_file: fname,
@@ -321,6 +328,7 @@ pub fn install_modpack_from_zip_cmd(app: AppHandle, path: String) -> Result<u64,
                 task_id,
                 percent: 100.0,
                 stage: "完成".to_string(),
+                message: None,
                 total_files: 0,
                 downloaded_files: 0,
                 current_file: String::new(),
@@ -400,6 +408,8 @@ struct ModpackProgressPayload {
     task_id: u64,
     percent: f64,
     stage: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    message: Option<String>,
     total_files: usize,
     downloaded_files: usize,
     current_file: String,

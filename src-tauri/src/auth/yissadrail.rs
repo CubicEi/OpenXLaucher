@@ -1,5 +1,5 @@
 /*
-RTLauncher, a third-party Minecraft launcher built with the newest
+OpenXLauncher, a third-party Minecraft launcher built with the newest
 technology and provides innovative funtionalities
 Copyright (C) 2025 lutouna
 

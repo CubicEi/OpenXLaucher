@@ -15,6 +15,8 @@ import {
   Folder,
   ChevronLeft,
   Eye,
+  Download,
+  ArrowUpCircle,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -120,6 +122,13 @@ export interface ResourcePanelProps {
   onOpenViewer?: (file: FileItem, side: "left" | "right") => void;
   // 启用预览按钮的文件扩展名（小写不含点，如 ["litematic", "schem", "schematic", "nbt"]）
   viewerExtensions?: string[];
+  /** fileName → available update (mods page) */
+  modUpdates?: Map<string, { newVersion: string; currentVersion: string; source: string }>;
+  onCheckUpdates?: () => void;
+  checkingUpdates?: boolean;
+  onUpdateAll?: () => void;
+  onUpdateOne?: (fileName: string) => void;
+  updatingFiles?: Set<string>;
 }
 
 export default function ResourcePanel({
@@ -158,6 +167,12 @@ export default function ResourcePanel({
   getFileSubtitle,
   onOpenViewer,
   viewerExtensions,
+  modUpdates,
+  onCheckUpdates,
+  checkingUpdates,
+  onUpdateAll,
+  onUpdateOne,
+  updatingFiles,
 }: ResourcePanelProps) {
   const { t } = useI18n();
   // 先做 URL decode（%20 -> 空格 等），再应用用户自定义的 simplifyName
@@ -280,6 +295,8 @@ export default function ResourcePanel({
       <motion.div variants={staggerContainer} initial="initial" animate="animate" className="space-y-1">
         {files.map((file) => {
           const info = modInfoMap?.get(file.name);
+          const update = side === "left" ? modUpdates?.get(file.name) : undefined;
+          const isUpdating = updatingFiles?.has(file.name) ?? false;
           const displayName = info?.name && info.name !== file.name
             ? info.name // 优先显示模组名称
             : simplify(file.name);
@@ -339,12 +356,23 @@ export default function ResourcePanel({
                   </div>
                 ) : (
                   <>
-                    <p
-                      className="text-sm font-bold truncate"
-                      title={file.name}
-                    >
-                      {displayName}
-                    </p>
+                    <div className="flex items-center gap-1.5 min-w-0">
+                      <p
+                        className="text-sm font-bold truncate"
+                        title={file.name}
+                      >
+                        {displayName}
+                      </p>
+                      {update && (
+                        <Badge
+                          variant="secondary"
+                          className="shrink-0 text-[10px] px-1.5 py-0 h-5 bg-amber-500/15 text-amber-700 dark:text-amber-400"
+                          title={`${update.currentVersion} → ${update.newVersion} (${update.source})`}
+                        >
+                          {t("panel.updateAvailable")}
+                        </Badge>
+                      )}
+                    </div>
                     {subtitle && (
                       <p className="text-xs text-muted-foreground truncate">{subtitle}</p>
                     )}
@@ -355,6 +383,22 @@ export default function ResourcePanel({
               {/* 操作按钮组 - 只有在不是重命名模式时才显示 */}
               {!(canRename && renamingName === file.name) && (
                 <div className="flex items-center gap-1 shrink-0">
+                  {update && onUpdateOne && (
+                    <Button
+                      variant="default"
+                      size="sm"
+                      className="h-7 px-2 text-xs gap-1"
+                      disabled={isUpdating}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onUpdateOne(file.name);
+                      }}
+                      title={`${update.currentVersion} → ${update.newVersion}`}
+                    >
+                      <Download className="size-3.5" />
+                      {isUpdating ? t("panel.updating") : t("panel.updateMod")}
+                    </Button>
+                  )}
                   {/* 查看详情（模组专用）- "!" 字符按钮 */}
                   {hasDetail && (
                     <Button
@@ -460,6 +504,35 @@ export default function ResourcePanel({
           <p className="mt-1 text-xs text-muted-foreground">{leftDescription || ""}</p>
         </div>
         <div className="ml-auto flex items-center gap-2">
+          {onCheckUpdates && (
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-8 gap-1.5"
+              onClick={onCheckUpdates}
+              disabled={checkingUpdates}
+              title={t("panel.checkUpdates")}
+            >
+              <ArrowUpCircle className={`size-3.5 ${checkingUpdates ? "animate-spin" : ""}`} />
+              {checkingUpdates ? t("panel.checkingUpdates") : t("panel.checkUpdates")}
+            </Button>
+          )}
+          {onUpdateAll && (modUpdates?.size ?? 0) > 0 && (
+            <Button
+              variant="default"
+              size="sm"
+              className="h-8 gap-1.5"
+              onClick={onUpdateAll}
+              disabled={checkingUpdates || (updatingFiles?.size ?? 0) > 0}
+              title={t("panel.updateAll")}
+            >
+              <Download className="size-3.5" />
+              {t("panel.updateAll")}
+              <Badge variant="secondary" className="text-[10px] px-1.5 py-0 h-4 ml-0.5">
+                {modUpdates?.size ?? 0}
+              </Badge>
+            </Button>
+          )}
           {onUploadFiles && (
             <Button variant="default" size="icon" className="size-8" onClick={onUploadFiles} title={t("resource.uploadFiles")}>
               <Plus className="size-3.5" />

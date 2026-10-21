@@ -40,7 +40,9 @@ use handler::fabric_handler::{
 use handler::forge_handler::{
     cancel_forge_download, download_and_install_forge, get_forge_versions,
 };
-use handler::java_downloader::{download_java_runtime, get_java_versions};
+use handler::java_downloader::{
+    download_and_install_java, install_zulu_jdk, list_java_distributions,
+};
 use handler::java_scanner::{search_java_installations, validate_java_path};
 use handler::launcher::build_jvm_arguments;
 use handler::launcher::kill_game_process;
@@ -54,6 +56,7 @@ use handler::mod_links::{
     search_modrinth_projects,
 };
 use handler::mod_parser::{parse_mod, parse_mods, parse_mods_in_dir, save_incompatible_mods};
+use handler::mod_updates::{check_mods_updates, update_mod, update_mods};
 use handler::modpack_builder::{
     delete_modpack_instance, export_modpack_instance, get_modpack_dir, list_modpack_instances,
     load_modpack_instance, rename_modpack_instance, save_modpack_instance,
@@ -204,8 +207,9 @@ pub fn run() {
             save_launcher_paths_config,
             run_portable_first_launch_setup,
             write_file,
-            get_java_versions,
-            download_java_runtime,
+            list_java_distributions,
+            download_and_install_java,
+            install_zulu_jdk,
             search_java_installations,
             validate_java_path,
             get_java_download_dir,
@@ -271,6 +275,9 @@ pub fn run() {
             parse_mods,
             parse_mods_in_dir,
             save_incompatible_mods,
+            check_mods_updates,
+            update_mod,
+            update_mods,
             search_curseforge_projects,
             search_modrinth_projects,
             export_launch_report,
@@ -322,7 +329,7 @@ pub fn run() {
                 window
             } else {
                 let win_builder = WebviewWindowBuilder::new(app, "main", WebviewUrl::default())
-                    .title("RTLauncher")
+                    .title("OpenXLauncher")
                     .inner_size(1024.0, 640.0)
                     .min_inner_size(1024.0, 640.0)
                     .center()

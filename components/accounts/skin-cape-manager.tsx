@@ -13,6 +13,7 @@ import {
   msSilentRefreshAccount,
   microsoftProbeAccountLogin,
   fetchTextureImageBase64,
+  normalizeSkinVariant,
   type MCSkinInfo,
   type MCCapeInfo,
 } from "@/lib/auth";
@@ -86,6 +87,12 @@ export function SkinCapeManager({ account: initialAccount, onClose }: SkinCapeMa
         setSkins(loadedSkins);
         setCapes(loadedCapes);
         prefetchTextures(loadedSkins, loadedCapes);
+        const active = loadedSkins.find((s) => s.state?.toUpperCase() === "ACTIVE") ?? loadedSkins[0];
+        const variant = normalizeSkinVariant(active?.variant);
+        if (variant) {
+          setAccount((prev) => ({ ...prev, variant }));
+          updateProfile(account.id, { variant });
+        }
         setLoading(false);
       } else {
         // 如果是 401 错误且允许重试，尝试静默刷新 Token
@@ -93,18 +100,21 @@ export function SkinCapeManager({ account: initialAccount, onClose }: SkinCapeMa
           console.log("[SkinCapeManager] Token 可能过期 (401)，尝试静默刷新...");
           try {
             const newInfo = await msSilentRefreshAccount(account.id);
+            const refreshVariant = normalizeSkinVariant(newInfo.variant);
             // 更新本地状态和全局状态
             const updatedAccount = { 
               ...account, 
               accessToken: newInfo.access_token,
               name: newInfo.name,
-              skinUrl: normalizeTextureUrl(newInfo.skin_url) 
+              skinUrl: normalizeTextureUrl(newInfo.skin_url),
+              ...(refreshVariant ? { variant: refreshVariant } : {}),
             };
             setAccount(updatedAccount);
             updateProfile(account.id, { 
               accessToken: newInfo.access_token,
               name: newInfo.name,
-              skinUrl: normalizeTextureUrl(newInfo.skin_url) 
+              skinUrl: normalizeTextureUrl(newInfo.skin_url),
+              ...(refreshVariant ? { variant: refreshVariant } : {}),
             });
             // 用新 Token 重新加载 (不再重试)
             const secondProbe = await microsoftProbeAccountLogin(newInfo.access_token);
@@ -114,6 +124,12 @@ export function SkinCapeManager({ account: initialAccount, onClose }: SkinCapeMa
               setSkins(loadedSkins);
               setCapes(loadedCapes);
               prefetchTextures(loadedSkins, loadedCapes);
+              const active = loadedSkins.find((s) => s.state?.toUpperCase() === "ACTIVE") ?? loadedSkins[0];
+              const variant = normalizeSkinVariant(active?.variant);
+              if (variant) {
+                setAccount((prev) => ({ ...prev, variant }));
+                updateProfile(account.id, { variant });
+              }
               setLoading(false);
               return;
             } else {
@@ -201,8 +217,13 @@ export function SkinCapeManager({ account: initialAccount, onClose }: SkinCapeMa
     if (!account.accessToken) return;
     setBusyAction(`activate-${skinId}`);
     setErrorMsg(null);
+    const nextVariant = normalizeSkinVariant(variant);
     try {
       await msActivateSkin(account.accessToken, skinId, variant as "classic" | "slim");
+      if (nextVariant) {
+        setAccount((prev) => ({ ...prev, variant: nextVariant }));
+        updateProfile(account.id, { variant: nextVariant });
+      }
       await loadProfile();
     } catch (e: any) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -212,6 +233,10 @@ export function SkinCapeManager({ account: initialAccount, onClose }: SkinCapeMa
           setAccount({ ...account, accessToken: newInfo.access_token });
           updateProfile(account.id, { accessToken: newInfo.access_token });
           await msActivateSkin(newInfo.access_token, skinId, variant as "classic" | "slim");
+          if (nextVariant) {
+            setAccount((prev) => ({ ...prev, variant: nextVariant }));
+            updateProfile(account.id, { variant: nextVariant });
+          }
           await loadProfile();
           return;
         } catch {

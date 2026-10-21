@@ -12,11 +12,11 @@ fn get_moddata_connection() -> &'static Mutex<Option<Connection>> {
 }
 
 /// 获取 moddata.db 的隐藏存放目录（各平台用户数据目录，默认均不直接暴露）：
-///   Linux:   $XDG_DATA_HOME/rtlauncher 或 ~/.local/share/rtlauncher（.local 为隐藏目录）
-///   macOS:   ~/Library/Application Support/rtlauncher（Library 在 Finder 中默认隐藏）
-///   Windows: %APPDATA%\rtlauncher（AppData 目录默认隐藏）
+///   Linux:   $XDG_DATA_HOME/OpenXLauncher 或 ~/.local/share/OpenXLauncher（.local 为隐藏目录）
+///   macOS:   ~/Library/Application Support/OpenXLauncher（Library 在 Finder 中默认隐藏）
+///   Windows: %APPDATA%\OpenXLauncher（AppData 目录默认隐藏）
 fn get_moddata_data_dir() -> Option<PathBuf> {
-    dirs::data_dir().map(|dir| dir.join("rtlauncher"))
+    dirs::data_dir().map(|dir| dir.join("OpenXLauncher"))
 }
 
 /// 获取 moddata.db 的目标路径（优先存放于隐藏的用户数据目录）
@@ -83,10 +83,10 @@ fn resolve_moddata_path() -> Option<PathBuf> {
 /// 远程数据库的候选下载地址（按顺序尝试，成功后即停止）
 /// 新源可在此追加：GitHub 优先，GitHub 不可达或资源不存在时回退到 GitCode
 const MODDATA_DOWNLOAD_URLS: &[&str] = &[
-    // 首选：GitHub（需在 https://github.com/cqw-acq/RTLauncher_new 的
+    // 首选：GitHub（需在 https://github.com/CubicEi/OpenXLaucher 的
     //       "工具" 标签发布 moddata.db 资源后才生效）
-    "https://github.com/cqw-acq/RTLauncher_new/releases/download/%E5%B7%A5%E5%85%B7/moddata.db",
-    // 备选：GitCode（GitHub 无法访问时的镜像）
+    "https://github.com/CubicEi/OpenXLaucher/releases/download/%E5%B7%A5%E5%85%B7/moddata.db",
+    // 备选：GitCode（GitHub 无法访问时的历史镜像）
     "https://gitcode.com/bubulaladdi/RTLauncher/releases/download/%E5%B7%A5%E5%85%B7/moddata.db",
 ];
 

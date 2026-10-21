@@ -28,7 +28,7 @@ fn openp2p_legacy_log_file(working_dir: &Path) -> PathBuf {
 pub(super) fn clear_files(working_dir: &Path) {
     let log_dir = working_dir.join("log");
     if let Err(error) = fs::create_dir_all(&log_dir) {
-        append_text(&format!("[RTLauncher] ⚠ 创建日志目录失败: {}\n", error));
+        append_text(&format!("[OpenXLauncher] ⚠ 创建日志目录失败: {}\n", error));
         return;
     }
 

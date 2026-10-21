@@ -105,6 +105,11 @@ function TaskRow({ task, onRemove, onCancel }: { task: DownloadTask; onRemove: (
           <Progress value={task.progress} className="h-1" />
         )}
 
+        {/* 阶段详情 */}
+        {task.status === "downloading" && task.detail && (
+          <p className="text-[11px] text-muted-foreground truncate">{task.detail}</p>
+        )}
+
         {/* 排队等待 */}
         {task.status === "queued" && (
           <p className="text-[11px] text-muted-foreground truncate">排队等待中...</p>

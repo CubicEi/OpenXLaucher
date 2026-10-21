@@ -15,8 +15,8 @@ import { useEffect, useRef, useState } from "react";
  */
 
 type SkinViewer3DProps = {
-  skinSrc: string;          // PNG 皮肤的 URL 或 base64 (data:image/png;base64,...)
-  capeSrc?: string;         // 披风贴图（可选）
+  skinSrc: string; // PNG 皮肤的 URL 或 base64 (data:image/png;base64,...)
+  capeSrc?: string; // 披风贴图（可选）
   playerName?: string;
   width?: number;
   height?: number;
@@ -32,6 +32,10 @@ function normalizeTextureUrl(url?: string): string | null {
   return url;
 }
 
+function toSkinviewModel(modelType: "classic" | "slim"): "slim" | "default" {
+  return modelType === "slim" ? "slim" : "default";
+}
+
 export function SkinViewer3D({
   skinSrc,
   capeSrc,
@@ -43,10 +47,13 @@ export function SkinViewer3D({
   const containerRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const viewerRef = useRef<any>(null);
+  const modelTypeRef = useRef(modelType);
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState(false);
   const [skinview3d, setSkinview3d] = useState<typeof import("skinview3d") | null>(null);
   const [libraryFailed, setLibraryFailed] = useState(false);
+
+  modelTypeRef.current = modelType;
 
   // three.js/skinview3d 体积较大，在首帧绘制完成后再加载，避免阻塞主页交互。
   useEffect(() => {
@@ -58,26 +65,28 @@ export function SkinViewer3D({
       .catch(() => {
         if (!cancelled) setLibraryFailed(true);
       });
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
-  // 初始化 viewer
+  // 初始化 viewer：构造时立即传入 model，避免首帧宽臂
   useEffect(() => {
     if (!skinview3d) return;
     if (!canvasRef.current) return;
 
     let cancelled = false;
+    const model = toSkinviewModel(modelTypeRef.current);
     try {
-      // skinview3d v3.4.x 的构造 API
       const viewer = new skinview3d.SkinViewer({
         canvas: canvasRef.current,
         width,
         height,
-        skin: normalizeTextureUrl(skinSrc),
-        cape: normalizeTextureUrl(capeSrc),
+        skin: normalizeTextureUrl(skinSrc) ?? undefined,
+        cape: normalizeTextureUrl(capeSrc) ?? undefined,
+        model,
         devicePixelRatio: typeof window !== "undefined" ? window.devicePixelRatio : 1,
         preserveDrawingBuffer: true,
-        // model: modelType === "slim" ? "slim" : "default",
         controls: {
           enabled: true,
           zoom: true,
@@ -86,10 +95,16 @@ export function SkinViewer3D({
         },
       } as any);
 
-      // 设置模型类型（slim=细胳膊，default=粗胳膊）
-      // skinview3d 会自动从皮肤中检测，但我们可以显式设置
+      // 双保险：部分版本构造选项可能忽略 model，立刻再设一次
       try {
-        (viewer as any).model = modelType === "slim" ? "slim" : "default";
+        if (typeof viewer.loadSkin === "function" && skinSrc) {
+          const normalized = normalizeTextureUrl(skinSrc);
+          if (normalized) {
+            void viewer.loadSkin(normalized, { model });
+          }
+        } else {
+          (viewer as any).playerObject.skin.modelType = model;
+        }
       } catch {}
 
       // 初始视角
@@ -99,12 +114,10 @@ export function SkinViewer3D({
         viewer.camera.position.z = 55;
       } catch {}
 
-      // 显式刷新一次，确保纹理映射在 initial load 时正确
       try {
         viewer.setSize(width, height);
       } catch {}
 
-      // 动画
       if (autoRotate) {
         try {
           viewer.animation = new skinview3d.WalkingAnimation();
@@ -134,22 +147,31 @@ export function SkinViewer3D({
         viewerRef.current = null;
       }
     };
+    // 仅在库就绪时初始化；皮肤/模型变更走下方 effects
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [skinview3d]);
 
-  // 更新皮肤
+  // 更新皮肤：换肤时同步传入 model，避免首帧宽臂
   useEffect(() => {
     if (!viewerRef.current || !skinSrc) return;
     try {
       const normalized = normalizeTextureUrl(skinSrc);
-      if (normalized) {
+      if (!normalized) return;
+      const model = toSkinviewModel(modelType);
+      if (typeof viewerRef.current.loadSkin === "function") {
+        void viewerRef.current.loadSkin(normalized, { model });
+      } else {
         viewerRef.current.skin = normalized;
-        setError(false);
+        try {
+          viewerRef.current.playerObject.skin.modelType = model;
+        } catch {}
       }
+      setError(false);
     } catch (e) {
       console.error("加载皮肤失败:", e);
       setError(true);
     }
-  }, [skinSrc]);
+  }, [skinSrc, modelType]);
 
   // 更新披风
   useEffect(() => {
@@ -161,11 +183,14 @@ export function SkinViewer3D({
     }
   }, [capeSrc]);
 
-  // 更新模型类型
+  // 仅 modelType 变化时（皮肤未变）切换模型
   useEffect(() => {
     if (!viewerRef.current) return;
     try {
-      viewerRef.current.model = modelType === "slim" ? "slim" : "default";
+      const model = toSkinviewModel(modelType);
+      if (viewerRef.current.playerObject?.skin) {
+        viewerRef.current.playerObject.skin.modelType = model;
+      }
     } catch {}
   }, [modelType]);
 

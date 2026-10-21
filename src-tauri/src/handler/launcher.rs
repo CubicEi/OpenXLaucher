@@ -9,6 +9,7 @@ use std::path::PathBuf;
 use arguments::{build_jvm_arguments_inner, VersionJson};
 use java_runtime::{get_java_major_version, required_java_major_from_jar};
 use process::run_command;
+use tauri::Emitter;
 
 pub use arguments::build_jvm_arguments;
 pub use process::kill_game_process;
@@ -99,11 +100,22 @@ pub fn launch_game(
                 );
                 resolved_java_path = matched.path;
             } else {
-                // 不再随游戏启动自动下载 Java；请用户在「下载 → Java」页手动安装。
                 println!(
-                    "[启动器] 未找到匹配的 Java {}，继续使用当前路径 {}（不会自动下载运行时）",
-                    major, java_path
+                    "[启动器] 未找到匹配的 Java {}，中止启动并通知前端",
+                    major
                 );
+                let _ = app.emit(
+                    "java-incompatible",
+                    serde_json::json!({
+                        "requiredMajor": major,
+                        "versionName": version_name,
+                        "currentJavaPath": java_path,
+                    }),
+                );
+                return Err(format!(
+                    "需要 Java {}，当前环境未找到匹配的安装",
+                    major
+                ));
             }
         }
     } else {
@@ -147,6 +159,7 @@ pub fn launch_game(
         PathBuf::from(&resolved_java_path),
         PathBuf::from(minecraft_path),
         app,
+        minecraft_version.to_string(),
     )
     .map_err(|e| e.to_string())?;
 
@@ -297,7 +310,7 @@ mod tests {
         let loader_args = vec![
             "-Xss1M".to_string(),
             "-Djava.library.path=/other/natives".to_string(),
-            "-Dminecraft.launcher.brand=RTLauncher".to_string(),
+            "-Dminecraft.launcher.brand=OpenXLauncher".to_string(),
             "-p".to_string(),
             "loader-module-path".to_string(),
         ];
@@ -313,7 +326,7 @@ mod tests {
                 "-Djava.library.path=/minecraft/natives",
                 "-p",
                 "effective-module-path",
-                "-Dminecraft.launcher.brand=RTLauncher",
+                "-Dminecraft.launcher.brand=OpenXLauncher",
             ]
         );
     }
@@ -328,7 +341,7 @@ mod tests {
         let jvm_args_from_version = vec![
             "-Djava.library.path={}".to_string(),
             "-Djna.tmpdir={}".to_string(),
-            "-Dminecraft.launcher.brand=RTLauncher".to_string(),
+            "-Dminecraft.launcher.brand=OpenXLauncher".to_string(),
             "-cp".to_string(),
             "version-classpath".to_string(),
         ];
@@ -344,7 +357,7 @@ mod tests {
         assert_eq!(
             args,
             vec![
-                "-Dminecraft.launcher.brand=RTLauncher".to_string(),
+                "-Dminecraft.launcher.brand=OpenXLauncher".to_string(),
                 "-cp".to_string(),
                 "version-classpath".to_string(),
             ]
@@ -356,7 +369,7 @@ mod tests {
         // loader 里没有的键（如 -Xmn768m）仍然会被加入
         let mut args = Vec::new();
         let jvm_args_from_version = vec!["-Xmn768m".to_string()];
-        let extra_before_cp = vec!["-Dminecraft.launcher.brand=RTLauncher".to_string()];
+        let extra_before_cp = vec!["-Dminecraft.launcher.brand=OpenXLauncher".to_string()];
 
         merge_version_jvm_args(&mut args, &jvm_args_from_version, &extra_before_cp);
 

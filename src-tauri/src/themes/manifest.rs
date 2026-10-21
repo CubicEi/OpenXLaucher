@@ -52,7 +52,9 @@ pub struct ThemePermissions {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ThemeEngines {
-    pub rtlauncher: String,
+    /// App version requirement. Accepts legacy `rtlauncher` / `OpenXLauncher` keys.
+    #[serde(alias = "rtlauncher", alias = "OpenXLauncher")]
+    pub openxlauncher: String,
     pub theme_api: String,
 }
 
@@ -283,7 +285,7 @@ fn validate_manifest(
             "Theme name, author, or SemVer version is invalid.",
         ));
     }
-    if !is_version_requirement(&manifest.engines.rtlauncher)
+    if !is_version_requirement(&manifest.engines.openxlauncher)
         || !is_version_requirement(&manifest.engines.theme_api)
     {
         return Err(archive_error(
@@ -420,7 +422,7 @@ mod tests {
             "version": "1.2.0",
             "author": { "name": "Example" },
             "engines": {
-                "rtlauncher": ">=0.2.0 <1.0.0",
+                "openxlauncher": ">=0.2.0 <1.0.0",
                 "themeApi": "^1.0.0"
             },
             "entry": { "script": "dist/theme.js", "style": "dist/theme.css" },

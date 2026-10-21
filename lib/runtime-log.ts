@@ -9,7 +9,7 @@ export type RtlLogOptions = {
 };
 
 /**
- * Persistent launcher log → `<exe_dir>/RTL/logs/launcher.log` (NDJSON, one object per line).
+ * Persistent launcher log → `<exe_dir>/OpenX/logs/launcher.log` (NDJSON, one object per line).
  * No-op outside Tauri. Prefer `warn` / `error` for user-visible failures; use `info` sparingly.
  */
 export function rtlLog(

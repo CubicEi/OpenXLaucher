@@ -14,6 +14,8 @@ struct GameProcess {
     pid: u32,
     fully_started: bool,
     termination_requested: bool,
+    /// Minecraft version string used for mod-update backup success counting.
+    minecraft_version: String,
 }
 
 fn game_process_store() -> &'static Mutex<Option<GameProcess>> {
@@ -179,6 +181,7 @@ pub fn run_command(
     javaPath: PathBuf,
     MCPath: PathBuf,
     app_handle: tauri::AppHandle,
+    minecraft_version: String,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // 检查 Java 路径是否存在
     if !javaPath.exists() {
@@ -249,6 +252,7 @@ pub fn run_command(
                     pid,
                     fully_started: false,
                     termination_requested: false,
+                    minecraft_version: minecraft_version.clone(),
                 },
             )?;
             drop(store);
@@ -343,11 +347,21 @@ pub fn run_command(
                 info!("游戏进程 {} 已结束，退出码: {}", pid, exit_code);
 
                 // 仅清除此等待线程对应的进程。旧线程不能清除或上报新进程。
-                let should_emit = game_process_store()
+                let (should_emit, launched_mc_version) = game_process_store()
                     .lock()
-                    .map(|mut store| clear_process_if_pid(&mut store, pid))
-                    .unwrap_or(false);
+                    .map(|mut store| {
+                        let mc = store
+                            .as_ref()
+                            .filter(|gp| gp.pid == pid)
+                            .map(|gp| gp.minecraft_version.clone())
+                            .unwrap_or_default();
+                        (clear_process_if_pid(&mut store, pid), mc)
+                    })
+                    .unwrap_or((false, String::new()));
                 if should_emit {
+                    if exit_code == 0 && !launched_mc_version.is_empty() {
+                        crate::handler::mod_updates::on_successful_game_exit(&launched_mc_version);
+                    }
                     let _ = app_handle.emit("game-exited", exit_code);
                 }
             });
@@ -453,7 +467,7 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
 
         let path = std::env::temp_dir().join(format!(
-            "rtlauncher-java-permissions-{}-{}",
+            "OpenXLauncher-java-permissions-{}-{}",
             std::process::id(),
             std::thread::current().name().unwrap_or("test")
         ));
@@ -485,6 +499,7 @@ mod tests {
                 pid: 100,
                 fully_started: false,
                 termination_requested: false,
+                minecraft_version: "1.20.1".to_string(),
             },
         )
         .expect("insert the first process");
@@ -495,6 +510,7 @@ mod tests {
                 pid: 200,
                 fully_started: false,
                 termination_requested: false,
+                minecraft_version: "1.20.1".to_string(),
             },
         );
         assert!(second.is_err());
@@ -513,6 +529,7 @@ mod tests {
             pid: 100,
             fully_started: false,
             termination_requested: false,
+            minecraft_version: "1.20.1".to_string(),
         });
 
         assert_eq!(claim_termination_request(&mut store), Ok((100, false)));
@@ -525,6 +542,7 @@ mod tests {
             pid: 100,
             fully_started: false,
             termination_requested: false,
+            minecraft_version: "1.20.1".to_string(),
         });
         claim_termination_request(&mut store).expect("claim the first termination request");
 

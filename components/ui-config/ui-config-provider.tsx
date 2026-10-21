@@ -8,6 +8,7 @@ import React, {
   useState,
 } from "react";
 import type { SidebarTabConfig, UIConfig } from "@/types";
+import { readMigratedLocalStorage } from "@/lib/storage-migrate";
 
 /** 默认侧边栏标签页配置 */
 const DEFAULT_SIDEBAR_TABS: SidebarTabConfig[] = [
@@ -56,7 +57,7 @@ export function UIConfigProvider({ children }: { children: React.ReactNode }) {
     let cancelled = false;
     const init = async () => {
       try {
-        const saved = localStorage.getItem("rtl-ui-config");
+        const saved = readMigratedLocalStorage("openx-ui-config", ["rtl-ui-config"]);
         if (saved) {
           const parsed = JSON.parse(saved);
           if (parsed.sidebarTabs && Array.isArray(parsed.sidebarTabs)) {
@@ -94,7 +95,7 @@ export function UIConfigProvider({ children }: { children: React.ReactNode }) {
       const next = { ...prev, ...patch };
       // 持久化到 localStorage
       try {
-        localStorage.setItem("rtl-ui-config", JSON.stringify(next));
+        localStorage.setItem("openx-ui-config", JSON.stringify(next));
       } catch (error) {
         console.error("Failed to save UI config:", error);
       }
@@ -112,7 +113,7 @@ export function UIConfigProvider({ children }: { children: React.ReactNode }) {
       };
       // 持久化到 localStorage
       try {
-        localStorage.setItem("rtl-ui-config", JSON.stringify(next));
+        localStorage.setItem("openx-ui-config", JSON.stringify(next));
       } catch (error) {
         console.error("Failed to save UI config:", error);
       }
@@ -123,7 +124,7 @@ export function UIConfigProvider({ children }: { children: React.ReactNode }) {
   const resetConfig = useCallback(() => {
     setConfig(DEFAULT_UI_CONFIG);
     try {
-      localStorage.setItem("rtl-ui-config", JSON.stringify(DEFAULT_UI_CONFIG));
+      localStorage.setItem("openx-ui-config", JSON.stringify(DEFAULT_UI_CONFIG));
     } catch (error) {
       console.error("Failed to reset UI config:", error);
     }

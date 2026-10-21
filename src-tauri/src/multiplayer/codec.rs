@@ -34,7 +34,7 @@ pub(super) fn join_arguments(
         "-token",
         OPENP2P_TOKEN,
         "-appname",
-        "RTlauncher",
+        "OpenXLauncher",
         "-peernode",
         parts[0],
         "-dstip",

@@ -85,6 +85,90 @@ struct MinecraftLoginResponse {
 struct MinecraftProfileResponse {
     id: String,
     name: String,
+    /// Minecraft Services profile 可能附带皮肤列表（含 variant）
+    #[serde(default)]
+    skins: Option<Vec<MCFullSkin>>,
+}
+
+/// 归一化皮肤模型为 classic | slim
+fn normalize_skin_variant(raw: Option<&str>) -> Option<String> {
+    match raw.map(|s| s.trim().to_ascii_lowercase()).as_deref() {
+        Some("slim") | Some("alex") => Some("slim".to_string()),
+        Some("classic") | Some("default") | Some("steve") => Some("classic".to_string()),
+        Some(_) => Some("classic".to_string()),
+        None => None,
+    }
+}
+
+/// 从 MS profile 的 ACTIVE 皮肤读取 variant
+fn active_skin_variant_from_ms(skins: &Option<Vec<MCFullSkin>>) -> Option<String> {
+    let skins = skins.as_ref()?;
+    let active = skins
+        .iter()
+        .find(|s| s.state.eq_ignore_ascii_case("ACTIVE"))
+        .or_else(|| skins.first())?;
+    normalize_skin_variant(active.variant.as_deref())
+        .or_else(|| Some("classic".to_string()))
+}
+
+/// 从 Yggdrasil profile JSON（textures base64）解析 SKIN metadata.model
+pub fn skin_variant_from_profile_json(profile_json: &serde_json::Value) -> Option<String> {
+    let properties = profile_json["properties"].as_array()?;
+    let textures_property = properties
+        .iter()
+        .find(|p| p["name"].as_str() == Some("textures"))?;
+    let textures_base64 = textures_property["value"].as_str()?;
+    let decoded = BASE64.decode(textures_base64).ok()?;
+    let textures_json: serde_json::Value = serde_json::from_slice(&decoded).ok()?;
+    let skin = textures_json.get("textures")?.get("SKIN")?;
+    if !skin.is_object() {
+        return None;
+    }
+    match skin
+        .get("metadata")
+        .and_then(|m| m.get("model"))
+        .and_then(|m| m.as_str())
+    {
+        Some("slim") => Some("slim".to_string()),
+        _ => Some("classic".to_string()),
+    }
+}
+
+/// 从 Yggdrasil sessionserver 拉取 profile 并解析皮肤模型（classic|slim）
+pub fn fetch_yggdrasil_skin_variant(uuid: &str, sessionserver_base: &str) -> Option<String> {
+    let client = reqwest::blocking::Client::builder()
+        .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+        .timeout(std::time::Duration::from_secs(10))
+        .danger_accept_invalid_certs(true)
+        .build()
+        .ok()?;
+
+    let base = sessionserver_base.trim_end_matches('/');
+    let uuid_with_hyphens = format_uuid_with_hyphens(uuid);
+    let uuid_without_hyphens = format_uuid_without_hyphens(uuid);
+
+    let mut urls = Vec::new();
+    for uid in &[&uuid_with_hyphens, &uuid_without_hyphens] {
+        urls.push(format!("{}/session/minecraft/profile/{}", base, uid));
+        urls.push(format!(
+            "{}/sessionserver/session/minecraft/profile/{}",
+            base, uid
+        ));
+    }
+
+    for url in &urls {
+        if let Ok(response) = client.get(url).send() {
+            if !response.status().is_success() {
+                continue;
+            }
+            if let Ok(json) = response.json::<serde_json::Value>() {
+                if let Some(variant) = skin_variant_from_profile_json(&json) {
+                    return Some(variant);
+                }
+            }
+        }
+    }
+    None
 }
 /*
 #[tokio::main]
@@ -712,7 +796,7 @@ fn download_skin_from_profile_json(
 }
 
 /// 通用皮肤下载函数（可用于 Microsoft、LittleSkin、第三方 Yggdrasil）
-/// 从指定的 sessionserver URL 获取 textures 并下载皮肤 PNG 到 ./RTL/config/skins/{uuid}.png
+/// 从指定的 sessionserver URL 获取 textures 并下载皮肤 PNG 到 OpenX/config/skins/{uuid}.png
 ///
 /// 兼容处理：
 ///   - 尝试带连字符的 UUID（xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx）
@@ -1464,12 +1548,14 @@ pub async fn ms_poll_and_login(device_code: String, interval: u64) -> Result<Acc
         eprintln!("[正版检测] 步骤4：✓ 获取个人资料成功！玩家名={}, UUID={}", profile.name, profile.id);
 
         // 构造返回值（先于数据库/皮肤操作，确保即使后续失败也能返回）
+        let skin_variant = active_skin_variant_from_ms(&profile.skins);
         let account_info = AccountInfo {
             name: profile.name.clone(),
             uuid: profile.id.clone(),
             auth_type: "microsoft".to_string(),
             access_token: mc_login.access_token.clone(),
             skin_url: Some(profile.id.clone()),
+            variant: skin_variant,
         };
 
         // 保存到数据库（非致命，通过 spawn_blocking 隔离 sqlite 线程安全问题）
@@ -1700,7 +1786,7 @@ pub async fn ms_upload_skin(
         .map_err(|e| format!("皮肤 base64 解码失败: {}", e))?;
 
     // ── 手动构造 multipart/form-data（不依赖 reqwest multipart feature）
-    let boundary = "----RTLauncherSkinBoundaryXYZ123456";
+    let boundary = "----OpenXLauncherSkinBoundaryXYZ123456";
     let mut body: Vec<u8> = Vec::new();
 
     // 第一部分：file (PNG 图片)
@@ -1946,12 +2032,14 @@ pub async fn ms_silent_refresh_account(uuid: String) -> Result<AccountInfo, Stri
     let _ = download_player_skin(&client, &db_uuid).await;
     eprintln!("[正版检测] 步骤3：✅ 静默刷新账号成功！一切正常");
 
+    let skin_variant = active_skin_variant_from_ms(&mc_profile.skins);
     Ok(AccountInfo {
         name: mc_profile.name,
         uuid: db_uuid.clone(),
         auth_type: "microsoft".to_string(),
         access_token: mc_login.access_token,
         skin_url: Some(db_uuid),
+        variant: skin_variant,
     })
 }
 

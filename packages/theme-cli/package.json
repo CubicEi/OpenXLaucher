@@ -1,10 +1,10 @@
 {
-  "name": "@rtlauncher/theme-cli",
+  "name": "@openxlauncher/theme-cli",
   "version": "1.0.0",
   "private": true,
   "type": "module",
   "bin": {
-    "rtl-theme": "./dist/cli.js"
+    "oxl-theme": "./dist/cli.js"
   },
   "scripts": {
     "build": "esbuild src/cli.ts --bundle --packages=external --platform=node --format=esm --outfile=dist/cli.js --banner:js=\"#!/usr/bin/env node\""

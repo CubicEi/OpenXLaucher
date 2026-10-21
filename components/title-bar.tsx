@@ -184,7 +184,7 @@ export function TitleBar({ className }: TitleBarProps) {
             <ThemeSlot {...themeSlot} slotId='app.titlebar.center'>
               <div className='flex items-center gap-2' data-tauri-drag-region>
                 <AppLogo className='h-5 w-5 text-foreground' />
-                <span className='text-sm font-medium text-foreground/80'>RTLauncher</span>
+                <span className='text-sm font-medium text-foreground/80'>OpenXLauncher</span>
               </div>
             </ThemeSlot>
           </div>
@@ -200,7 +200,7 @@ export function TitleBar({ className }: TitleBarProps) {
           <ThemeSlot {...themeSlot} slotId='app.titlebar.leading'>
             <div className='flex h-full items-center gap-2 px-3' data-tauri-drag-region>
               <AppLogo className='h-5 w-5 text-foreground' />
-              <span className='text-sm font-medium text-foreground/80'>RTLauncher</span>
+              <span className='text-sm font-medium text-foreground/80'>OpenXLauncher</span>
             </div>
           </ThemeSlot>
 

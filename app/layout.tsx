@@ -13,10 +13,11 @@ import { UIConfigProvider } from "@/components/ui-config/ui-config-provider";
 import { ThemeRuntimeProvider } from "@/components/themes/theme-runtime-provider";
 import { ThemeShell } from "@/components/themes/theme-shell";
 import { StartupUpdateNotifier } from "@/components/settings/startup-update-notifier";
+import { JavaIncompatibleDialog } from "@/components/launch/java-incompatible-dialog";
 
 export const metadata: Metadata = {
-  title: "RTLauncher",
-  description: "RTLauncher Desktop App",
+  title: "OpenXLauncher",
+  description: "OpenXLauncher Desktop App",
 };
 
 export default function RootLayout({
@@ -45,6 +46,7 @@ export default function RootLayout({
                           <DeferredGlobalFeatures />
                           <StartupRuntimeDependencyNotifier />
                           <StartupUpdateNotifier />
+                          <JavaIncompatibleDialog />
                           <ThemeShell>{children}</ThemeShell>
                           <DownloadTaskList />
                         </ThemeRuntimeProvider>

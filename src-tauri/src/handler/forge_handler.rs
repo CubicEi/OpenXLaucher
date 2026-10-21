@@ -1,9 +1,10 @@
 use crate::downloader::dwPatch::get_minecraft_dir;
 use crate::downloader::forge_installer;
 use crate::downloader::mod_loader_installer_shared::pick_java_executable;
-use crate::downloader::original_dwl::process_version;
+use crate::downloader::original_dwl::{process_version, ProgressUpdate};
 use crate::downloader::shared_utils::{
-    cleanup_loader_version_dir, merge_version_jsons_to_instance, sanitize_instance_name,
+    cleanup_loader_version_dir, cleanup_vanilla_version_dir, merge_version_jsons_to_instance,
+    sanitize_instance_name,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -23,6 +24,10 @@ pub struct ForgeVersion {
 struct ForgeDownloadProgressPayload {
     task_id: u64,
     percent: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    stage: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    message: Option<String>,
 }
 #[derive(Clone, Serialize)]
 struct ForgeDownloadFinishedPayload {
@@ -61,7 +66,7 @@ pub async fn download_and_install_forge(
     let task_id = FORGE_TASK_COUNTER.fetch_add(1, Ordering::SeqCst);
     let minecraft_path = get_minecraft_dir()?;
     std::fs::create_dir_all(&minecraft_path).map_err(|e| format!("创建目录失败: {}", e))?;
-    let (tx, mut rx) = tokio::sync::mpsc::channel::<f64>(64);
+    let (tx, mut rx) = tokio::sync::mpsc::channel::<ProgressUpdate>(64);
     let cancel = Arc::new(AtomicBool::new(false));
     {
         let mut tasks = forge_active_tasks().lock().unwrap();
@@ -75,12 +80,14 @@ pub async fn download_and_install_forge(
     let app_clone = app.clone();
     let task_id_clone = task_id;
     tokio::spawn(async move {
-        while let Some(percent) = rx.recv().await {
+        while let Some(update) = rx.recv().await {
             let _ = app_clone.emit(
                 "forge-download-progress",
                 ForgeDownloadProgressPayload {
                     task_id: task_id_clone,
-                    percent,
+                    percent: update.percent,
+                    stage: update.stage,
+                    message: update.message,
                 },
             );
         }
@@ -90,6 +97,8 @@ pub async fn download_and_install_forge(
         ForgeDownloadProgressPayload {
             task_id,
             percent: 0.0,
+            stage: Some("准备安装".to_string()),
+            message: None,
         },
     );
     let app_finish = app.clone();
@@ -106,10 +115,19 @@ pub async fn download_and_install_forge(
         let mc_path_a = minecraft_path_clone.clone();
         let tx_for_original = tx.clone();
         let original_handle = tokio::spawn(async move {
-            let (tx1, mut rx1) = tokio::sync::mpsc::channel::<f64>(64);
+            let (tx1, mut rx1) = tokio::sync::mpsc::channel::<ProgressUpdate>(64);
             tokio::spawn(async move {
-                while let Some(percent) = rx1.recv().await {
-                    let _ = tx_for_original.send(percent * 0.8).await;
+                while let Some(update) = rx1.recv().await {
+                    let remapped = update.remap(0.0, 0.8);
+                    let _ = tx_for_original
+                        .send(ProgressUpdate {
+                            percent: remapped.percent,
+                            stage: remapped
+                                .stage
+                                .or_else(|| Some("下载原版文件".to_string())),
+                            message: remapped.message,
+                        })
+                        .await;
                 }
             });
             let result = process_version(&version_a, &mc_path_a, tx1, cancel_clone_a.clone())
@@ -127,7 +145,12 @@ pub async fn download_and_install_forge(
             let (tx2, mut rx2) = tokio::sync::mpsc::channel::<f64>(64);
             tokio::spawn(async move {
                 while let Some(percent) = rx2.recv().await {
-                    let _ = tx_for_forge.send(80.0 + percent * 0.2).await;
+                    let _ = tx_for_forge
+                        .send(ProgressUpdate::with_stage(
+                            80.0 + percent * 0.2,
+                            "安装 mod 加载器",
+                        ))
+                        .await;
                 }
             });
             let mc_path_str = mc_path_b.to_string_lossy().to_string();
@@ -175,7 +198,9 @@ pub async fn download_and_install_forge(
         }
         match forge_result {
             Ok(loader_version) => {
-                let _ = tx.send(100.0).await;
+                let _ = tx
+                    .send(ProgressUpdate::with_stage(100.0, "合并实例 / 清理中间版本"))
+                    .await;
                 println!("Forge 安装成功: {}", forge_ver);
                 
                 if let Some(inst_name) = instance_name_cloned {
@@ -197,6 +222,9 @@ pub async fn download_and_install_forge(
                             println!("[Forge] 实例 JSON 合并完成: {}", final_name);
                             if final_name != loader_version {
                                 cleanup_loader_version_dir(&loader_version, &minecraft_path_clone);
+                            }
+                            if final_name != version {
+                                cleanup_vanilla_version_dir(&version, &minecraft_path_clone);
                             }
                         }
                         Err(e) => println!("[Forge] 警告: 合并实例 JSON 失败: {}", e),

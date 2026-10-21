@@ -1,5 +1,7 @@
 use sysinfo::System;
 
+use crate::handler::system::{auto_allocate_memory_mb, compute_auto_allocate_mb};
+
 /// 根据物理内存和当前可用内存，给 JVM 留出系统和启动器所需的余量。
 ///
 /// `-Xmx` 是上限而非建议值。尤其配合 `-XX:+AlwaysPreTouch` 时，设置为
@@ -90,21 +92,23 @@ pub(super) fn resolve_max_memory_mb(max_memory: &str) -> anyhow::Result<(u64, Op
     Ok((effective_mb, warning))
 }
 
-/// 根据系统剩余内存自动分配最大堆大小（MB）：
-/// 可用内存减去系统保留余量，再以总内存的 3/4 封顶，最低 512MB。
-/// 返回 (分配值, 总内存MB, 可用内存MB)。
+/// 根据系统剩余内存自动分配最大堆大小（MB）。
+/// 与 `system::auto_allocate_memory_mb` / `get_system_memory.recommended_mb` 共用同一公式。
 fn auto_allocate() -> (u64, u64, u64) {
-    let mut system = System::new();
-    system.refresh_memory();
-    let total_mb = system.total_memory() / 1024 / 1024;
-    let available_mb = system.available_memory() / 1024 / 1024;
-    if total_mb == 0 || available_mb == 0 {
-        return (2048, total_mb, available_mb);
+    auto_allocate_memory_mb()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn auto_allocate_matches_shared_compute() {
+        let (alloc, total, avail) = compute_auto_allocate_mb(8192, 5000);
+        assert_eq!(alloc, 5000_u64.saturating_sub((8192 / 8).clamp(512, 2048)).min(8192 * 3 / 4).max(512));
+        assert_eq!(total, 8192);
+        assert_eq!(avail, 5000);
     }
-    let reserve_mb = (total_mb / 8).clamp(512, 2048);
-    let by_available = available_mb.saturating_sub(reserve_mb);
-    let by_total = total_mb.saturating_mul(3) / 4;
-    (by_available.min(by_total).max(512), total_mb, available_mb)
 }
 
 pub(super) fn is_heap_size_argument(argument: &str) -> bool {

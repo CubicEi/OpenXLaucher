@@ -23,7 +23,7 @@ interface AuthorManifest {
   name: string;
   version: string;
   author: { name: string; url?: string };
-  engines: { rtlauncher: string; themeApi: string; themeUi?: string };
+  engines: { openxlauncher: string; themeApi: string; themeUi?: string };
   entry: { script: string; style?: string };
   supports: { colorSchemes: string[]; locales?: string[]; userOverrides?: string[] };
   icon?: string;
@@ -87,8 +87,12 @@ export function validateThemeManifest(value: unknown): ThemeValidationIssue[] {
     add("THEME_AUTHOR_INVALID", "author.name", "author.name is required.");
   }
   const engines = isRecord(manifest.engines) ? manifest.engines : {};
-  if (typeof engines.rtlauncher !== "string" || typeof engines.themeApi !== "string") {
-    add("THEME_ENGINES_INVALID", "engines", "rtlauncher and themeApi requirements are required.");
+  const appEngine =
+    (typeof engines.openxlauncher === "string" && engines.openxlauncher) ||
+    (typeof engines.rtlauncher === "string" && engines.rtlauncher) ||
+    "";
+  if (!appEngine || typeof engines.themeApi !== "string") {
+    add("THEME_ENGINES_INVALID", "engines", "openxlauncher and themeApi requirements are required.");
   }
   const supports = isRecord(manifest.supports) ? manifest.supports : {};
   if (!Array.isArray(supports.colorSchemes)
@@ -100,7 +104,7 @@ export function validateThemeManifest(value: unknown): ThemeValidationIssue[] {
 }
 
 export function scopeThemeCss(themeId: string, css: string): string {
-  return `@scope ([data-rtl-theme="${themeId}"]) {\n${css.trim()}\n}\n`;
+  return `@scope ([data-openx-theme="${themeId}"]) {\n${css.trim()}\n}\n`;
 }
 
 function sha256(content: Uint8Array): string {
@@ -122,16 +126,16 @@ function hostModules(): Plugin {
     "CardTitle", "Input", "Label", "Progress", "Switch", "Textarea",
   ];
   return {
-    name: "rtlauncher-theme-host",
+    name: "openxlauncher-theme-host",
     setup(pluginBuild) {
       pluginBuild.onResolve(
-        { filter: /^(react|react\/jsx-runtime|@rtlauncher\/theme-ui|@rtlauncher\/theme-sdk)$/ },
-        (args) => ({ path: args.path, namespace: "rtl-host" }),
+        { filter: /^(react|react\/jsx-runtime|@openxlauncher\/theme-ui|@openxlauncher\/theme-sdk)$/ },
+        (args) => ({ path: args.path, namespace: "openx-host" }),
       );
-      pluginBuild.onLoad({ filter: /.*/, namespace: "rtl-host" }, (args) => {
+      pluginBuild.onLoad({ filter: /.*/, namespace: "openx-host" }, (args) => {
         if (args.path === "react/jsx-runtime") {
           return { loader: "js", contents: `
-            const runtime = globalThis.__RTL_THEME_HOST__.jsxRuntime;
+            const runtime = globalThis.__OPENX_THEME_HOST__.jsxRuntime;
             export const Fragment = runtime.Fragment;
             export const jsx = runtime.jsx;
             export const jsxs = runtime.jsxs;
@@ -139,14 +143,14 @@ function hostModules(): Plugin {
         }
         if (args.path === "react") {
           return { loader: "js", contents: `
-            const React = globalThis.__RTL_THEME_HOST__.React;
+            const React = globalThis.__OPENX_THEME_HOST__.React;
             export default React;
             ${reactNames.map((name) => `export const ${name} = React.${name};`).join("\n")}
           ` };
         }
-        if (args.path === "@rtlauncher/theme-ui") {
+        if (args.path === "@openxlauncher/theme-ui") {
           return { loader: "js", contents: `
-            const ui = globalThis.__RTL_THEME_HOST__.ui;
+            const ui = globalThis.__OPENX_THEME_HOST__.ui;
             ${uiNames.map((name) => `export const ${name} = ui.${name};`).join("\n")}
           ` };
         }
@@ -182,10 +186,10 @@ export async function buildTheme(projectDirectory: string): Promise<ThemeBuildRe
     stdin: {
       contents: `
         import definition from ${JSON.stringify(entryPath)};
-        globalThis.__RTL_THEME_REGISTER__(definition);
+        globalThis.__OPENX_THEME_REGISTER__(definition);
       `,
       resolveDir: root,
-      sourcefile: "rtl-theme-entry.ts",
+      sourcefile: "oxl-theme-entry.ts",
       loader: "ts",
     },
     outfile: scriptPath,
@@ -250,7 +254,7 @@ export async function packTheme(
   for (const path of files) {
     archive[path] = [new Uint8Array(await readFile(join(buildDirectory, path))), { mtime: fixedTime }];
   }
-  const target = resolve(outputPath ?? join(root, `${manifest.id}-${manifest.version}.rtltheme`));
+  const target = resolve(outputPath ?? join(root, `${manifest.id}-${manifest.version}.oxltheme`));
   await mkdir(dirname(target), { recursive: true });
   await writeFile(target, zipSync(archive, { level: 9 }));
   return target;
@@ -293,7 +297,7 @@ async function run(argv: string[]): Promise<void> {
     console.log(JSON.stringify(await inspectThemeArchive(path), null, 2));
     return;
   }
-  throw new Error("Usage: rtl-theme <validate|build|pack|inspect> [path] [output]");
+  throw new Error("Usage: oxl-theme <validate|build|pack|inspect> [path] [output]");
 }
 
 const invokedAsExecutable = process.argv[1]

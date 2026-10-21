@@ -1,16 +1,16 @@
-# RTLauncher Theme API 1.0
+# OpenXLauncher Theme API 1.0
 
 简体中文 | [English](./README.md)
 
 第一次编写 Theme？请先阅读 [Theme 开发者快速上手](./DEVELOPER-GUIDE.zh-CN.md)，再查阅 [Theme SDK 1.0 参考](./SDK-REFERENCE.zh-CN.md)。
 
-Theme API 允许用户替换指定的 React 路由和界面插槽。Theme 也可以添加本地路由。对于 Theme 未替换的路由或插槽，RTLauncher 继续使用内置界面。
+Theme API 允许用户替换指定的 React 路由和界面插槽。Theme 也可以添加本地路由。对于 Theme 未替换的路由或插槽，OpenXLauncher 继续使用内置界面。
 
 ## 安全模型
 
 Theme 是受信任的本地代码，不在沙箱中运行。Theme 可以使用稳定 SDK，也可以通过 `sdk.unsafe.invoke` 请求主程序允许的 Tauri 命令。只安装你信任其作者和来源的 Theme。
 
-RTLauncher 对 Theme 包执行以下检查：
+OpenXLauncher 对 Theme 包执行以下检查：
 
 - 拒绝绝对路径、父目录跳转、重复 ZIP 条目、符号链接和不安全的文件读取。
 - 限制归档文件数量、单个文件大小和解压后的总大小。
@@ -23,15 +23,15 @@ RTLauncher 对 Theme 包执行以下检查：
 
 ## Theme 包类型
 
-RTLauncher 接受两种 Theme 包：
+OpenXLauncher 接受两种 Theme 包：
 
-1. 用于正常安装的 `.rtltheme` ZIP 归档。
-2. 用于开发的构建输出目录。该目录必须包含 `build` 生成的 `manifest.json` 和可执行入口。修改源码后，请重新构建并在 RTLauncher 中重新加载 Theme。
+1. 用于正常安装的 `.oxltheme` ZIP 归档。
+2. 用于开发的构建输出目录。该目录必须包含 `build` 生成的 `manifest.json` 和可执行入口。修改源码后，请重新构建并在 OpenXLauncher 中重新加载 Theme。
 
 构建后的归档具有以下结构：
 
 ```text
-theme.rtltheme
+theme.oxltheme
 ├── manifest.json
 └── dist
     ├── theme.js
@@ -46,7 +46,7 @@ theme.rtltheme
 
 - 1.x 主程序接受 1.x 清单格式。
 - 1.x 主程序接受使用 Theme API 1.x 的 Theme 定义。
-- Theme 必须声明兼容的 RTLauncher 和 Theme API 版本范围。
+- Theme 必须声明兼容的 OpenXLauncher 和 Theme API 版本范围。
 - 次版本可以增加新的可选字段。
 - 破坏字段或行为兼容性的改动必须使用新的主版本。
 
@@ -58,22 +58,22 @@ theme.rtltheme
 
 ```sh
 pnpm install
-pnpm --filter @rtlauncher/theme-cli build
-pnpm --filter @rtlauncher/example-hello-theme run validate
-pnpm --filter @rtlauncher/example-hello-theme run build
-pnpm --filter @rtlauncher/example-hello-theme run pack
+pnpm --filter @openxlauncher/theme-cli build
+pnpm --filter @openxlauncher/example-hello-theme run validate
+pnpm --filter @openxlauncher/example-hello-theme run build
+pnpm --filter @openxlauncher/example-hello-theme run pack
 ```
 
 CLI 提供四个命令：
 
 ```text
-rtl-theme validate <project-or-manifest>
-rtl-theme build <project>
-rtl-theme pack <project> [output.rtltheme]
-rtl-theme inspect <file.rtltheme>
+oxl-theme validate <project-or-manifest>
+oxl-theme build <project>
+oxl-theme pack <project> [output.oxltheme]
+oxl-theme inspect <file.oxltheme>
 ```
 
-`build` 会生成一个自行注册的 IIFE。它把 React、JSX runtime 和 `@rtlauncher/theme-ui` 映射到主程序桥接层，因此不会包含第二份 React。它也会用 `@scope` 规则限制 Theme CSS 的作用范围，并写入 SHA-256 值。
+`build` 会生成一个自行注册的 IIFE。它把 React、JSX runtime 和 `@openxlauncher/theme-ui` 映射到主程序桥接层，因此不会包含第二份 React。它也会用 `@scope` 规则限制 Theme CSS 的作用范围，并写入 SHA-256 值。
 
 请参阅[完整的 Hello Theme 示例](../../examples/themes/hello-theme/README.md)。
 
@@ -82,8 +82,8 @@ rtl-theme inspect <file.rtltheme>
 从源码入口导出一个 Theme 定义：
 
 ```tsx
-import { Button } from "@rtlauncher/theme-ui";
-import { defineTheme } from "@rtlauncher/theme-sdk";
+import { Button } from "@openxlauncher/theme-ui";
+import { defineTheme } from "@openxlauncher/theme-sdk";
 
 export default defineTheme({
   id: "com.example.nebula",
@@ -105,19 +105,19 @@ export default defineTheme({
 });
 ```
 
-构建产物必须调用一次 `window.__RTL_THEME_REGISTER__`，且只能调用一次。CLI 会添加此调用。当注册缺失、发生第二次注册或 Theme ID 不匹配时，RTLauncher 会拒绝加载。
+构建产物必须调用一次 `window.__OPENX_THEME_REGISTER__`，且只能调用一次。CLI 会添加此调用。当注册缺失、发生第二次注册或 Theme ID 不匹配时，OpenXLauncher 会拒绝加载。
 
 ## 生命周期
 
 `setup(context)` 用于注册路由和插槽。它可以返回生命周期函数。
 
-- `activate(event)` 在 RTLauncher 发布新的活动 Theme 前运行。
-- `deactivate(event)` 在 RTLauncher 发布下一个 Theme 后运行。
+- `activate(event)` 在 OpenXLauncher 发布新的活动 Theme 前运行。
+- `deactivate(event)` 在 OpenXLauncher 发布下一个 Theme 后运行。
 - `dispose()` 释放 Theme 资源。
 - 每个激活和停用事件都包含一个 `AbortSignal`。
 - 准备、激活、停用和释放操作都有时间限制。
 
-RTLauncher 按 Theme 代次隔离注册内容。重新加载时，RTLauncher 先准备新代次。只有新代次准备完成后，它才移除旧代次。
+OpenXLauncher 按 Theme 代次隔离注册内容。重新加载时，OpenXLauncher 先准备新代次。只有新代次准备完成后，它才移除旧代次。
 
 ## 路由
 
@@ -169,7 +169,7 @@ Theme 可以替换或包装核心路由，也可以添加本地路由。
 
 其他上下文服务包括 `routes`、`slots`、`assets`、Theme 设置、事件和带有 Theme 前缀的日志记录器。
 
-`sdk.unsafe.invoke(command, args)` 是明确的底层调用入口。此入口没有稳定兼容性保证。Theme 必须在 `permissions.unsafeCommands` 中请求每个命令，并在 `disclosures` 中说明用途和影响。即使清单请求了某个命令，如果该命令不在主程序允许列表中，RTLauncher 也会拒绝调用。
+`sdk.unsafe.invoke(command, args)` 是明确的底层调用入口。此入口没有稳定兼容性保证。Theme 必须在 `permissions.unsafeCommands` 中请求每个命令，并在 `disclosures` 中说明用途和影响。即使清单请求了某个命令，如果该命令不在主程序允许列表中，OpenXLauncher 也会拒绝调用。
 
 ## 原生主程序命令
 
@@ -192,6 +192,6 @@ theme_set_trusted
 
 ## 用户切换和故障恢复
 
-用户可以在“外观”设置页面安装、注册、激活、重新加载和删除 Theme。每个本地 Theme 第一次激活前，RTLauncher 都会要求用户确认信任。
+用户可以在“外观”设置页面安装、注册、激活、重新加载和删除 Theme。每个本地 Theme 第一次激活前，OpenXLauncher 都会要求用户确认信任。
 
-激活操作使用事务流程。RTLauncher 在修改当前界面前准备新的构建产物。激活失败时，RTLauncher 保留原有界面和状态。如果在一段时间内没有错误，待确认的激活会变为健康状态。如果应用在确认前退出，原生存储会在下次启动时恢复到最后一个健康的 Theme。
+激活操作使用事务流程。OpenXLauncher 在修改当前界面前准备新的构建产物。激活失败时，OpenXLauncher 保留原有界面和状态。如果在一段时间内没有错误，待确认的激活会变为健康状态。如果应用在确认前退出，原生存储会在下次启动时恢复到最后一个健康的 Theme。

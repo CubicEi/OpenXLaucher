@@ -7,7 +7,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        感谢你帮助改进 RTLauncher。提交前请先搜索已有 Issue，避免重复报告。
+        感谢你帮助改进 OpenXLauncher。提交前请先搜索已有 Issue，避免重复报告。
 
   - type: textarea
     id: description
@@ -47,7 +47,7 @@ body:
   - type: input
     id: version
     attributes:
-      label: RTLauncher 版本
+      label: OpenXLauncher 版本
       description: 可以在应用关于页面或安装包文件名中查看。
       placeholder: 例如 0.1.0
     validations:

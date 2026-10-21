@@ -121,7 +121,7 @@ export default function Home() {
         {homeMode === "full" && (
           <header className="flex flex-wrap items-start justify-between gap-3">
             <div>
-              <p className="text-xs font-medium text-primary">RTLauncher</p>
+              <p className="text-xs font-medium text-primary">OpenXLauncher</p>
               <h1 className="mt-1 text-xl font-semibold tracking-tight">
                 {t("home.welcomeBack")}{selectedProfile?.name ?? t("home.adventurer")}
               </h1>
@@ -472,7 +472,13 @@ function SkinPreviewLarge({ profile }: { profile: Account | null }) {
     <div className="flex w-full flex-col items-center justify-center gap-3">
       {hasSkin ? (
         <div className="overflow-hidden rounded-2xl bg-muted/40">
-          <SkinViewer3D key={`skin-${profile?.id}-${profile?.skinUrl?.slice(-12)}`} skinSrc={profile!.skinUrl!} width={250} height={290} />
+          <SkinViewer3D
+            key={`skin-${profile?.id}-${profile?.skinUrl?.slice(-12)}-${profile?.variant ?? "classic"}`}
+            skinSrc={profile!.skinUrl!}
+            modelType={profile!.variant === "slim" ? "slim" : "classic"}
+            width={250}
+            height={290}
+          />
         </div>
       ) : profile ? (
         <div className="flex flex-col items-center gap-3 text-center">

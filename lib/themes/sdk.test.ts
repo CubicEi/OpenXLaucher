@@ -163,7 +163,7 @@ describe("createThemeSDK", () => {
 
     expect(await nebula.storage.get("layout")).toEqual({ compact: true });
     expect(await solar.storage.get("layout")).toEqual({ compact: false });
-    expect(storage.getItem("rtlauncher:theme:com.example.nebula:layout")).toBe(
+    expect(storage.getItem("openxlauncher:theme:com.example.nebula:layout")).toBe(
       '{"compact":true}',
     );
   });

@@ -133,11 +133,20 @@ export default function DownloadPage() {
 
   const [tab, setTab] = useState<"minecraft" | "java" | "chinese" | "english" | "favorites">("minecraft");
 
-  // Java 下载状态
-  const [javaVersions, setJavaVersions] = useState<{ name: string; version: string }[]>([]);
+  // Java 多源下载状态
+  type JavaVendorId = "zulu" | "adoptium" | "oracle" | "microsoft";
+  type JavaOffer = {
+    vendor: JavaVendorId;
+    vendorLabel: string;
+    major: number;
+    label: string;
+    downloadMode: "installer" | "external";
+    externalUrl?: string | null;
+  };
+  const [javaOffers, setJavaOffers] = useState<JavaOffer[]>([]);
   const [javaVersionsLoading, setJavaVersionsLoading] = useState(false);
   const [javaMessage, setJavaMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
-  const [javaVersionFilter, setJavaVersionFilter] = useState<"all" | "jre" | "jdk">("all");
+  const [javaVendorFilter, setJavaVendorFilter] = useState<"all" | JavaVendorId>("all");
   const [javaSearchQuery, setJavaSearchQuery] = useState("");
 
   // 中文检索状态
@@ -160,11 +169,20 @@ export default function DownloadPage() {
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    if (params.get("tab") === "favorites") {
+    const tabParam = params.get("tab");
+    if (tabParam === "favorites") {
       setTab("favorites");
       return;
     }
-    if (params.get("tab") !== "english") return;
+    if (tabParam === "java") {
+      setTab("java");
+      return;
+    }
+    if (tabParam === "chinese") {
+      setTab("chinese");
+      return;
+    }
+    if (tabParam !== "english") return;
 
     const category = params.get("category");
     setTab("english");
@@ -430,18 +448,14 @@ export default function DownloadPage() {
   }, [tab, englishCategory]);
 
   // Use download manager to track Java download tasks
-  const { startJavaDownload, cancelDownload, tasks } = useDownloadManager();
-
-  useEffect(() => {
-    invoke<string>("get_java_download_dir").then(setJavaBasePath).catch(() => {});
-  }, []);
-  const [javaBasePath, setJavaBasePath] = useState("");
+  const { startJavaDownload, tasks } = useDownloadManager();
 
   const loadJavaVersions = async () => {
     setJavaVersionsLoading(true);
+    setJavaMessage(null);
     try {
-      const result = await invoke<{ name: string; version: string }[]>("get_java_versions");
-      setJavaVersions(result);
+      const result = await invoke<JavaOffer[]>("list_java_distributions");
+      setJavaOffers(result);
     } catch (err) {
       setJavaMessage({ type: "error", text: t("download.failedToGetJavaVersions", { error: String(err) }) });
     } finally {
@@ -449,52 +463,54 @@ export default function DownloadPage() {
     }
   };
 
-  // Load version list when switching to Java tab
+  // Load distribution list when switching to Java tab
   useEffect(() => {
-    if (tab === "java" && javaVersions.length === 0 && !javaVersionsLoading) {
-      loadJavaVersions();
+    if (tab === "java" && javaOffers.length === 0 && !javaVersionsLoading) {
+      void loadJavaVersions();
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab]);
 
-  const handleJavaDownload = async (runtimeName: string) => {
-    if (!javaBasePath) {
-      setJavaMessage({ type: "error", text: t("download.downloadPathNotReady") });
-      return;
-    }
+  const handleJavaDownload = async (offer: JavaOffer) => {
     setJavaMessage(null);
     try {
-      const taskId = await startJavaDownload(runtimeName);
-      const result = await invoke<{ message: string; java_path: string }>("download_java_runtime", {
-        runtimeName,
-        basePath: javaBasePath,
+      if (offer.downloadMode === "external") {
+        const url = offer.externalUrl;
+        if (!url) {
+          setJavaMessage({ type: "error", text: t("download.javaNoExternalUrl") });
+          return;
+        }
+        await invoke("open_external", { url });
+        setJavaMessage({
+          type: "success",
+          text: t("download.javaOpenedExternal", { label: offer.label }),
+        });
+        return;
+      }
+      const taskId = await startJavaDownload(offer.label);
+      const result = await invoke<{ message: string }>("download_and_install_java", {
+        vendor: offer.vendor,
+        major: offer.major,
         taskId,
       });
       setJavaMessage({ type: "success", text: result.message });
-      try {
-        await invoke("validate_java_path", { javaPath: result.java_path });
-      } catch { /* ignore */ }
     } catch (err) {
       setJavaMessage({ type: "error", text: t("download.downloadFailed", { error: String(err) }) });
     }
   };
 
-  // Filter Java versions
-  const filteredJavaVersions = useMemo(() => {
-    return javaVersions.filter((v) => {
-      if (javaSearchQuery &&
-          !v.name.toLowerCase().includes(javaSearchQuery.toLowerCase()) &&
-          !v.version.toLowerCase().includes(javaSearchQuery.toLowerCase())) {
-        return false;
-      }
-      if (javaVersionFilter !== "all") {
-        const isJre = v.name.toLowerCase().includes("jre") ||
-                    v.name.toLowerCase().includes("jfx");
-        if (javaVersionFilter === "jre" && !isJre) return false;
-        if (javaVersionFilter === "jdk" && isJre) return false;
-      }
-      return true;
+  const filteredJavaOffers = useMemo(() => {
+    return javaOffers.filter((offer) => {
+      if (javaVendorFilter !== "all" && offer.vendor !== javaVendorFilter) return false;
+      if (!javaSearchQuery) return true;
+      const q = javaSearchQuery.toLowerCase();
+      return (
+        offer.label.toLowerCase().includes(q) ||
+        offer.vendorLabel.toLowerCase().includes(q) ||
+        String(offer.major).includes(q)
+      );
     });
-  }, [javaVersions, javaVersionFilter, javaSearchQuery]);
+  }, [javaOffers, javaVendorFilter, javaSearchQuery]);
 
   const filteredVersions = useMemo(() => {
     return versions.filter((v) => {
@@ -655,35 +671,31 @@ onClick={() => setTab("favorites")}
               </AnimatePresence>
             </div>}
 
-            {/* Java download */}
+            {/* Java download (multi-vendor) */}
             {tab === "java" && <div className="flex-1 min-h-0 flex flex-col gap-4 mt-4">
-              <div className="shrink-0">
+              <div className="shrink-0 space-y-2">
+                <p className="text-xs text-muted-foreground">{t("download.javaMultiVendorHint")}</p>
                 <div className="flex items-center justify-between gap-4">
-                  <div className="flex items-center gap-1">
-                    <Button
-                      variant={javaVersionFilter === "all" ? "default" : "ghost"}
-                      size="sm"
-                      onClick={() => setJavaVersionFilter("all")}
-                      className="text-xs"
-                    >
-                      {t("download.all")}
-                    </Button>
-                    <Button
-                      variant={javaVersionFilter === "jre" ? "default" : "ghost"}
-                      size="sm"
-                      onClick={() => setJavaVersionFilter("jre")}
-                      className="text-xs"
-                    >
-                      JRE
-                    </Button>
-                    <Button
-                      variant={javaVersionFilter === "jdk" ? "default" : "ghost"}
-                      size="sm"
-                      onClick={() => setJavaVersionFilter("jdk")}
-                      className="text-xs"
-                    >
-                      JDK
-                    </Button>
+                  <div className="flex flex-wrap items-center gap-1">
+                    {(
+                      [
+                        ["all", t("download.all")],
+                        ["zulu", "Zulu"],
+                        ["adoptium", "Temurin"],
+                        ["oracle", "Oracle"],
+                        ["microsoft", "Microsoft"],
+                      ] as const
+                    ).map(([id, label]) => (
+                      <Button
+                        key={id}
+                        variant={javaVendorFilter === id ? "default" : "ghost"}
+                        size="sm"
+                        onClick={() => setJavaVendorFilter(id)}
+                        className="text-xs"
+                      >
+                        {label}
+                      </Button>
+                    ))}
                   </div>
                   <div className="relative w-64">
                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-muted-foreground" />
@@ -695,6 +707,9 @@ onClick={() => setTab("favorites")}
                     />
                   </div>
                 </div>
+                {javaMessage?.type === "success" ? (
+                  <p className="text-xs text-emerald-600 dark:text-emerald-400">{javaMessage.text}</p>
+                ) : null}
               </div>
 
               <AnimatePresence mode="wait">
@@ -710,7 +725,7 @@ onClick={() => setTab("favorites")}
                     <Loader2 className="size-8 animate-spin" />
                     <p className="text-sm">{t("download.loadingVersionList")}</p>
                   </motion.div>
-                ) : javaMessage && javaMessage.type === "error" ? (
+                ) : javaMessage && javaMessage.type === "error" && javaOffers.length === 0 ? (
                   <motion.div
                     key="error"
                     className="flex flex-1 flex-col items-center justify-center gap-3 text-muted-foreground"
@@ -722,12 +737,12 @@ onClick={() => setTab("favorites")}
                     <AlertCircle className="size-8 text-destructive" />
                     <p className="text-sm">{t("download.failedToGetVersionList")}</p>
                     <p className="text-xs">{javaMessage.text}</p>
-                    <Button variant="outline" size="sm" onClick={loadJavaVersions} className="mt-2 gap-2">
+                    <Button variant="outline" size="sm" onClick={() => void loadJavaVersions()} className="mt-2 gap-2">
                       <RefreshCw className="size-3.5" />
                       {t("download.retry")}
                     </Button>
                   </motion.div>
-                ) : filteredJavaVersions.length === 0 ? (
+                ) : filteredJavaOffers.length === 0 ? (
                   <motion.div
                     key="empty"
                     className="flex flex-1 flex-col items-center justify-center gap-3 text-muted-foreground py-16"
@@ -748,41 +763,42 @@ onClick={() => setTab("favorites")}
                     animate="animate"
                     exit="exit"
                   >
-                    {filteredJavaVersions.map((v, index) => {
-                      const isDownloading = tasks.some(t =>
-                        t.label === v.name && t.status === "downloading"
+                    {filteredJavaOffers.map((offer) => {
+                      const isDownloading = tasks.some(
+                        (task) => task.label === offer.label && task.status === "downloading"
                       );
-                      const task = tasks.find(t => t.label === v.name);
+                      const task = tasks.find((item) => item.label === offer.label);
+                      const isExternal = offer.downloadMode === "external";
                       return (
                         <button
-                          key={v.name}
+                          key={`${offer.vendor}-${offer.major}`}
                           type="button"
-                          onClick={() => handleJavaDownload(v.name)}
+                          onClick={() => void handleJavaDownload(offer)}
                           className="group flex w-full items-center justify-between px-4 py-3 hover:bg-accent/50 transition-colors duration-200 border-b border-border last:border-b-0 text-left"
                           disabled={isDownloading}
                         >
                           <div className="flex items-center gap-4 min-w-0">
-                            <div className="flex flex-col gap-0.5">
+                            <div className="flex flex-col gap-0.5 min-w-0">
                               <span className="font-semibold text-sm leading-none">
-                                {v.name}
+                                {offer.label}
                               </span>
                               <span className="text-xs text-muted-foreground">
-                                {v.version}
+                                {offer.vendorLabel}
+                                {isExternal ? ` · ${t("download.javaManualInstall")}` : ""}
                               </span>
                             </div>
                           </div>
 
-                          {task && task.status === "downloading" && task.progress !== undefined && (
-                            <div className="flex items-center gap-2">
+                          <div className="flex items-center gap-3 shrink-0">
+                            {task && task.status === "downloading" && task.progress !== undefined && (
                               <span className="text-xs text-muted-foreground">
                                 {task.progress.toFixed(1)}%
                               </span>
-                            </div>
-                          )}
-
-                          <div className="flex items-center gap-2">
+                            )}
                             {task && task.status === "downloading" ? (
                               <Loader2 className="size-4 text-primary animate-spin" />
+                            ) : isExternal ? (
+                              <ExternalLink className="size-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity duration-200" />
                             ) : (
                               <Download className="size-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity duration-200" />
                             )}

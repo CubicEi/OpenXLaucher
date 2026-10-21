@@ -1,8 +1,8 @@
-# RTLauncher Linux 便携版使用说明
+# OpenXLauncher Linux 便携版使用说明
 
 ## 安装依赖
 
-RTLauncher 便携版需要以下系统依赖才能运行：
+OpenXLauncher 便携版需要以下系统依赖才能运行：
 
 1. **libwebkit2gtk-4.1-dev** - WebKit 渲染引擎
 2. **libappindicator3-dev** - 系统托盘支持
@@ -52,13 +52,13 @@ sudo pacman -S --needed webkit2gtk-4.1 libappindicator-gtk3 librsvg patchelf
 sudo zypper install -y webkit2gtk-4.1-devel libappindicator3-devel librsvg-devel patchelf
 ```
 
-## 运行 RTLauncher
+## 运行 OpenXLauncher
 
 安装依赖后，直接运行二进制文件：
 
 ```bash
-chmod +x rtlauncher
-./rtlauncher
+chmod +x OpenXLauncher
+./OpenXLauncher
 ```
 
 ## 故障排除

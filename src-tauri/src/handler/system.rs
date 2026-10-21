@@ -14,8 +14,31 @@ pub struct MemoryInfo {
     pub used_mb: u64,
     /// 当前可用内存（MB，即 total - used）
     pub available_mb: u64,
-    /// 推荐自动分配给游戏的内存（MB，取可用内存的 80%）
+    /// 推荐自动分配给游戏的内存（MB，与启动路径 auto_allocate 一致）
     pub recommended_mb: u64,
+}
+
+/// 根据物理总内存与当前可用内存计算自动分配的最大堆（MB）。
+///
+/// 可用内存减去系统保留余量，再以总内存的 3/4 封顶，最低 512MB。
+/// 返回 (分配值, 总内存MB, 可用内存MB)。
+pub fn compute_auto_allocate_mb(total_mb: u64, available_mb: u64) -> (u64, u64, u64) {
+    if total_mb == 0 || available_mb == 0 {
+        return (2048, total_mb, available_mb);
+    }
+    let reserve_mb = (total_mb / 8).clamp(512, 2048);
+    let by_available = available_mb.saturating_sub(reserve_mb);
+    let by_total = total_mb.saturating_mul(3) / 4;
+    (by_available.min(by_total).max(512), total_mb, available_mb)
+}
+
+/// 刷新系统内存并按 auto_allocate 公式返回推荐堆大小。
+pub fn auto_allocate_memory_mb() -> (u64, u64, u64) {
+    let mut system = System::new();
+    system.refresh_memory();
+    let total_mb = system.total_memory() / 1024 / 1024;
+    let available_mb = system.available_memory() / 1024 / 1024;
+    compute_auto_allocate_mb(total_mb, available_mb)
 }
 
 #[tauri::command]
@@ -43,14 +66,10 @@ pub fn get_system_memory() -> MemoryInfo {
     sys.refresh_memory();
     let total_mb = sys.total_memory() / 1024 / 1024;
     let used_mb = sys.used_memory() / 1024 / 1024;
+    // UI 展示用 total-used；推荐值与启动路径共用 available_memory + auto_allocate。
     let available_mb = total_mb.saturating_sub(used_mb);
-    // 推荐分配：可用内存的 80%，同时设置合理上下限
-    //  - 至少 512 MB，最多总内存的 90%
-    let raw_recommended = (available_mb as f64 * 0.8) as u64;
-    let upper_bound = (total_mb as f64 * 0.9) as u64;
-    let recommended_mb = raw_recommended
-        .min(upper_bound)
-        .max(512);
+    let sys_available_mb = sys.available_memory() / 1024 / 1024;
+    let (recommended_mb, ..) = compute_auto_allocate_mb(total_mb, sys_available_mb);
     let info = MemoryInfo {
         total_mb,
         used_mb,
@@ -417,35 +436,39 @@ struct LauncherProfiles {
 }
 
 fn startup_minecraft_paths() -> Vec<String> {
-    // 与 config.rs 保持一致：读取 RTL/config/launcher.json 拿到所有 minecraft 路径
-    // 也始终包含一份「平台默认路径」兜底
+    // 与 config.rs 保持一致：读取 OpenX/config/launcher.json 拿到所有游戏目录
+    // 也始终包含一份「平台默认 .minecraft」兜底
     #[cfg(target_os = "windows")]
-    let default_path = {
-        let exe_dir = std::env::current_exe()
-            .ok()
-            .and_then(|p| p.parent().map(|d| d.to_path_buf()))
-            .unwrap_or_else(|| std::path::PathBuf::from("."));
-        exe_dir.join("minecraft").to_string_lossy().to_string()
-    };
+    let default_path = crate::app_paths::portable_game_minecraft_dir()
+        .to_string_lossy()
+        .into_owned();
     #[cfg(target_os = "macos")]
     let default_path = {
         let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
-        format!("{}/Library/Application Support/RTLauncher/version", home)
+        format!("{}/Library/Application Support/minecraft", home)
     };
-    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
-    let default_path = "./minecraft".to_string();
+    #[cfg(target_os = "linux")]
+    let default_path = crate::app_paths::linux_minecraft_dir()
+        .to_string_lossy()
+        .into_owned();
+    #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
+    let default_path = "./.minecraft".to_string();
 
     #[cfg(target_os = "macos")]
     let config_file = {
+        crate::app_paths::migrate_portable_layout();
         let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
         std::path::PathBuf::from(format!(
-            "{}/Library/Application Support/RTLauncher/config",
+            "{}/Library/Application Support/OpenXLauncher/config",
             home
         ))
         .join("launcher.json")
     };
     #[cfg(not(target_os = "macos"))]
-    let config_file = crate::app_paths::portable_config_dir().join("launcher.json");
+    let config_file = {
+        crate::app_paths::ensure_portable_dirs();
+        crate::app_paths::portable_config_dir().join("launcher.json")
+    };
 
     let mut paths: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
     paths.insert(default_path);
@@ -500,10 +523,10 @@ pub fn ensure_launcher_profiles_on_startup() {
 
         let mut profiles_map = std::collections::BTreeMap::new();
         profiles_map.insert(
-            "RTL".to_string(),
+            "OpenX".to_string(),
             LauncherProfile {
                 icon: "Grass".to_string(),
-                name: "RTL".to_string(),
+                name: "OpenX".to_string(),
                 lastVersionId: "latest-release".to_string(),
                 typ: "latest-release".to_string(),
                 lastUsed: now_unix,
@@ -512,7 +535,7 @@ pub fn ensure_launcher_profiles_on_startup() {
 
         let lp = LauncherProfiles {
             profiles: profiles_map,
-            selectedProfile: "RTL".to_string(),
+            selectedProfile: "OpenX".to_string(),
             clientToken: "23323323323323323323323323323333".to_string(),
         };
 

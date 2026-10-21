@@ -28,7 +28,7 @@ const DEFAULT_OPERATIONS: ThemeSwitcherOperations = {
     const selected = await open({
       multiple: false,
       directory: false,
-      filters: [{ name: "RTLauncher Theme", extensions: ["rtltheme"] }],
+      filters: [{ name: "OpenXLauncher Theme", extensions: ["oxltheme", "rtltheme"] }],
     });
     return typeof selected === "string" ? selected : null;
   },

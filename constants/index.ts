@@ -63,9 +63,14 @@ export const ROUTES = {
  */
 export const STORAGE_KEYS = {
   /** 当前视图状态 */
-  CURRENT_VIEW: "rtl-currentView",
+  CURRENT_VIEW: "openx-currentView",
   /** 主题设置 */
   THEME: "theme",
+} as const;
+
+/** Legacy localStorage keys kept for one-time migration reads. */
+export const LEGACY_STORAGE_KEYS = {
+  CURRENT_VIEW: "rtl-currentView",
 } as const;
 
 /**

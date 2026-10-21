@@ -336,7 +336,7 @@ export default function CheckUpdatePage() {
                     {statusIcon()}
                   </div>
                   <div>
-                    <CardTitle className="text-base">RTLauncher</CardTitle>
+                    <CardTitle className="text-base">OpenXLauncher</CardTitle>
                     <p className="text-xs text-muted-foreground mt-0.5">
                       {t("checkUpdate.currentVersion")} <span className="font-mono">{currentVersion}</span>
                     </p>

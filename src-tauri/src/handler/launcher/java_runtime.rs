@@ -100,7 +100,7 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
 
         let path = std::env::temp_dir().join(format!(
-            "rtlauncher-java-version-{}-{}",
+            "openxlauncher-java-version-{}-{}",
             std::process::id(),
             std::thread::current().name().unwrap_or("test")
         ));

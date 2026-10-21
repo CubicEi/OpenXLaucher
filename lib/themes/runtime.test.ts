@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type {
   JsonValue,
-  RTLauncherThemeSDK,
+  OpenXLauncherThemeSDK,
   ThemeContext,
   ThemeDefinition,
   ThemeManifest,
@@ -25,7 +25,7 @@ function manifest(id: string, version = "1.0.0"): ThemeManifest {
     name: id,
     version,
     author: { name: "Test" },
-    engines: { rtlauncher: ">=0.2.0", themeApi: "^1.0.0" },
+    engines: { openxlauncher: ">=0.2.0", themeApi: "^1.0.0" },
     entry: { script: "dist/theme.js" },
     supports: { colorSchemes: ["light", "dark"] },
   };
@@ -36,7 +36,7 @@ function createContextServices(): Omit<
   "manifest" | "runtime" | "routes" | "slots"
 > {
   return {
-    sdk: {} as RTLauncherThemeSDK,
+    sdk: {} as OpenXLauncherThemeSDK,
     assets: {
       async url(path) { return `theme://${path}`; },
       release() {},

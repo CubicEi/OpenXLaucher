@@ -2901,6 +2901,54 @@ dependencies = [
 ]
 
 [[package]]
+name = "openxlauncher"
+version = "0.2.0-beta"
+dependencies = [
+ "anyhow",
+ "base64 0.21.7",
+ "dirs",
+ "encoding_rs",
+ "env_logger",
+ "fastnbt",
+ "flate2",
+ "futures",
+ "hex",
+ "libc",
+ "log",
+ "md-5",
+ "nix 0.27.1",
+ "objc2",
+ "objc2-app-kit",
+ "os_info",
+ "rayon",
+ "regex",
+ "reqwest 0.11.27",
+ "scraper",
+ "semver",
+ "serde",
+ "serde_json",
+ "sha1",
+ "sha2",
+ "sqlite",
+ "sysinfo",
+ "tao 0.35.3",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-dialog",
+ "tauri-plugin-log",
+ "tauri-plugin-opener",
+ "tauri-plugin-single-instance",
+ "tempfile",
+ "tokio",
+ "url",
+ "urlencoding",
+ "webbrowser",
+ "winapi",
+ "winreg 0.52.0",
+ "zip",
+]
+
+[[package]]
 name = "option-ext"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3697,54 +3745,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 1.0.109",
-]
-
-[[package]]
-name = "rtlauncher"
-version = "1.0.0"
-dependencies = [
- "anyhow",
- "base64 0.21.7",
- "dirs",
- "encoding_rs",
- "env_logger",
- "fastnbt",
- "flate2",
- "futures",
- "hex",
- "libc",
- "log",
- "md-5",
- "nix 0.27.1",
- "objc2",
- "objc2-app-kit",
- "os_info",
- "rayon",
- "regex",
- "reqwest 0.11.27",
- "scraper",
- "semver",
- "serde",
- "serde_json",
- "sha1",
- "sha2",
- "sqlite",
- "sysinfo",
- "tao 0.35.3",
- "tauri",
- "tauri-build",
- "tauri-plugin-dialog",
- "tauri-plugin-log",
- "tauri-plugin-opener",
- "tauri-plugin-single-instance",
- "tempfile",
- "tokio",
- "url",
- "urlencoding",
- "webbrowser",
- "winapi",
- "winreg 0.52.0",
- "zip",
 ]
 
 [[package]]

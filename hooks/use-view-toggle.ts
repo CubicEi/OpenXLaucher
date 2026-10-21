@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect } from "react";
 import type { ViewType } from "@/types";
-import { STORAGE_KEYS } from "@/constants";
+import { LEGACY_STORAGE_KEYS, STORAGE_KEYS } from "@/constants";
+import { readMigratedLocalStorage } from "@/lib/storage-migrate";
 
 /**
  * 管理主页和实例设置视图切换的 Hook
@@ -12,9 +13,10 @@ export function useViewToggle() {
   useEffect(() => {
     if (typeof window !== "undefined") {
       try {
-        const savedView = localStorage.getItem(
-          STORAGE_KEYS.CURRENT_VIEW
-        ) as ViewType;
+        const savedView = readMigratedLocalStorage(
+          STORAGE_KEYS.CURRENT_VIEW,
+          [LEGACY_STORAGE_KEYS.CURRENT_VIEW],
+        ) as ViewType | null;
         if (savedView === "home" || savedView === "instance") {
           setCurrentView(savedView);
         }

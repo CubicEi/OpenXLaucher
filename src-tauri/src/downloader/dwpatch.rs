@@ -1,4 +1,4 @@
-use crate::downloader::original_dwl::process_version;
+use crate::downloader::original_dwl::{process_version, ProgressUpdate};
 use crate::handler::config::get_launcher_paths_config;
 use serde::Serialize;
 use std::collections::HashMap;
@@ -22,6 +22,10 @@ fn active_tasks() -> &'static Mutex<HashMap<u64, ActiveTaskInfo>> {
 struct DownloadProgressPayload {
     task_id: u64,
     percent: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    stage: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    message: Option<String>,
 }
 #[derive(Clone, Serialize)]
 struct DownloadFinishedPayload {
@@ -30,7 +34,8 @@ struct DownloadFinishedPayload {
     error: Option<String>,
     failed_count: usize,
 }
-/// 获取平台默认游戏目录（作为 get_minecraft_dir 的回退值）
+/// 获取平台默认游戏目录（作为 get_minecraft_dir 的回退值）。
+/// Windows 便携版统一使用 exe 旁 `.minecraft`，不回落 APPDATA。
 pub fn default_minecraft_dir() -> PathBuf {
     #[cfg(target_os = "macos")]
     {
@@ -42,7 +47,7 @@ pub fn default_minecraft_dir() -> PathBuf {
                     .join("Application Support")
                     .join("minecraft")
             })
-            .unwrap_or_else(|| std::env::temp_dir().join("RTLauncher").join("minecraft"));
+            .unwrap_or_else(|| std::env::temp_dir().join("OpenXLauncher").join("minecraft"));
     }
     #[cfg(target_os = "linux")]
     {
@@ -50,22 +55,24 @@ pub fn default_minecraft_dir() -> PathBuf {
     }
     #[cfg(target_os = "windows")]
     {
-        return std::env::var_os("APPDATA")
-            .map(PathBuf::from)
-            .filter(|path| path.is_absolute())
-            .map(|appdata| appdata.join(".minecraft"))
-            .unwrap_or_else(|| std::env::temp_dir().join("RTLauncher").join("minecraft"));
+        return crate::app_paths::portable_game_minecraft_dir();
     }
 }
 
 /// 获取当前游戏目录。
-/// 优先级：launcher.json -> selected_minecraft_path > 平台默认路径
+/// 优先级：launcher.json selected_minecraft_path > 平台默认路径（与 config::default_minecraft_path 一致）
 pub fn get_minecraft_dir() -> Result<PathBuf, String> {
     let config = get_launcher_paths_config();
-    if !config.selected_minecraft_path.trim().is_empty() {
-        return Ok(PathBuf::from(config.selected_minecraft_path));
+    let selected = config.selected_minecraft_path.trim();
+    if !selected.is_empty() {
+        return Ok(PathBuf::from(selected));
     }
-    Ok(default_minecraft_dir())
+    let fallback = if !config.default_minecraft_path.trim().is_empty() {
+        PathBuf::from(config.default_minecraft_path.trim())
+    } else {
+        default_minecraft_dir()
+    };
+    Ok(fallback)
 }
 #[tauri::command]
 pub async fn download_patcher(
@@ -76,7 +83,7 @@ pub async fn download_patcher(
     let task_id = TASK_COUNTER.fetch_add(1, Ordering::SeqCst);
     let minecraft_path = get_minecraft_dir()?;
     std::fs::create_dir_all(&minecraft_path).map_err(|e| format!("创建目录失败: {}", e))?;
-    let (tx, mut rx) = tokio::sync::mpsc::channel::<f64>(64);
+    let (tx, mut rx) = tokio::sync::mpsc::channel::<ProgressUpdate>(64);
     let cancel = Arc::new(AtomicBool::new(false));
     {
         let mut tasks = active_tasks().lock().unwrap();
@@ -91,10 +98,15 @@ pub async fn download_patcher(
     }
     let app_clone = app.clone();
     tokio::spawn(async move {
-        while let Some(percent) = rx.recv().await {
+        while let Some(update) = rx.recv().await {
             let _ = app_clone.emit(
                 "download-progress",
-                DownloadProgressPayload { task_id, percent },
+                DownloadProgressPayload {
+                    task_id,
+                    percent: update.percent,
+                    stage: update.stage,
+                    message: update.message,
+                },
             );
         }
     });

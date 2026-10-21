@@ -5,6 +5,7 @@ use anyhow::{anyhow, Result};
 use serde_json;
 use std::fs;
 use std::path::PathBuf;
+use tokio::sync::mpsc;
 
 /// 获取 Fabric Loader 版本列表
 pub async fn get_fabric_loader_versions(mc_version: &str, use_mirror: bool) -> Result<Vec<String>> {
@@ -49,7 +50,11 @@ pub async fn install_fabric_loader(
     loader_version: &str,
     mc_folder_path: &str,
     use_mirror: bool,
+    progress_tx: Option<mpsc::Sender<f64>>,
 ) -> Result<String> {
+    if let Some(tx) = progress_tx.as_ref() {
+        let _ = tx.try_send(0.0);
+    }
     let meta_url = if use_mirror {
         "https://bmclapi2.bangbang93.com/fabric-meta/v2/versions/loader"
     } else {
@@ -86,7 +91,16 @@ pub async fn install_fabric_loader(
     } else {
         "https://maven.fabricmc.net"
     };
-    download_libraries(&profile.libraries, maven_base_url, mc_folder_path).await?;
+    download_libraries(
+        &profile.libraries,
+        maven_base_url,
+        mc_folder_path,
+        progress_tx.clone(),
+    )
+    .await?;
+    if let Some(tx) = progress_tx.as_ref() {
+        let _ = tx.try_send(100.0);
+    }
     
     // 确保 options.txt 存在并设置语言为中文
     let options_path = versions_dir.join("options.txt");
@@ -155,6 +169,7 @@ async fn download_libraries(
     libraries: &[Library],
     default_url: &str,
     mc_folder_path: &str,
+    progress_tx: Option<mpsc::Sender<f64>>,
 ) -> Result<()> {
     let mut tasks = Vec::new();
     for lib in libraries {
@@ -189,7 +204,7 @@ async fn download_libraries(
 
     println!("准备下载 {} 个库文件...", tasks.len());
 
-    let result = concurrent_download::download_all(tasks, None).await;
+    let result = concurrent_download::download_all(tasks, progress_tx).await;
     if !result.failures.is_empty() {
         eprintln!("\n以下文件下载失败:");
         for f in &result.failures {

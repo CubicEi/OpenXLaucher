@@ -1,8 +1,8 @@
 [package]
-name = "rtlauncher"
-version = "1.0.0"
-default-run = "rtlauncher"
-description = "RTLauncher - A Modern Minecraft Launcher"
+name = "openxlauncher"
+version = "0.2.0-beta"
+default-run = "openxlauncher"
+description = "OpenXLauncher - A Modern Minecraft Launcher"
 authors = ["Lighting-Team"]
 license = "GNU GPL v3.0"
 repository = ""
@@ -12,7 +12,7 @@ rust-version = "1.77.2"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [lib]
-name = "rtlauncher_lib"
+name = "openxlauncher_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]

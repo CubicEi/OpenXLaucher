@@ -3,7 +3,7 @@
 
 use crate::downloader::dwPatch::get_minecraft_dir;
 use crate::downloader::mod_loader_installer_shared::pick_java_executable;
-use crate::downloader::original_dwl::process_version;
+use crate::downloader::original_dwl::{process_version, ProgressUpdate};
 use crate::downloader::shared_utils::{
     cleanup_loader_version_dir, cleanup_vanilla_version_dir, copy_version_mods_to_instance,
     merge_version_jsons_to_instance, sanitize_instance_name,
@@ -26,6 +26,10 @@ pub struct CombinedSelection {
 struct CombinedProgressPayload {
     task_id: u64,
     percent: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    stage: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    message: Option<String>,
 }
 
 #[derive(Clone, Serialize)]
@@ -111,7 +115,7 @@ pub async fn install_combined_package(
     let minecraft_path = get_minecraft_dir()?;
     std::fs::create_dir_all(&minecraft_path).map_err(|e| format!("创建目录失败: {}", e))?;
 
-    let (tx, mut rx) = tokio::sync::mpsc::channel::<f64>(64);
+    let (tx, mut rx) = tokio::sync::mpsc::channel::<ProgressUpdate>(64);
     let cancel = Arc::new(AtomicBool::new(false));
     {
         let mut tasks = combined_active_tasks().lock().unwrap();
@@ -126,12 +130,14 @@ pub async fn install_combined_package(
     let app_clone = app.clone();
     let task_id_clone = task_id;
     tokio::spawn(async move {
-        while let Some(percent) = rx.recv().await {
+        while let Some(update) = rx.recv().await {
             let _ = app_clone.emit(
                 "combined-download-progress",
                 CombinedProgressPayload {
                     task_id: task_id_clone,
-                    percent,
+                    percent: update.percent,
+                    stage: update.stage,
+                    message: update.message,
                 },
             );
         }
@@ -141,6 +147,8 @@ pub async fn install_combined_package(
         CombinedProgressPayload {
             task_id,
             percent: 0.0,
+            stage: Some("准备安装".to_string()),
+            message: None,
         },
     );
 
@@ -183,7 +191,9 @@ pub async fn install_combined_package(
 
         match result {
             Ok(()) => {
-                let _ = tx.send(100.0).await;
+                let _ = tx
+                    .send(ProgressUpdate::with_stage(100.0, "安装完成"))
+                    .await;
                 let _ = app_finish.emit(
                     "combined-download-finished",
                     CombinedFinishedPayload {
@@ -216,11 +226,11 @@ async fn run_combined_install(
     selections: &[CombinedSelection],
     instance_name: Option<&str>,
     minecraft_path: &std::path::Path,
-    tx: tokio::sync::mpsc::Sender<f64>,
+    tx: tokio::sync::mpsc::Sender<ProgressUpdate>,
     cancel: Arc<AtomicBool>,
 ) -> Result<(), String> {
-    let send_progress = |pct: f64| {
-        let _ = tx.try_send(pct);
+    let send_progress = |pct: f64, stage: &str| {
+        let _ = tx.try_send(ProgressUpdate::with_stage(pct, stage));
     };
 
     // ===== 1. 原版（必选）：已存在则跳过 =====
@@ -232,22 +242,31 @@ async fn run_combined_install(
         .join("versions")
         .join(mc_version)
         .join(format!("{}.jar", mc_version));
-    send_progress(1.0);
+    send_progress(1.0, "下载原版文件");
     if vanilla_json.exists() && vanilla_jar.exists() {
         println!("[Combined] 原版 {} 已存在，跳过下载", mc_version);
     } else {
-        let (tx1, mut rx1) = tokio::sync::mpsc::channel::<f64>(64);
+        let (tx1, mut rx1) = tokio::sync::mpsc::channel::<ProgressUpdate>(64);
         let tx_main = tx.clone();
         tokio::spawn(async move {
-            while let Some(percent) = rx1.recv().await {
-                let _ = tx_main.send(1.0 + percent * 0.39).await;
+            while let Some(update) = rx1.recv().await {
+                let remapped = update.remap(1.0, 0.39);
+                let _ = tx_main
+                    .send(ProgressUpdate {
+                        percent: remapped.percent,
+                        stage: remapped
+                            .stage
+                            .or_else(|| Some("下载原版文件".to_string())),
+                        message: remapped.message,
+                    })
+                    .await;
             }
         });
         process_version(mc_version, minecraft_path, tx1, cancel.clone())
             .await
             .map_err(|e| format!("原版下载失败: {}", e))?;
     }
-    send_progress(42.0);
+    send_progress(42.0, "安装原版 Minecraft");
 
     // ===== 2. 模组加载器（五选一）=====
     let mod_loader = selections
@@ -258,14 +277,22 @@ async fn run_combined_install(
         if cancel.load(Ordering::SeqCst) {
             return Err("已取消".to_string());
         }
+        send_progress(42.0, "下载 mod 加载器安装文件");
         let mc_path_str = minecraft_path.to_string_lossy().to_string();
         // 仅选用已有 Java 运行 Forge/NeoForge processor，不在此流程下载/安装 Java。
         let java = pick_java_executable(mc_version);
         let (tx2, mut rx2) = tokio::sync::mpsc::channel::<f64>(64);
         let tx_main = tx.clone();
+        let loader_label = sel.loader_type.clone();
         tokio::spawn(async move {
             while let Some(percent) = rx2.recv().await {
-                let _ = tx_main.send(42.0 + percent * 0.33).await;
+                let _ = tx_main
+                    .send(ProgressUpdate::with_detail(
+                        42.0 + percent * 0.33,
+                        "安装 mod 加载器",
+                        format!("正在安装 {}", loader_label),
+                    ))
+                    .await;
             }
         });
         let installed = match sel.loader_type.as_str() {
@@ -297,6 +324,7 @@ async fn run_combined_install(
                     &sel.version,
                     &mc_path_str,
                     true,
+                    Some(tx2),
                 )
                 .await
             }
@@ -324,6 +352,7 @@ async fn run_combined_install(
         .map_err(|e| format!("{} 安装失败: {}", sel.loader_type, e))?;
         println!("[Combined] 加载器安装完成: {} -> {}", sel.loader_type, installed);
         loader_version_name = Some(installed);
+        send_progress(75.0, "安装 mod 加载器");
     }
 
     // ===== 3. Fabric API（mod 形式，落在 versions/{mc}/mods）=====
@@ -331,6 +360,7 @@ async fn run_combined_install(
         if cancel.load(Ordering::SeqCst) {
             return Err("已取消".to_string());
         }
+        send_progress(76.0, "安装 Fabric API");
         let mc_path_str = minecraft_path.to_string_lossy().to_string();
         crate::downloader::fabric_installer::install_fabric_api(
             mc_version,
@@ -339,7 +369,7 @@ async fn run_combined_install(
         )
         .await
         .map_err(|e| format!("Fabric API 安装失败: {}", e))?;
-        send_progress(77.0);
+        send_progress(77.0, "安装 Fabric API");
     }
 
     // ===== 4. OptiFine（自动检测叠加到已装 Forge/NeoForge）=====
@@ -348,7 +378,7 @@ async fn run_combined_install(
         if cancel.load(Ordering::SeqCst) {
             return Err("已取消".to_string());
         }
-        send_progress(78.0);
+        send_progress(78.0, "安装 OptiFine");
         let url = sel.version.clone();
         let fallback = url.clone();
         let installed = crate::downloader::optifine_installer::install_optifine_from_bmcl_with_fallback(
@@ -361,10 +391,11 @@ async fn run_combined_install(
         .map_err(|e| format!("OptiFine 安装失败: {}", e))?;
         println!("[Combined] OptiFine 安装完成: {}", installed);
         optifine_version_name = Some(installed);
-        send_progress(88.0);
+        send_progress(88.0, "安装 OptiFine");
     }
 
     // ===== 5. 组包：合并为一个完整实例 =====
+    send_progress(90.0, "合并实例 / 清理中间版本");
     let loader_target = optifine_version_name.as_ref().or(loader_version_name.as_ref());
     let final_name = if let Some(inst) = instance_name {
         let clean = sanitize_instance_name(inst);
@@ -410,7 +441,7 @@ async fn run_combined_install(
             cleanup_vanilla_version_dir(mc_version, minecraft_path);
         }
     }
-    send_progress(93.0);
+    send_progress(93.0, "合并实例 / 清理中间版本");
 
     // ===== 6. 搬运 mod 文件（Fabric API / 叠加的 OptiFine）=====
     if selections.iter().any(|s| s.loader_type == "fabric_api") {
@@ -460,7 +491,7 @@ async fn run_combined_install(
         cleanup_vanilla_version_dir(mc_version, minecraft_path);
     }
 
-    send_progress(98.0);
+    send_progress(98.0, "合并实例 / 清理中间版本");
     println!("[Combined] 安装完成: {} (任务 {})", final_name, task_id);
     Ok(())
 }

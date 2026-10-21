@@ -111,17 +111,17 @@ importers:
 
   examples/themes/hello-theme:
     dependencies:
-      '@rtlauncher/theme-sdk':
+      '@openxlauncher/theme-sdk':
         specifier: workspace:*
         version: link:../../../packages/theme-sdk
-      '@rtlauncher/theme-ui':
+      '@openxlauncher/theme-ui':
         specifier: workspace:*
         version: link:../../../packages/theme-ui
       react:
         specifier: ^19.2.3
         version: 19.2.3
     devDependencies:
-      '@rtlauncher/theme-cli':
+      '@openxlauncher/theme-cli':
         specifier: workspace:*
         version: link:../../../packages/theme-cli
 

@@ -35,6 +35,7 @@ export function SkinPreview({ profile }: SkinPreviewProps) {
             <div className="relative rounded-lg bg-muted/40 overflow-hidden">
               <SkinViewer3D
                 skinSrc={profile!.skinUrl!}
+                modelType={profile!.variant === "slim" ? "slim" : "classic"}
                 width={420}
                 height={520}
               />

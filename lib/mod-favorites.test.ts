@@ -28,17 +28,17 @@ describe("mod favorites", () => {
 
   it("persists valid favorites and announces the change", () => {
     const listener = vi.fn();
-    window.addEventListener("rtlauncher:mod-favorites-changed", listener);
+    window.addEventListener("openxlauncher:mod-favorites-changed", listener);
 
     writeModFavorites([favorite]);
 
     expect(readModFavorites()).toEqual([favorite]);
     expect(listener).toHaveBeenCalledOnce();
-    window.removeEventListener("rtlauncher:mod-favorites-changed", listener);
+    window.removeEventListener("openxlauncher:mod-favorites-changed", listener);
   });
 
   it("ignores malformed persisted data", () => {
-    window.localStorage.setItem("rtlauncher.mod-favorites.v1", JSON.stringify([{ id: "missing-fields" }]));
+    window.localStorage.setItem("openxlauncher.mod-favorites.v1", JSON.stringify([{ id: "missing-fields" }]));
     expect(readModFavorites()).toEqual([]);
   });
 });
