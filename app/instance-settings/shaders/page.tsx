@@ -1,14 +1,14 @@
 "use client";
 
 import React from "react";
-import { Sun } from "lucide-react";
+import { Sparkles } from "lucide-react";
 import { createResourcePage } from "@/components/resource-page-factory";
 
 export default createResourcePage({
   title: "panel.shaders",
-  leftIcon: <Sun className="size-5 text-amber-500" />,
-  leftIconBg: "bg-amber-500/10",
-  leftIconColor: "text-amber-500",
+  leftIcon: <Sparkles className="size-5 text-violet-600 dark:text-violet-400" />,
+  leftIconBg: "bg-violet-500/10",
+  leftIconColor: "text-violet-600 dark:text-violet-400",
   instanceSubdir: "shaderpacks",
   cacheKind: "shaderpack",
   extensions: ["zip", "jar"],

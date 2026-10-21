@@ -145,6 +145,18 @@ pub fn portable_logs_dir() -> PathBuf {
     portable_data_dir().join("logs")
 }
 
+pub fn portable_bridge_dir() -> PathBuf {
+    portable_data_dir().join("bridge")
+}
+
+pub fn portable_themes_dir() -> PathBuf {
+    portable_data_dir().join("themes")
+}
+
+pub fn portable_moddata_path() -> PathBuf {
+    portable_data_dir().join("moddata.db")
+}
+
 /// Preferred portable game directory next to the launcher executable.
 pub fn portable_game_minecraft_dir() -> PathBuf {
     launcher_exe_dir().join(".minecraft")
@@ -163,6 +175,48 @@ fn rename_or_copy_dir(src: &std::path::Path, dest: &std::path::Path) {
     // Cross-device rename can fail; fall back to recursive copy then remove.
     if copy_dir_recursive(src, dest).is_ok() {
         let _ = std::fs::remove_dir_all(src);
+    }
+}
+
+fn migrate_file_if_missing(src: &std::path::Path, dest: &std::path::Path) {
+    if dest.exists() || !src.is_file() {
+        return;
+    }
+    if let Some(parent) = dest.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    if std::fs::rename(src, dest).is_err() {
+        let _ = std::fs::copy(src, dest);
+    }
+}
+
+fn migrate_dir_if_missing(src: &std::path::Path, dest: &std::path::Path) {
+    if dest.exists() || !src.exists() {
+        return;
+    }
+    rename_or_copy_dir(src, dest);
+}
+
+#[cfg(target_os = "windows")]
+fn migrate_windows_appdata_to_portable() {
+    if let Ok(appdata) = std::env::var("APPDATA") {
+        let roaming = PathBuf::from(&appdata);
+        let legacy = roaming.join("OpenXLauncher");
+        migrate_file_if_missing(&legacy.join("moddata.db"), &portable_moddata_path());
+        migrate_dir_if_missing(&legacy.join("bridge"), &portable_bridge_dir());
+        migrate_dir_if_missing(
+            &roaming.join("com.openxlauncher.app").join("themes"),
+            &portable_themes_dir(),
+        );
+    }
+
+    if let Ok(localappdata) = std::env::var("LOCALAPPDATA") {
+        let legacy_bridge = PathBuf::from(&localappdata)
+            .join("OpenXLauncher")
+            .join("bridge");
+        if !portable_bridge_dir().exists() {
+            migrate_dir_if_missing(&legacy_bridge, &portable_bridge_dir());
+        }
     }
 }
 
@@ -228,6 +282,9 @@ pub fn migrate_portable_layout() {
     migrate_macos_app_support();
     #[cfg(target_os = "linux")]
     migrate_linux_xdg_dirs();
+
+    #[cfg(target_os = "windows")]
+    migrate_windows_appdata_to_portable();
 }
 
 pub fn ensure_portable_dirs() {
@@ -236,6 +293,8 @@ pub fn ensure_portable_dirs() {
     let _ = std::fs::create_dir_all(portable_java_dir());
     let _ = std::fs::create_dir_all(portable_logs_dir());
     let _ = std::fs::create_dir_all(portable_minecraft_data_dir());
+    let _ = std::fs::create_dir_all(portable_bridge_dir());
+    let _ = std::fs::create_dir_all(portable_themes_dir());
 }
 
 #[cfg(all(test, target_os = "linux"))]

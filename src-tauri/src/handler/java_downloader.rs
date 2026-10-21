@@ -7,8 +7,9 @@ use futures::stream::StreamExt;
 use serde::{Deserialize, Serialize};
 use std::env;
 use std::path::Path;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 use tauri::Emitter;
 use tokio::fs::File;
@@ -19,6 +20,44 @@ const DOWNLOAD_BUFFER_SIZE: usize = 65536;
 const MAX_DOWNLOAD_RETRIES: usize = 5;
 const INITIAL_RETRY_DELAY_MS: u64 = 500;
 const MAX_RETRY_DELAY_MS: u64 = 8000;
+
+struct JavaActiveTaskInfo {
+    cancel: Arc<AtomicBool>,
+}
+
+fn java_active_tasks() -> &'static Mutex<HashMap<u64, JavaActiveTaskInfo>> {
+    static INSTANCE: OnceLock<Mutex<HashMap<u64, JavaActiveTaskInfo>>> = OnceLock::new();
+    INSTANCE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+struct JavaTaskRegistration {
+    task_id: u64,
+}
+
+impl Drop for JavaTaskRegistration {
+    fn drop(&mut self) {
+        let mut tasks = java_active_tasks().lock().unwrap_or_else(|e| e.into_inner());
+        tasks.remove(&self.task_id);
+    }
+}
+
+fn register_java_task(task_id: u64, cancel: Arc<AtomicBool>) {
+    let mut tasks = java_active_tasks().lock().unwrap_or_else(|e| e.into_inner());
+    tasks.insert(task_id, JavaActiveTaskInfo { cancel });
+}
+
+fn java_cancelled(cancel: &Arc<AtomicBool>) -> bool {
+    cancel.load(Ordering::SeqCst)
+}
+
+#[tauri::command]
+pub async fn cancel_java_download(task_id: u64) -> Result<(), String> {
+    let tasks = java_active_tasks().lock().map_err(|e| e.to_string())?;
+    if let Some(info) = tasks.get(&task_id) {
+        info.cancel.store(true, Ordering::SeqCst);
+    }
+    Ok(())
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum JavaVendor {
@@ -262,11 +301,43 @@ pub async fn download_and_install_java(
         return Err(format!("当前平台不提供 Java {}", major));
     }
 
+    let cancel = Arc::new(AtomicBool::new(false));
+    register_java_task(task_id, cancel.clone());
+    let _java_task_guard = JavaTaskRegistration { task_id };
+
+    if java_cancelled(&cancel) {
+        let msg = "已取消".to_string();
+        let _ = window.emit(
+            "java-download-finished",
+            serde_json::json!({
+                "task_id": task_id,
+                "success": false,
+                "error": msg,
+                "label": label,
+            }),
+        );
+        return Err(msg);
+    }
+
     let resolve_result = match vendor {
         JavaVendor::Zulu => resolve_zulu_installer(&platform, major).await,
         JavaVendor::Adoptium => resolve_adoptium_installer(&platform, major).await,
         _ => unreachable!(),
     };
+
+    if java_cancelled(&cancel) {
+        let msg = "已取消".to_string();
+        let _ = window.emit(
+            "java-download-finished",
+            serde_json::json!({
+                "task_id": task_id,
+                "success": false,
+                "error": msg,
+                "label": label,
+            }),
+        );
+        return Err(msg);
+    }
 
     let (download_url, file_name) = match resolve_result {
         Ok(v) => v,
@@ -309,6 +380,7 @@ pub async fn download_and_install_java(
         task_id,
         &label,
         window.clone(),
+        cancel.clone(),
     )
     .await;
 
@@ -451,11 +523,17 @@ async fn download_installer_with_progress(
     task_id: u64,
     label: &str,
     window: tauri::WebviewWindow,
+    cancel: Arc<AtomicBool>,
 ) -> Result<(), String> {
     let client = crate::http_client::shared_client().await;
     let mut last_error = None;
 
     for attempt in 0..MAX_DOWNLOAD_RETRIES {
+        if java_cancelled(&cancel) {
+            let _ = tokio::fs::remove_file(target).await;
+            return Err("已取消".to_string());
+        }
+
         if attempt > 0 {
             let backoff = std::cmp::min(
                 INITIAL_RETRY_DELAY_MS * (1u64 << (attempt - 1)),
@@ -465,7 +543,9 @@ async fn download_installer_with_progress(
             let _ = tokio::fs::remove_file(target).await;
         }
 
-        match download_once(&client, url, target, task_id, label, window.clone()).await {
+        match download_once(&client, url, target, task_id, label, window.clone(), cancel.clone())
+            .await
+        {
             Ok(()) => {
                 let _ = window.emit(
                     "java-download-progress",
@@ -478,6 +558,10 @@ async fn download_installer_with_progress(
                 return Ok(());
             }
             Err(e) => {
+                if e == "已取消" {
+                    let _ = tokio::fs::remove_file(target).await;
+                    return Err(e);
+                }
                 eprintln!(
                     "[Java下载] {} 尝试 {}/{} 失败: {}",
                     label,
@@ -504,6 +588,7 @@ async fn download_once(
     task_id: u64,
     label: &str,
     window: tauri::WebviewWindow,
+    cancel: Arc<AtomicBool>,
 ) -> Result<(), String> {
     if let Some(parent) = target.parent() {
         tokio::fs::create_dir_all(parent)
@@ -556,13 +641,28 @@ async fn download_once(
         .map_err(|e| format!("创建文件失败: {}", e))?;
     let mut writer = tokio::io::BufWriter::with_capacity(DOWNLOAD_BUFFER_SIZE, file);
 
+    let mut cancelled = false;
     while let Some(chunk) = stream.next().await {
+        if java_cancelled(&cancel) {
+            cancelled = true;
+            break;
+        }
         let chunk = chunk.map_err(|e| format!("读取数据失败: {}", e))?;
         downloaded.fetch_add(chunk.len() as u64, Ordering::Relaxed);
         writer
             .write_all(&chunk)
             .await
             .map_err(|e| format!("写入文件失败: {}", e))?;
+    }
+
+    reporter.abort();
+    let _ = reporter.await;
+
+    if cancelled || java_cancelled(&cancel) {
+        let _ = writer.flush().await;
+        let _ = writer.into_inner();
+        let _ = tokio::fs::remove_file(target).await;
+        return Err("已取消".to_string());
     }
 
     writer
@@ -575,8 +675,6 @@ async fn download_once(
         .await
         .map_err(|e| format!("同步文件失败: {}", e))?;
 
-    reporter.abort();
-    let _ = reporter.await;
     Ok(())
 }
 

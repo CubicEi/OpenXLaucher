@@ -41,7 +41,7 @@ use handler::forge_handler::{
     cancel_forge_download, download_and_install_forge, get_forge_versions,
 };
 use handler::java_downloader::{
-    download_and_install_java, install_zulu_jdk, list_java_distributions,
+    cancel_java_download, download_and_install_java, install_zulu_jdk, list_java_distributions,
 };
 use handler::java_scanner::{search_java_installations, validate_java_path};
 use handler::launcher::build_jvm_arguments;
@@ -209,6 +209,7 @@ pub fn run() {
             write_file,
             list_java_distributions,
             download_and_install_java,
+            cancel_java_download,
             install_zulu_jdk,
             search_java_installations,
             validate_java_path,
@@ -305,6 +306,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
+            app_paths::ensure_portable_dirs();
             themes::commands::report_theme_store_initialization(
                 themes::commands::initialize_theme_store(app.handle()),
             );

@@ -20,6 +20,7 @@ interface RemoteModVersion {
   fileName: string;
   loaders: string[];
   source: string;
+  publishedAt?: number | null;
 }
 
 interface ModRemoteVersionsResponse {
@@ -102,8 +103,44 @@ export function ModRemoteVersionsSection({
     }
   };
 
-  const isSameVersion = (remoteVersion: string) =>
-    remoteVersion.trim().toLowerCase() === info.version.trim().toLowerCase();
+  const normalizeVersionLabel = (version: string, mc: string) => {
+    let v = version.trim().replace(/^v/i, "");
+    const mcTrim = mc.trim();
+    if (!mcTrim) return v.toLowerCase();
+    const lower = v.toLowerCase();
+    const suffixes = [
+      `+${mcTrim}`,
+      `+ ${mcTrim}`,
+      ` for ${mcTrim}`,
+      ` for mc ${mcTrim}`,
+    ];
+    for (const suffix of suffixes) {
+      if (lower.endsWith(suffix.toLowerCase())) {
+        v = v.slice(0, v.length - suffix.length).trimEnd();
+        break;
+      }
+    }
+    return v.toLowerCase();
+  };
+
+  const localNorm = normalizeVersionLabel(info.version, mcVersion);
+  const isSameVersion = (version: RemoteModVersion) => {
+    if (normalizeVersionLabel(version.versionNumber, mcVersion) !== localNorm) {
+      return false;
+    }
+    const matching =
+      data?.versions.filter(
+        (v) => normalizeVersionLabel(v.versionNumber, mcVersion) === localNorm,
+      ) ?? [];
+    if (matching.length === 0) {
+      return true;
+    }
+    const maxTs = Math.max(0, ...matching.map((v) => v.publishedAt ?? 0));
+    if (maxTs === 0) {
+      return true;
+    }
+    return (version.publishedAt ?? 0) >= maxTs;
+  };
 
   return (
     <div>
@@ -145,7 +182,7 @@ export function ModRemoteVersionsSection({
       {!loading && !error && data && data.versions.length > 0 && (
         <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
           {data.versions.map((version) => {
-            const same = isSameVersion(version.versionNumber);
+            const same = isSameVersion(version);
             const busy = installingVersion === version.versionNumber;
             return (
               <div

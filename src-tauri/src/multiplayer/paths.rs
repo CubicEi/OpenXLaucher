@@ -16,11 +16,8 @@ fn legacy_bridge_dir() -> Option<PathBuf> {
 fn preferred_bridge_dir() -> PathBuf {
     #[cfg(target_os = "windows")]
     {
-        return env::var_os("LOCALAPPDATA")
-            .or_else(|| env::var_os("APPDATA"))
-            .map(PathBuf::from)
-            .map(|base| base.join("OpenXLauncher").join("bridge"))
-            .unwrap_or_else(|| env::temp_dir().join("OpenXLauncher").join("bridge"));
+        crate::app_paths::ensure_portable_dirs();
+        return crate::app_paths::portable_bridge_dir();
     }
 
     #[cfg(target_os = "macos")]

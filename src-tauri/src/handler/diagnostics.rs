@@ -376,6 +376,8 @@ pub struct ModSearchResult {
     pub mc_versions: Vec<String>,
     pub loaders: Vec<String>,
     pub version_number: Option<String>,
+    #[serde(default)]
+    pub published_at: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -503,6 +505,7 @@ pub(crate) async fn search_modrinth(query: &str, mc_version: &str, loader: &str)
                     mc_versions: mc_list,
                     loaders: loader_list,
                     version_number: Some(version_number),
+                    published_at: None,
                 });
             }
         }
@@ -602,6 +605,7 @@ pub(crate) async fn search_curseforge(query: &str, mc_version: &str, loader: &st
                     mc_versions: mc_list,
                     loaders: vec![loader.to_string()],
                     version_number: Some(version_number),
+                    published_at: None,
                 });
             }
         }
@@ -1049,6 +1053,7 @@ async fn search_modrinth_with_deps(query: &str, mc_version: &str, loader: &str) 
                         mc_versions: mc_list,
                         loaders: loader_list,
                         version_number: Some(version_number),
+                        published_at: None,
                     },
                     dependencies,
                 });
@@ -1127,6 +1132,7 @@ async fn search_curseforge_with_deps(query: &str, mc_version: &str, loader: &str
                         mc_versions: mc_list,
                         loaders: vec![loader.to_string()],
                         version_number: Some(version_number),
+                        published_at: None,
                     },
                     dependencies,
                 });

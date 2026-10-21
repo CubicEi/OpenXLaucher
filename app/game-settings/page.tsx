@@ -10,7 +10,7 @@ import {
   Image as ImageIcon,
   Box,
   Map,
-  Layers,
+  Sparkles,
   Database,
   Camera,
   Package,
@@ -54,7 +54,7 @@ const FEATURE_META: Record<
   },
   "/game-settings/shaders": {
     description: "gameSettings.configureShaderEffectsAndShaders",
-    icon: Layers,
+    icon: Sparkles,
   },
   "/game-settings/datapacks": {
     description: "gameSettings.manageMinecraftDatapacks",

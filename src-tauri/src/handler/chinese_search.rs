@@ -11,12 +11,20 @@ fn get_moddata_connection() -> &'static Mutex<Option<Connection>> {
     MDDATA_CONN.get_or_init(|| Mutex::new(None))
 }
 
-/// 获取 moddata.db 的隐藏存放目录（各平台用户数据目录，默认均不直接暴露）：
-///   Linux:   $XDG_DATA_HOME/OpenXLauncher 或 ~/.local/share/OpenXLauncher（.local 为隐藏目录）
-///   macOS:   ~/Library/Application Support/OpenXLauncher（Library 在 Finder 中默认隐藏）
-///   Windows: %APPDATA%\OpenXLauncher（AppData 目录默认隐藏）
+/// moddata.db 存放目录：
+///   Windows: `<exe>/OpenX`（便携数据根）
+///   Linux:   $XDG_DATA_HOME/OpenXLauncher 或 ~/.local/share/OpenXLauncher
+///   macOS:   ~/Library/Application Support/OpenXLauncher
 fn get_moddata_data_dir() -> Option<PathBuf> {
-    dirs::data_dir().map(|dir| dir.join("OpenXLauncher"))
+    #[cfg(target_os = "windows")]
+    {
+        crate::app_paths::ensure_portable_dirs();
+        return Some(crate::app_paths::portable_data_dir());
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        dirs::data_dir().map(|dir| dir.join("OpenXLauncher"))
+    }
 }
 
 /// 获取 moddata.db 的目标路径（优先存放于隐藏的用户数据目录）
@@ -40,11 +48,21 @@ fn get_moddata_target_path() -> PathBuf {
 ///   3. 程序可执行文件同目录下的 moddata.db（旧版本遗留）
 ///   4. 上层目录的 moddata.db（开发环境）
 fn resolve_moddata_path() -> Option<PathBuf> {
-    // 1) 隐藏的用户数据目录
+    // 1) 当前平台默认数据目录
     if let Some(dir) = get_moddata_data_dir() {
         let p = dir.join("moddata.db");
         if p.exists() {
             return Some(p);
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    if let Ok(appdata) = std::env::var("APPDATA") {
+        let legacy = PathBuf::from(appdata)
+            .join("OpenXLauncher")
+            .join("moddata.db");
+        if legacy.exists() {
+            return Some(legacy);
         }
     }
 

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { ChevronDown, Loader2, Play, Square } from "lucide-react";
+import { Layers, Loader2, Play, Square } from "lucide-react";
 
 import { useLaunchContext } from "@/components/launch/launch-provider";
 import { VersionSelectorDialog } from "@/components/launch/version-selector-dialog";
@@ -68,7 +68,7 @@ export function SidebarLaunchButton() {
             )}
             onClick={() => setVersionOpen(true)}
           >
-            <ChevronDown className="size-3.5" />
+            <Layers className="size-3.5" />
           </button>
         </TooltipTrigger>
         <TooltipContent side="right">

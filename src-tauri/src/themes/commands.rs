@@ -26,16 +26,8 @@ pub struct ThemeStoreView {
 }
 
 pub fn initialize_theme_store(app: &AppHandle) -> Result<(), ThemeStoreError> {
-    let root = app
-        .path()
-        .app_data_dir()
-        .map_err(|error| {
-            ThemeStoreError::new(
-                "THEME_STORE_IO",
-                format!("Cannot resolve the application data directory: {error}"),
-            )
-        })?
-        .join("themes");
+    crate::app_paths::ensure_portable_dirs();
+    let root = crate::app_paths::portable_themes_dir();
     app.manage(ThemeStoreManager::new(ThemeStore::open(root)?));
     Ok(())
 }

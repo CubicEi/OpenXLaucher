@@ -511,6 +511,7 @@ export function DownloadProvider({ children }: { children: React.ReactNode }) {
           invoke("cancel_neoforge_download", { taskId }),
           invoke("cancel_liteloader_download", { taskId }),
           invoke("cancel_combined_download", { taskId }),
+          invoke("cancel_java_download", { taskId }),
         ]);
       } catch (e) {
         console.error("取消下载失败:", e);

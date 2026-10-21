@@ -11,7 +11,7 @@ use crate::handler::cache_paths::{get_mod_cache_dir, parse_mod_loader};
 use crate::handler::diagnostics::{download_file, ModSearchResult};
 use crate::handler::mod_parser::{parse_mod, parse_mods_in_dir, ModInfo};
 use crate::handler::mod_platform::{
-    fetch_latest_search_result, list_compatible_versions, resolve_mod_platform,
+    list_compatible_versions, mod_versions_match, pick_update_if_newer, resolve_mod_platform,
     ModRemoteVersionsResponse,
 };
 use serde::{Deserialize, Serialize};
@@ -143,11 +143,9 @@ fn versions_differ(local: &str, remote: &str) -> bool {
     if local.is_empty() || remote.is_empty() {
         return !remote.is_empty() && remote != local;
     }
-    if local.eq_ignore_ascii_case(remote) {
+    if local.eq_ignore_ascii_case(remote) || mod_versions_match(local, remote) {
         return false;
     }
-    // Prefer semver when both parse; otherwise treat inequality as "update available"
-    // because Modrinth/CF already returned their latest matching release.
     let local_clean = local.trim_start_matches('v');
     let remote_clean = remote.trim_start_matches('v');
     match (
@@ -155,7 +153,7 @@ fn versions_differ(local: &str, remote: &str) -> bool {
         semver::Version::parse(remote_clean),
     ) {
         (Ok(l), Ok(r)) => r > l,
-        _ => true,
+        _ => local.trim().to_ascii_lowercase() != remote.trim().to_ascii_lowercase(),
     }
 }
 
@@ -166,7 +164,7 @@ async fn find_latest_for_mod(
     loader: &str,
 ) -> Option<ModSearchResult> {
     let platform = resolve_mod_platform(mod_info, jar_path).await?;
-    fetch_latest_search_result(&platform, mc_version, loader).await
+    pick_update_if_newer(&platform, mod_info, mc_version, loader).await
 }
 
 #[tauri::command]
@@ -212,9 +210,6 @@ fn to_update_info(mod_info: &ModInfo, remote: &ModSearchResult) -> Option<ModUpd
     let new_version = remote.version_number.as_ref()?;
     let download_url = remote.download_url.as_ref()?;
     let new_file_name = remote.file_name.as_ref()?;
-    if !versions_differ(&mod_info.version, new_version) {
-        return None;
-    }
     Some(ModUpdateInfo {
         file_name: mod_info.file_name.clone(),
         mod_id: mod_info.mod_id.clone(),
@@ -647,6 +642,7 @@ mod tests {
         assert!(!versions_differ("1.0.1", "1.0.1"));
         assert!(!versions_differ("2.0.0", "1.9.9"));
         assert!(versions_differ("1.0", "1.1-beta"));
+        assert!(!versions_differ("8.2.19", "8.2.19+26.2"));
     }
 
     #[test]

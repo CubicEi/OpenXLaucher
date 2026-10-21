@@ -36,6 +36,8 @@ pub struct RemoteModVersion {
     pub file_name: String,
     pub loaders: Vec<String>,
     pub source: String,
+    /// Unix seconds for ordering; missing timestamps sort last.
+    pub published_at: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -76,6 +78,92 @@ struct PlatformRef {
 
 fn json_str(value: &serde_json::Value, key: &str) -> Option<String> {
     value.get(key).and_then(|v| v.as_str()).map(str::to_owned)
+}
+
+/// Strip loader / MC suffixes so `8.2.19` matches `8.2.19+26.2` or `8.2.19+1.21.1`.
+pub fn normalize_mod_version(raw: &str) -> String {
+    let mut s = raw.trim().trim_start_matches('v').trim().to_ascii_lowercase();
+    if let Some((base, _)) = s.split_once('+') {
+        s = base.trim().to_string();
+    }
+    static MC_SUFFIX: OnceLock<Regex> = OnceLock::new();
+    let re = MC_SUFFIX.get_or_init(|| {
+        Regex::new(r"-\d+\.\d+(?:\.\d+)?(?:\.\d+)?$").expect("regex")
+    });
+    if let Some(m) = re.find(&s) {
+        s.truncate(m.start());
+        s = s.trim_end_matches('-').to_string();
+    }
+    s
+}
+
+pub fn mod_versions_match(a: &str, b: &str) -> bool {
+    normalize_mod_version(a) == normalize_mod_version(b)
+}
+
+/// Parse ISO-8601 timestamps from Modrinth / CurseForge (UTC `Z` or numeric offset).
+pub fn parse_iso8601_unix(timestamp: &str) -> Option<u64> {
+    let t = timestamp.trim();
+    if t.len() < 19 {
+        return None;
+    }
+    let y: u32 = t.get(0..4)?.parse().ok()?;
+    let m: u32 = t.get(5..7)?.parse().ok()?;
+    let d: u32 = t.get(8..10)?.parse().ok()?;
+    if t.get(10..11) != Some("T") && t.get(10..11) != Some(" ") {
+        return None;
+    }
+    let h: u32 = t.get(11..13)?.parse().ok()?;
+    let min: u32 = t.get(14..16)?.parse().ok()?;
+    let sec: u32 = t.get(17..19)?.parse().ok()?;
+    let mut unix = civil_to_unix(y, m, d, h, min, sec)?;
+
+    let rest = t.get(19..).unwrap_or("");
+    let rest = rest.trim_start_matches('.');
+    let tz_start = rest
+        .find('Z')
+        .or_else(|| rest.find('+'))
+        .or_else(|| {
+            if rest.len() > 3 && rest.get(3..4) == Some("-") {
+                Some(3)
+            } else {
+                None
+            }
+        });
+    if let Some(idx) = tz_start {
+        let tz = &rest[idx..];
+        if tz.starts_with('Z') {
+            return Some(unix);
+        }
+        if tz.len() >= 6 && (tz.starts_with('+') || tz.starts_with('-')) {
+            let sign = if tz.starts_with('-') { -1i64 } else { 1 };
+            let oh: i64 = tz.get(1..3)?.parse().ok()?;
+            let om: i64 = tz.get(4..6)?.parse().ok()?;
+            let offset_secs = sign * (oh * 3600 + om * 60);
+            unix = unix.saturating_sub(offset_secs as u64);
+        }
+    }
+    Some(unix)
+}
+
+fn civil_to_unix(y: u32, m: u32, d: u32, h: u32, min: u32, sec: u32) -> Option<u64> {
+    if m < 1 || m > 12 || d < 1 || h > 23 || min > 59 || sec > 59 {
+        return None;
+    }
+    let (y, m) = if m <= 2 {
+        (y as i64 - 1, m as i64 + 12)
+    } else {
+        (y as i64, m as i64)
+    };
+    let days = 365 * y + y / 4 - y / 100 + y / 400 + (153 * (m - 2) + 2) / 5 + d as i64 - 719468;
+    if days < 0 {
+        return None;
+    }
+    let secs = days * 86400 + h as i64 * 3600 + min as i64 * 60 + sec as i64;
+    if secs < 0 {
+        return None;
+    }
+    Some(secs as u64)
 }
 
 pub fn parse_platform_ref(url: &str) -> Option<PlatformRef> {
@@ -277,7 +365,9 @@ fn curseforge_file_download_url(file: &serde_json::Value) -> Option<String> {
 }
 
 fn curseforge_file_supports(file: &serde_json::Value, mc_version: &str, mod_loader: &str) -> bool {
-    let game_versions = file.get("gameVersions").and_then(|v| v.as_array())?;
+    let Some(game_versions) = file.get("gameVersions").and_then(|v| v.as_array()) else {
+        return false;
+    };
     if !game_versions.iter().any(|v| v.as_str() == Some(mc_version)) {
         return false;
     }
@@ -677,6 +767,156 @@ fn modrinth_release_type(version: &serde_json::Value) -> String {
     }
 }
 
+fn curseforge_file_published_at(file: &serde_json::Value) -> Option<i64> {
+    json_str(file, "fileDate")
+        .or_else(|| json_str(file, "fileReleased"))
+        .or_else(|| json_str(file, "dateReleased"))
+        .and_then(|s| parse_iso8601_unix(&s).map(|t| t as i64))
+}
+
+fn modrinth_version_published_at(version: &serde_json::Value) -> Option<i64> {
+    json_str(version, "date_published")
+        .and_then(|s| parse_iso8601_unix(&s).map(|t| t as i64))
+}
+
+fn release_type_rank(release_type: &str) -> u8 {
+    match release_type.to_ascii_lowercase().as_str() {
+        "release" => 0,
+        "beta" => 1,
+        "alpha" => 2,
+        _ => 3,
+    }
+}
+
+/// Normalize mod version labels so `8.2.19` matches `8.2.19+26.2` for the same MC.
+pub fn normalize_version_label(version: &str, mc_version: &str) -> String {
+    let mut v = version.trim().trim_start_matches('v').trim().to_string();
+    let mc = mc_version.trim();
+    if mc.is_empty() {
+        return v.to_ascii_lowercase();
+    }
+    let lower = v.to_ascii_lowercase();
+    let suffixes = [
+        format!("+{}", mc),
+        format!("+ {}", mc),
+        format!(" for {}", mc),
+        format!(" for mc {}", mc),
+    ];
+    for suffix in suffixes {
+        let suf = suffix.to_ascii_lowercase();
+        if lower.ends_with(&suf) {
+            v = v[..v.len().saturating_sub(suffix.len())].trim_end().to_string();
+            break;
+        }
+    }
+    v.to_ascii_lowercase()
+}
+
+pub fn versions_equivalent(local: &str, remote: &str, mc_version: &str) -> bool {
+    if local.trim().eq_ignore_ascii_case(remote.trim()) {
+        return true;
+    }
+    normalize_version_label(local, mc_version) == normalize_version_label(remote, mc_version)
+}
+
+fn sort_versions_newest_first(versions: &mut [RemoteModVersion]) {
+    versions.sort_by(|a, b| {
+        let ta = a.published_at.unwrap_or(0);
+        let tb = b.published_at.unwrap_or(0);
+        tb.cmp(&ta)
+            .then_with(|| release_type_rank(&a.release_type).cmp(&release_type_rank(&b.release_type)))
+    });
+}
+
+fn baseline_published_at_for(
+    local_version: &str,
+    versions: &[RemoteModVersion],
+    mc_version: &str,
+) -> i64 {
+    versions
+        .iter()
+        .filter(|v| versions_equivalent(local_version, &v.version_number, mc_version))
+        .map(|v| v.published_at.unwrap_or(0))
+        .max()
+        .unwrap_or(0)
+}
+
+fn pick_best_candidate(versions: &[RemoteModVersion]) -> Option<&RemoteModVersion> {
+    if versions.is_empty() {
+        return None;
+    }
+    for want in ["release", "beta", "alpha"] {
+        let mut best: Option<&RemoteModVersion> = None;
+        for v in versions {
+            if v.release_type.eq_ignore_ascii_case(want) {
+                let replace = match best {
+                    None => true,
+                    Some(b) => {
+                        let ta = v.published_at.unwrap_or(0);
+                        let tb = b.published_at.unwrap_or(0);
+                        ta > tb
+                    }
+                };
+                if replace {
+                    best = Some(v);
+                }
+            }
+        }
+        if best.is_some() {
+            return best;
+        }
+    }
+    versions.iter().max_by_key(|v| v.published_at.unwrap_or(0))
+}
+
+/// Whether a newer compatible release exists vs the installed mod (by publish time).
+pub fn should_offer_update<'a>(
+    local_version: &str,
+    versions: &'a [RemoteModVersion],
+    mc_version: &str,
+) -> Option<&'a RemoteModVersion> {
+    let baseline_ts = baseline_published_at_for(local_version, versions, mc_version);
+    let candidate = pick_best_candidate(versions)?;
+    let candidate_ts = candidate.published_at.unwrap_or(0);
+    if candidate_ts <= baseline_ts {
+        return None;
+    }
+    if versions_equivalent(local_version, &candidate.version_number, mc_version) {
+        return None;
+    }
+    Some(candidate)
+}
+
+fn remote_version_to_search_result(
+    platform: &ResolvedPlatform,
+    pick: &RemoteModVersion,
+    mc_version: &str,
+) -> ModSearchResult {
+    ModSearchResult {
+        source: platform.source.clone(),
+        mod_id: platform.slug.clone(),
+        slug: platform.slug.clone(),
+        title: platform.title.clone(),
+        download_url: Some(pick.download_url.clone()),
+        file_name: Some(pick.file_name.clone()),
+        mc_versions: vec![mc_version.to_string()],
+        loaders: pick.loaders.clone(),
+        version_number: Some(pick.version_number.clone()),
+        published_at: pick.published_at.map(|t| t as u64),
+    }
+}
+
+pub async fn pick_update_if_newer(
+    platform: &ResolvedPlatform,
+    mod_info: &ModInfo,
+    mc_version: &str,
+    loader: &str,
+) -> Option<ModSearchResult> {
+    let versions = list_compatible_versions(platform, mc_version, loader).await;
+    let pick = should_offer_update(&mod_info.version, &versions, mc_version)?;
+    Some(remote_version_to_search_result(platform, pick, mc_version))
+}
+
 fn modrinth_loaders(version: &serde_json::Value) -> Vec<String> {
     version
         .get("loaders")
@@ -722,8 +962,10 @@ pub async fn list_compatible_versions(
                 file_name,
                 loaders: modrinth_loaders(version),
                 source: "modrinth".to_string(),
+                published_at: modrinth_version_published_at(version),
             });
         }
+        sort_versions_newest_first(&mut out);
         return out;
     }
 
@@ -770,8 +1012,10 @@ pub async fn list_compatible_versions(
                 file_name,
                 loaders: vec![loader.to_string()],
                 source: "curseforge".to_string(),
+                published_at: curseforge_file_published_at(&file),
             });
         }
+        sort_versions_newest_first(&mut out);
         return out;
     }
 
@@ -784,22 +1028,8 @@ pub async fn fetch_latest_search_result(
     loader: &str,
 ) -> Option<ModSearchResult> {
     let versions = list_compatible_versions(platform, mc_version, loader).await;
-    let preferred = versions
-        .iter()
-        .find(|v| v.release_type == "release")
-        .or_else(|| versions.first());
-    let pick = preferred?;
-    Some(ModSearchResult {
-        source: platform.source.clone(),
-        mod_id: platform.slug.clone(),
-        slug: platform.slug.clone(),
-        title: platform.title.clone(),
-        download_url: Some(pick.download_url.clone()),
-        file_name: Some(pick.file_name.clone()),
-        mc_versions: vec![mc_version.to_string()],
-        loaders: pick.loaders.clone(),
-        version_number: Some(pick.version_number.clone()),
-    })
+    let pick = pick_best_candidate(&versions)?;
+    Some(remote_version_to_search_result(platform, pick, mc_version))
 }
 
 #[cfg(test)]
@@ -827,6 +1057,93 @@ mod tests {
     fn curseforge_fingerprint_strips_whitespace() {
         let with_ws: Vec<u8> = vec![9, 116, 10, 101, 13, 115, 32, 116];
         assert_eq!(curseforge_fingerprint_bytes(&with_ws), curseforge_fingerprint_bytes(b"test"));
+    }
+
+    #[test]
+    fn normalize_mod_version_strips_build_suffix() {
+        assert_eq!(normalize_mod_version("8.2.19+26.2"), "8.2.19");
+        assert_eq!(normalize_mod_version("v1.0.0+1.21.1"), "1.0.0");
+    }
+
+    #[test]
+    fn parse_iso8601_unix_reads_utc() {
+        let ts = parse_iso8601_unix("2024-06-01T12:00:00Z").expect("parse");
+        assert!(ts > 1_700_000_000);
+    }
+
+    #[test]
+    fn normalize_version_strips_mc_suffix() {
+        assert_eq!(
+            normalize_version_label("8.2.19+26.2", "26.2"),
+            normalize_version_label("8.2.19", "26.2")
+        );
+    }
+
+    #[test]
+    fn versions_equivalent_for_mc_suffix() {
+        assert!(versions_equivalent("8.2.19", "8.2.19+26.2", "26.2"));
+    }
+
+    #[test]
+    fn should_offer_update_by_published_at() {
+        let versions = vec![
+            RemoteModVersion {
+                version_number: "8.2.19".into(),
+                release_type: "release".into(),
+                download_url: "u1".into(),
+                file_name: "a.jar".into(),
+                loaders: vec![],
+                source: "modrinth".into(),
+                published_at: Some(100),
+            },
+            RemoteModVersion {
+                version_number: "8.2.20".into(),
+                release_type: "release".into(),
+                download_url: "u2".into(),
+                file_name: "b.jar".into(),
+                loaders: vec![],
+                source: "modrinth".into(),
+                published_at: Some(200),
+            },
+        ];
+        assert!(should_offer_update("8.2.19", &versions, "26.2").is_some());
+        assert!(should_offer_update("8.2.19+26.2", &versions, "26.2").is_some());
+        assert!(should_offer_update("8.2.20", &versions, "26.2").is_none());
+    }
+
+    #[test]
+    fn should_offer_update_uses_max_baseline_timestamp() {
+        let versions = vec![
+            RemoteModVersion {
+                version_number: "8.2.19".into(),
+                release_type: "release".into(),
+                download_url: "u1".into(),
+                file_name: "a.jar".into(),
+                loaders: vec![],
+                source: "modrinth".into(),
+                published_at: Some(50),
+            },
+            RemoteModVersion {
+                version_number: "8.2.19+26.2".into(),
+                release_type: "release".into(),
+                download_url: "u1b".into(),
+                file_name: "a2.jar".into(),
+                loaders: vec![],
+                source: "modrinth".into(),
+                published_at: Some(150),
+            },
+            RemoteModVersion {
+                version_number: "8.2.20".into(),
+                release_type: "release".into(),
+                download_url: "u2".into(),
+                file_name: "b.jar".into(),
+                loaders: vec![],
+                source: "modrinth".into(),
+                published_at: Some(200),
+            },
+        ];
+        assert!(should_offer_update("8.2.19", &versions, "26.2").is_some());
+        assert!(should_offer_update("8.2.19+26.2", &versions, "26.2").is_some());
     }
 
     #[test]
