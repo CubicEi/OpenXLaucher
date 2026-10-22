@@ -269,6 +269,8 @@
     "updatesFound": "{count} updates",
     "noUpdatesFound": "No updates found",
     "updateSourceNotFound": "Update source not found",
+    "modUpdateNetworkUnreachable": "Cannot reach Modrinth or CurseForge. Check your network and try again.",
+    "modUpdateHashMiss": "This mod file could not be matched on Modrinth or CurseForge.",
     "closeGameBeforeUpdate": "This instance is running. Close the game before updating mods.",
     "updating": "Updating…",
     "remoteVersionsTitle": "Downloadable versions",

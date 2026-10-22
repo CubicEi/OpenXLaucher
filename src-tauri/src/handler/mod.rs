@@ -21,6 +21,7 @@ pub mod liteloader_handler;
 pub mod mod_links;
 pub mod mod_parser;
 pub mod mod_platform;
+pub mod mod_platform_probe;
 pub mod mod_update_locks;
 pub mod mod_updates;
 #[allow(dead_code)]

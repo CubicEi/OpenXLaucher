@@ -25,7 +25,7 @@ import {
   useDownloadManager,
   type ModUpdatePayload,
 } from "@/components/download/download-provider";
-import { useI18n } from "@/components/i18n/use-i18n";
+import { useI18n, type TranslationKey } from "@/components/i18n/use-i18n";
 import { ModRemoteVersionsSection } from "@/components/mods/mod-remote-versions-section";
 
 const MODS_CONFIG = {
@@ -350,7 +350,10 @@ export default function ModsPage() {
       );
     } catch (e) {
       console.error("check_mods_updates failed:", e);
-      setCheckMessage(String(e));
+      const msg = String(e);
+      setCheckMessage(
+        msg.startsWith("panel.") ? t(msg as TranslationKey) : msg,
+      );
     } finally {
       setCheckingUpdates(false);
     }

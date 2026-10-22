@@ -13,11 +13,13 @@ use crate::handler::game_dir::canonical_game_dir;
 use crate::handler::launcher::game_process_state::is_game_running_for_dir;
 use crate::handler::mod_update_locks::{begin_mod_update, end_mod_update, instance_dir_key};
 use crate::handler::mod_file_registry::register_file_at_path;
-use crate::handler::mod_parser::{parse_mod, parse_mods_in_dir, ModInfo};
+use crate::handler::mod_parser::{parse_mods_in_dir, ModInfo};
 use crate::handler::mod_platform::{
-    file_sha1_hex, list_compatible_versions, mod_versions_match, pick_update_if_newer,
-    resolve_mod_platform, ModRemoteVersionsResponse,
+    file_sha1_hex, list_compatible_versions, pick_update_if_newer, resolve_installed_file,
+    I18N_MOD_UPDATE_HASH_MISS, I18N_MOD_UPDATE_NETWORK_UNREACHABLE, InstalledFileSnapshot,
+    ModRemoteVersionsResponse,
 };
+use crate::handler::mod_platform_probe::platform_try_order;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -170,34 +172,15 @@ fn sanitize_tag(s: &str) -> String {
         .collect()
 }
 
-fn versions_differ(local: &str, remote: &str) -> bool {
-    let local = local.trim();
-    let remote = remote.trim();
-    if local.is_empty() || remote.is_empty() {
-        return !remote.is_empty() && remote != local;
-    }
-    if local.eq_ignore_ascii_case(remote) || mod_versions_match(local, remote) {
-        return false;
-    }
-    let local_clean = local.trim_start_matches('v');
-    let remote_clean = remote.trim_start_matches('v');
-    match (
-        semver::Version::parse(local_clean),
-        semver::Version::parse(remote_clean),
-    ) {
-        (Ok(l), Ok(r)) => r > l,
-        _ => local.trim().to_ascii_lowercase() != remote.trim().to_ascii_lowercase(),
-    }
-}
-
 async fn find_latest_for_mod(
-    mod_info: &ModInfo,
     jar_path: &Path,
+    try_order: &[crate::handler::mod_platform_probe::ModPlatformKind],
     mc_version: &str,
     loader: &str,
-) -> Option<ModSearchResult> {
-    let platform = resolve_mod_platform(mod_info, jar_path).await?;
-    pick_update_if_newer(&platform, mod_info, mc_version, loader).await
+) -> Option<(InstalledFileSnapshot, ModSearchResult)> {
+    let snapshot = resolve_installed_file(jar_path, try_order).await?;
+    let remote = pick_update_if_newer(&snapshot, mc_version, loader).await?;
+    Some((snapshot, remote))
 }
 
 #[tauri::command]
@@ -216,14 +199,21 @@ pub async fn list_mod_remote_versions(
     if !jar_path.is_file() {
         return Err(format!("模组文件不存在: {}", file_name));
     }
-    let mod_info = parse_mod(jar_path.to_string_lossy().to_string())
-        .map_err(|e| e.to_string())?;
-    let resolved = resolve_mod_platform(&mod_info, &jar_path).await;
-    if let Some(platform) = resolved.as_ref() {
-        let versions = list_compatible_versions(platform, mc_version, loader).await;
+    let try_order = platform_try_order()
+        .await
+        .map_err(|_| I18N_MOD_UPDATE_NETWORK_UNREACHABLE.to_string())?;
+    let installed = resolve_installed_file(&jar_path, &try_order).await;
+    if let Some(snapshot) = installed.as_ref() {
+        let platform = crate::handler::mod_platform::ResolvedPlatform {
+            source: snapshot.source.clone(),
+            slug: snapshot.slug.clone(),
+            title: snapshot.title.clone(),
+        };
+        let versions = list_compatible_versions(&platform, mc_version, loader).await;
         let empty = versions.is_empty();
         return Ok(ModRemoteVersionsResponse {
-            resolved: Some(platform.clone()),
+            resolved: Some(platform),
+            installed: installed.clone(),
             versions,
             message: if empty {
                 Some("未找到与当前实例兼容的远程版本".to_string())
@@ -234,12 +224,17 @@ pub async fn list_mod_remote_versions(
     }
     Ok(ModRemoteVersionsResponse {
         resolved: None,
+        installed: None,
         versions: Vec::new(),
-        message: Some("未能识别 Modrinth / CurseForge 项目（可检查 jar 内主页链接或通过启动器下载以写入本地注册库）".to_string()),
+        message: Some(I18N_MOD_UPDATE_HASH_MISS.to_string()),
     })
 }
 
-fn to_update_info(mod_info: &ModInfo, remote: &ModSearchResult) -> Option<ModUpdateInfo> {
+fn to_update_info(
+    mod_info: &ModInfo,
+    snapshot: &InstalledFileSnapshot,
+    remote: &ModSearchResult,
+) -> Option<ModUpdateInfo> {
     let new_version = remote.version_number.as_ref()?;
     let download_url = remote.download_url.as_ref()?;
     let new_file_name = remote.file_name.as_ref()?;
@@ -251,7 +246,7 @@ fn to_update_info(mod_info: &ModInfo, remote: &ModSearchResult) -> Option<ModUpd
         } else {
             mod_info.name.clone()
         },
-        current_version: mod_info.version.clone(),
+        current_version: snapshot.version_number.clone(),
         new_version: new_version.clone(),
         source: remote.source.clone(),
         download_url: download_url.clone(),
@@ -284,6 +279,10 @@ pub async fn check_mods_updates(
         return Err("缺少模组加载器".to_string());
     }
 
+    let try_order = platform_try_order()
+        .await
+        .map_err(|_| I18N_MOD_UPDATE_NETWORK_UNREACHABLE.to_string())?;
+
     let sem = std::sync::Arc::new(tokio::sync::Semaphore::new(4));
     let mut handles = Vec::new();
 
@@ -296,14 +295,16 @@ pub async fn check_mods_updates(
         let mods_dir = mods_dir.clone();
         let mc_version = mc_version.clone();
         let loader = loader.clone();
+        let try_order = try_order.clone();
         handles.push(tokio::spawn(async move {
             let _permit = permit;
             let jar_path = mods_dir.join(&mod_info.file_name);
             if !jar_path.is_file() {
                 return None;
             }
-            let remote = find_latest_for_mod(&mod_info, &jar_path, &mc_version, &loader).await?;
-            to_update_info(&mod_info, &remote)
+            let (snapshot, remote) =
+                find_latest_for_mod(&jar_path, &try_order, &mc_version, &loader).await?;
+            to_update_info(&mod_info, &snapshot, &remote)
         }));
     }
 
@@ -697,15 +698,6 @@ mod tests {
             backup_entry_key("sodium", "1.20.1", "0.5.8"),
             backup_entry_key("sodium", "1.20.1", "0.5.11")
         );
-    }
-
-    #[test]
-    fn versions_differ_uses_semver_when_possible() {
-        assert!(versions_differ("1.0.0", "1.0.1"));
-        assert!(!versions_differ("1.0.1", "1.0.1"));
-        assert!(!versions_differ("2.0.0", "1.9.9"));
-        assert!(versions_differ("1.0", "1.1-beta"));
-        assert!(!versions_differ("8.2.19", "8.2.19+26.2"));
     }
 
     #[test]

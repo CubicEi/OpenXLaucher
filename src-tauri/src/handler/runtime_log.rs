@@ -96,11 +96,8 @@ mod tests {
 
     #[test]
     fn build_body_with_category_and_data() {
-        let body = build_log_body(
-            "launch",
-            "config loaded",
-            Some(serde_json::json!({ "id": 1 })),
-        );
+        let data = serde_json::json!({ "id": 1 });
+        let body = build_log_body("launch", "config loaded", Some(&data));
         assert_eq!(body, r#"launch/config loaded {"id":1}"#);
     }
 

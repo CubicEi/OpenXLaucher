@@ -8,14 +8,14 @@
   · optimizePackageImports
 
   Creating an optimized production build ...
-✓ Compiled successfully in 15.7s
+✓ Compiled successfully in 20.6s
   Running TypeScript ...
   Collecting page data using 11 workers ...
   Generating static pages using 11 workers (0/32) ...
   Generating static pages using 11 workers (8/32) 
   Generating static pages using 11 workers (16/32) 
   Generating static pages using 11 workers (24/32) 
-✓ Generating static pages using 11 workers (32/32) in 1613.0ms
+✓ Generating static pages using 11 workers (32/32) in 1463.9ms
   Finalizing page optimization ...
 
 Route (app)

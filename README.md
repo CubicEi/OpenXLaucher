@@ -8,7 +8,6 @@
 - OpenXLauncher：[QQ 频道](https://pd.qq.com/s/czr9edieh)  
 - GitHub：[CubicEi/OpenXLaucher](https://github.com/CubicEi/OpenXLaucher)
 
-当前版本：**0.2.0-beta**
 
 ## 功能概览
 
@@ -40,7 +39,7 @@
 
 ### 界面与其它
 
-- **国际化**：简体中文 / 英文（`components/i18n/locales`），Crowdin 定期同步  
+- **国际化**：简体中文 / 英文（`components/i18n/locales`）
 - **主题**：亮/暗色与可扩展主题包（`docs/theme-api`）  
 - **应用更新**：内置更新检查（Tauri updater）  
 - **日志**：便携目录 `OpenX/logs/launcher.log`，行格式 `[本地时间 LEVEL] 分类/消息`（见下文）  

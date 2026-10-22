@@ -269,6 +269,8 @@
     "updatesFound": "{count} 个可更新",
     "noUpdatesFound": "未发现可用更新",
     "updateSourceNotFound": "未找到更新源",
+    "modUpdateNetworkUnreachable": "无法连接 Modrinth 与 CurseForge，请检查网络后重试。",
+    "modUpdateHashMiss": "无法在 Modrinth 或 CurseForge 上匹配该模组文件。",
     "closeGameBeforeUpdate": "该游戏实例正在运行，请先关闭游戏后再更新模组",
     "updating": "更新中…",
     "remoteVersionsTitle": "可下载版本",

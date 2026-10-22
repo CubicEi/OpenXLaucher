@@ -5,7 +5,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { Loader2, Download, Cloud } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { useI18n } from "@/components/i18n/use-i18n";
+import { useI18n, type TranslationKey } from "@/components/i18n/use-i18n";
 import { isTauriRuntime } from "@/lib/tauri-runtime";
 import {
   useDownloadManager,
@@ -23,10 +23,30 @@ interface RemoteModVersion {
   publishedAt?: number | null;
 }
 
+interface InstalledFileSnapshot {
+  versionNumber: string;
+  publishedAt?: number | null;
+  fileName: string;
+  slug: string;
+  title: string;
+  source: string;
+}
+
 interface ModRemoteVersionsResponse {
   resolved: { source: string; slug: string; title: string } | null;
+  installed?: InstalledFileSnapshot | null;
   versions: RemoteModVersion[];
   message?: string;
+}
+
+function translatePanelKey(
+  t: (key: TranslationKey) => string,
+  message: string,
+) {
+  if (message.startsWith("panel.")) {
+    return t(message as TranslationKey);
+  }
+  return message;
 }
 
 export function ModRemoteVersionsSection({
@@ -67,12 +87,12 @@ export function ModRemoteVersionsSection({
       });
       setData(result);
     } catch (e) {
-      setError(String(e));
+      setError(translatePanelKey(t, String(e)));
       setData(null);
     } finally {
       setLoading(false);
     }
-  }, [instanceDir, fileName, mcVersion, modLoader]);
+  }, [instanceDir, fileName, mcVersion, modLoader, t]);
 
   useEffect(() => {
     void loadVersions();
@@ -80,16 +100,17 @@ export function ModRemoteVersionsSection({
 
   const handleInstall = async (version: RemoteModVersion) => {
     if (!instanceDir || !mcVersion || !modLoader) return;
+    const installed = data?.installed;
     const update: ModUpdatePayload = {
       fileName,
       modId: info.mod_id,
       modName: info.name || data?.resolved?.title || info.mod_id,
-      currentVersion: info.version,
+      currentVersion: installed?.versionNumber ?? info.version,
       newVersion: version.versionNumber,
       source: version.source,
       downloadUrl: version.downloadUrl,
       newFileName: version.fileName,
-      slug: data?.resolved?.slug ?? info.mod_id,
+      slug: data?.resolved?.slug ?? installed?.slug ?? info.mod_id,
     };
     setInstallingVersion(version.versionNumber);
     try {
@@ -103,44 +124,21 @@ export function ModRemoteVersionsSection({
     }
   };
 
-  const normalizeVersionLabel = (version: string, mc: string) => {
-    let v = version.trim().replace(/^v/i, "");
-    const mcTrim = mc.trim();
-    if (!mcTrim) return v.toLowerCase();
-    const lower = v.toLowerCase();
-    const suffixes = [
-      `+${mcTrim}`,
-      `+ ${mcTrim}`,
-      ` for ${mcTrim}`,
-      ` for mc ${mcTrim}`,
-    ];
-    for (const suffix of suffixes) {
-      if (lower.endsWith(suffix.toLowerCase())) {
-        v = v.slice(0, v.length - suffix.length).trimEnd();
-        break;
-      }
+  const isSameVersion = (version: RemoteModVersion) => {
+    const installed = data?.installed;
+    if (!installed) return false;
+    if (version.fileName !== installed.fileName) return false;
+    const instTs = installed.publishedAt ?? 0;
+    const verTs = version.publishedAt ?? 0;
+    if (instTs > 0 || verTs > 0) {
+      return instTs === verTs;
     }
-    return v.toLowerCase();
+    return version.versionNumber === installed.versionNumber;
   };
 
-  const localNorm = normalizeVersionLabel(info.version, mcVersion);
-  const isSameVersion = (version: RemoteModVersion) => {
-    if (normalizeVersionLabel(version.versionNumber, mcVersion) !== localNorm) {
-      return false;
-    }
-    const matching =
-      data?.versions.filter(
-        (v) => normalizeVersionLabel(v.versionNumber, mcVersion) === localNorm,
-      ) ?? [];
-    if (matching.length === 0) {
-      return true;
-    }
-    const maxTs = Math.max(0, ...matching.map((v) => v.publishedAt ?? 0));
-    if (maxTs === 0) {
-      return true;
-    }
-    return (version.publishedAt ?? 0) >= maxTs;
-  };
+  const emptyMessage = data?.message
+    ? translatePanelKey(t, data.message)
+    : t("panel.updateSourceNotFound");
 
   return (
     <div>
@@ -174,9 +172,7 @@ export function ModRemoteVersionsSection({
       )}
 
       {!loading && !error && data && data.versions.length === 0 && (
-        <p className="text-sm text-muted-foreground">
-          {data.message ?? t("panel.updateSourceNotFound")}
-        </p>
+        <p className="text-sm text-muted-foreground">{emptyMessage}</p>
       )}
 
       {!loading && !error && data && data.versions.length > 0 && (

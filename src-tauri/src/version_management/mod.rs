@@ -1943,6 +1943,7 @@ mod tests {
     #[test]
     fn vm_rename_version_dir_rolls_back_on_failure() {
         use super::vm_rename_version_dir;
+        use std::fs;
         use tempfile::TempDir;
 
         let root = TempDir::new().expect("temp dir");
