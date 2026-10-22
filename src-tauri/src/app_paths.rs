@@ -153,8 +153,20 @@ pub fn portable_themes_dir() -> PathBuf {
     portable_data_dir().join("themes")
 }
 
-pub fn portable_moddata_path() -> PathBuf {
-    portable_data_dir().join("moddata.db")
+pub fn portable_mod_file_registry_path() -> PathBuf {
+    portable_data_dir().join("mod-file-registry.db")
+}
+
+fn try_remove_legacy_moddata_db() {
+    let legacy = portable_data_dir().join("moddata.db");
+    if legacy.is_file() {
+        if std::fs::remove_file(&legacy).is_ok() {
+            log::info!(
+                "Removed legacy moddata.db at {}",
+                legacy.display()
+            );
+        }
+    }
 }
 
 /// Preferred portable game directory next to the launcher executable.
@@ -202,7 +214,6 @@ fn migrate_windows_appdata_to_portable() {
     if let Ok(appdata) = std::env::var("APPDATA") {
         let roaming = PathBuf::from(&appdata);
         let legacy = roaming.join("OpenXLauncher");
-        migrate_file_if_missing(&legacy.join("moddata.db"), &portable_moddata_path());
         migrate_dir_if_missing(&legacy.join("bridge"), &portable_bridge_dir());
         migrate_dir_if_missing(
             &roaming.join("com.openxlauncher.app").join("themes"),
@@ -289,6 +300,7 @@ pub fn migrate_portable_layout() {
 
 pub fn ensure_portable_dirs() {
     migrate_portable_layout();
+    try_remove_legacy_moddata_db();
     let _ = std::fs::create_dir_all(portable_config_dir());
     let _ = std::fs::create_dir_all(portable_java_dir());
     let _ = std::fs::create_dir_all(portable_logs_dir());

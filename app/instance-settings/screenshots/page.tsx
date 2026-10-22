@@ -2,8 +2,9 @@
 
 import React from "react";
 import { motion } from "framer-motion";
-import { Camera, Folder, Package } from "lucide-react";
+import { Camera, Package } from "lucide-react";
 import ResourcePanel from "@/components/resource-panel";
+import { CACHE_LIBRARY_ICON_BG, CacheLibraryIcon } from "@/components/resource/cache-library-icon";
 import { useInstancePath } from "@/hooks/use-instance-path";
 import { useResourceManager } from "@/hooks/use-resource-manager";
 import { fadeSlideUp } from "@/lib/motion";
@@ -27,6 +28,11 @@ export default function ScreenshotsPage() {
     setCacheSearch,
     instanceFiles,
     cacheFiles,
+    openInstanceFolderInExplorer,
+    clearCacheLibrary,
+    deleteFromInstance,
+    deleteFromCache,
+    uploadFiles,
   } = useResourceManager(
     instanceDir,
     "screenshots",
@@ -87,8 +93,8 @@ export default function ScreenshotsPage() {
       setLeftSearch={setInstanceSearch}
       leftBadge={`${instanceFiles.length} 张`}
       rightTitle=""
-      rightIcon={<Folder className="size-5 text-sky-500" />}
-      rightIconBg="bg-sky-500/10"
+      rightIcon={<CacheLibraryIcon />}
+      rightIconBg={CACHE_LIBRARY_ICON_BG}
       rightFiles={filteredCacheFiles}
       rightLoading={cacheLoading}
       rightError={cacheError}
@@ -97,6 +103,11 @@ export default function ScreenshotsPage() {
       rightBadge={`${cacheFiles.length} 张`}
       onMoveRightToLeft={addToInstance}
       onMoveLeftToRight={removeFromInstance}
+      onDeleteLeft={deleteFromInstance}
+      onDeleteRight={deleteFromCache}
+      onUploadFiles={uploadFiles}
+      onOpenInstanceFolder={openInstanceFolderInExplorer}
+      onClearCache={clearCacheLibrary}
       onRefresh={refresh}
     />
   );

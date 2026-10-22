@@ -19,6 +19,8 @@ import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import type { InstanceData } from "@/types";
 import { useLaunchContext } from "./launch-provider";
+import { useDownloadManager } from "@/components/download/download-provider";
+import { shouldHideVersionDuringInstall } from "@/lib/installing-version-filter";
 import { useI18n } from "@/components/i18n/use-i18n";
 import { LoaderIcon, inferLoaderKind } from "@/components/launch/loader-icon";
 
@@ -89,11 +91,20 @@ interface VersionSidebarProps {
 export function VersionSidebar({ className }: VersionSidebarProps) {
   const { t } = useI18n();
   const { config, updateConfig } = useLaunchContext();
+  const { tasks } = useDownloadManager();
   const [instances, setInstances] = useState<InstanceData[]>([]);
   const [loading, setLoading] = useState(true);
   const [isExpanded, setIsExpanded] = useState(true);
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
   const [searchQuery, setSearchQuery] = useState("");
+
+  const visibleInstances = useMemo(
+    () =>
+      instances.filter(
+        (instance) => !shouldHideVersionDuringInstall(instance.name, tasks)
+      ),
+    [instances, tasks]
+  );
 
   // 按 MC 版本分组（或搜索过滤）
   const groupedInstances = useMemo<McVersionGroup[]>(() => {
@@ -101,7 +112,7 @@ export function VersionSidebar({ className }: VersionSidebarProps) {
 
     if (q) {
       // 搜索模式：返回所有匹配的实例，按原始MC版本分组
-      const matchingInstances = instances.filter(instance =>
+      const matchingInstances = visibleInstances.filter(instance =>
         instance.name.toLowerCase().includes(q) ||
         instance.minecraft_version.toLowerCase().includes(q)
       );
@@ -122,7 +133,7 @@ export function VersionSidebar({ className }: VersionSidebarProps) {
       // 正常模式：按MC版本分组
       const groups = new Map<string, InstanceData[]>();
 
-      for (const instance of instances) {
+      for (const instance of visibleInstances) {
         const mcVersion = instance.minecraft_version || "Unknown";
         if (!groups.has(mcVersion)) {
           groups.set(mcVersion, []);
@@ -134,7 +145,7 @@ export function VersionSidebar({ className }: VersionSidebarProps) {
         .map(([mcVersion, instances]) => ({ mcVersion, instances }))
         .sort((a, b) => compareMcVersionDesc(a.mcVersion, b.mcVersion));
     }
-  }, [instances, searchQuery]);
+  }, [visibleInstances, searchQuery]);
 
   // 默认展开所有分组（搜索时展开所有，正常时也展开所有）
   useEffect(() => {
@@ -173,7 +184,7 @@ export function VersionSidebar({ className }: VersionSidebarProps) {
     }, 0);
 
     return () => window.clearTimeout(timer);
-  }, [loadInstances]);
+  }, [loadInstances, tasks]);
 
   const handleSelectVersion = (instance: InstanceData) => {
     // 更新启动配置中的版本信息

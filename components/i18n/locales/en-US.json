@@ -28,7 +28,13 @@
     "addToInstance": "Add to instance",
     "removeFromInstance": "Remove from instance",
     "openFolder": "Open folder {name}",
-    "deleteConfirm": "Delete “{name}”?"
+    "deleteConfirm": "Delete “{name}”?",
+    "deleteConfirmTitle": "Confirm delete",
+    "openInstanceFolder": "Open folder in file explorer",
+    "clearCacheLibrary": "Clear cache library",
+    "clearCacheConfirmTitle": "Clear cache library",
+    "clearCacheConfirm": "Move all files in this version's cache library to the Recycle Bin?",
+    "clearCacheConfirmDetail": "You can restore them from the Recycle Bin later."
   },
   "launch": {
     "title": "Launch",
@@ -189,7 +195,8 @@
       "maximumMemoryMaxMemoryMb": "Maximum memory: {maxMemory}MB",
       "loaderLoadName": "Loader: {loadName}",
       "gameLaunched": "Game launched!",
-      "launchFailed": "Launch failed"
+      "launchFailed": "Launch failed",
+      "modUpdateInProgress": "Mods are updating for this instance. Try launching again shortly."
     },
     "javaIncompatible": {
       "title": "Incompatible Java version",
@@ -262,6 +269,7 @@
     "updatesFound": "{count} updates",
     "noUpdatesFound": "No updates found",
     "updateSourceNotFound": "Update source not found",
+    "closeGameBeforeUpdate": "This instance is running. Close the game before updating mods.",
     "updating": "Updating…",
     "remoteVersionsTitle": "Downloadable versions",
     "remoteVersionsLoading": "Loading remote versions…",

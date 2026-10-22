@@ -37,6 +37,8 @@ export function makeStartDownloadFn(
       );
       if (isDownloading) return prev;
 
+      const instanceName =
+        typeof params.instanceName === "string" ? params.instanceName.trim() : "";
       const task: DownloadTask = {
         clientId: `client-${taskId}`,
         taskId,
@@ -44,6 +46,7 @@ export function makeStartDownloadFn(
         mcVersion,
         status: "downloading",
         startedAt: Date.now(),
+        ...(instanceName ? { targetInstanceName: instanceName } : {}),
       };
       return [task, ...prev];
     });

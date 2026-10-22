@@ -1,3 +1,5 @@
+use crate::handler::mod_file_registry::register_file_at_path;
+use crate::handler::mod_platform::file_sha1_hex;
 use crate::http_client::{
     curseforge_class_ids, curseforge_client, get_with_retry, global_semaphore, modrinth_client,
     shared_client, RetryConfig,
@@ -1240,12 +1242,17 @@ pub async fn download_resource_file(
     mcVersion: String,
     modLoader: String,
     downloadUrl: String,
+    platform: Option<String>,
+    projectId: Option<String>,
 ) -> Result<u64, String> {
     let task_id = MOD_TASK_COUNTER.fetch_add(1, Ordering::SeqCst);
     let save_dir = get_resource_download_dir(&resourceKind, &mcVersion, &modLoader)?;
     let file_name = extract_filename_from_url(&downloadUrl);
     let save_dir_clone = save_dir.clone();
     let file_name_clone = file_name.clone();
+    let platform_clone = platform.clone();
+    let project_id_clone = projectId.clone();
+    let resource_slug_clone = resourceSlug.clone();
     let cancel = Arc::new(std::sync::atomic::AtomicBool::new(false));
     {
         let mut tasks = mod_active_tasks().lock().unwrap();
@@ -1313,6 +1320,23 @@ pub async fn download_resource_file(
                             eprintln!("[world] 存档解压失败: {}", e);
                         }
                     }
+                } else if kind_lower == "mod" {
+                    let jar_path = save_dir_clone.join(&file_name_clone);
+                    if let Some(sha1) = file_sha1_hex(&jar_path) {
+                        let platform = platform_clone
+                            .as_deref()
+                            .filter(|s| !s.trim().is_empty())
+                            .unwrap_or("modrinth");
+                        if let Err(e) = register_file_at_path(
+                            &jar_path,
+                            &sha1,
+                            platform,
+                            &resource_slug_clone,
+                            project_id_clone.as_deref(),
+                        ) {
+                            eprintln!("[mod-registry] failed to record download: {}", e);
+                        }
+                    }
                 }
                 let finished_event = "mod-download-finished";
                 let _ = app_clone.emit(
@@ -1348,6 +1372,8 @@ pub async fn download_mod_file(
     mcVersion: String,
     modLoader: String,
     downloadUrl: String,
+    platform: Option<String>,
+    projectId: Option<String>,
 ) -> Result<u64, String> {
     download_resource_file(
         app,
@@ -1357,6 +1383,8 @@ pub async fn download_mod_file(
         mcVersion,
         modLoader,
         downloadUrl,
+        platform,
+        projectId,
     )
     .await
 }

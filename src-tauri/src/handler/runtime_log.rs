@@ -1,23 +1,52 @@
-use serde::Serialize;
+use chrono::Local;
 use serde_json::Value;
 use std::io::Write;
-use std::time::{SystemTime, UNIX_EPOCH};
 
-#[derive(Serialize)]
-struct RuntimeLogRecord {
-    timestamp: u64,
-    level: String,
-    category: String,
-    message: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    data: Option<Value>,
+/// Map caller level strings to launcher log labels: INFO / WARN / ERROR / PANIC.
+pub fn normalize_log_level(level: &str) -> &'static str {
+    match level.to_ascii_lowercase().as_str() {
+        "warn" | "warning" => "WARN",
+        "error" | "err" => "ERROR",
+        "panic" => "PANIC",
+        "debug" | "trace" => "INFO",
+        _ => "INFO",
+    }
 }
 
-fn unix_ms() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_millis() as u64)
-        .unwrap_or(0)
+/// Local system time with second precision (`YYYY-MM-DD HH:MM:SS`).
+pub fn format_local_timestamp() -> String {
+    Local::now().format("%Y-%m-%d %H:%M:%S").to_string()
+}
+
+/// `[系统时间 LEVEL] 用户操作/结果`
+pub fn format_runtime_log_line(level: &str, body: &str) -> String {
+    format!(
+        "[{} {}] {}",
+        format_local_timestamp(),
+        normalize_log_level(level),
+        body
+    )
+}
+
+pub fn build_log_body(category: &str, message: &str, data: Option<&Value>) -> String {
+    let main = if category.is_empty() {
+        message.to_string()
+    } else {
+        format!("{}/{}", category, message)
+    };
+
+    match data {
+        None => main,
+        Some(v) if v.is_null() => main,
+        Some(v) => {
+            let extra = serde_json::to_string(v).unwrap_or_default();
+            if extra.is_empty() || extra == "{}" {
+                main
+            } else {
+                format!("{} {}", main, extra)
+            }
+        }
+    }
 }
 
 pub fn append_runtime_log(
@@ -29,15 +58,9 @@ pub fn append_runtime_log(
     crate::app_paths::ensure_portable_dirs();
     let path = crate::app_paths::portable_logs_dir().join("launcher.log");
 
-    let record = RuntimeLogRecord {
-        timestamp: unix_ms(),
-        level: level.to_string(),
-        category: category.to_string(),
-        message: message.to_string(),
-        data,
-    };
+    let body = build_log_body(category, message, data.as_ref());
+    let line = format_runtime_log_line(level, &body);
 
-    let line = serde_json::to_string(&record).map_err(|e| e.to_string())?;
     let mut file = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
@@ -47,7 +70,7 @@ pub fn append_runtime_log(
     Ok(())
 }
 
-/// Append one NDJSON line to `<exe_dir>/OpenX/logs/launcher.log`.
+/// Append one line to `<exe_dir>/OpenX/logs/launcher.log`.
 #[tauri::command]
 pub fn write_runtime_log(
     level: String,
@@ -56,4 +79,35 @@ pub fn write_runtime_log(
     data: Option<Value>,
 ) -> Result<(), String> {
     append_runtime_log(&level, &category, &message, data)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normalize_levels() {
+        assert_eq!(normalize_log_level("info"), "INFO");
+        assert_eq!(normalize_log_level("WARN"), "WARN");
+        assert_eq!(normalize_log_level("error"), "ERROR");
+        assert_eq!(normalize_log_level("panic"), "PANIC");
+        assert_eq!(normalize_log_level("debug"), "INFO");
+    }
+
+    #[test]
+    fn build_body_with_category_and_data() {
+        let body = build_log_body(
+            "launch",
+            "config loaded",
+            Some(serde_json::json!({ "id": 1 })),
+        );
+        assert_eq!(body, r#"launch/config loaded {"id":1}"#);
+    }
+
+    #[test]
+    fn format_line_structure() {
+        let line = format_runtime_log_line("warn", "nav/route fallback");
+        assert!(line.starts_with('['));
+        assert!(line.contains(" WARN] nav/route fallback"));
+    }
 }

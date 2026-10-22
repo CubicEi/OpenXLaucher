@@ -24,6 +24,8 @@ import { motion } from "framer-motion";
 import { cn } from "@/lib/utils";
 import { useI18n, type TranslationKey } from "@/components/i18n/use-i18n";
 import { useLaunchContext } from "./launch-provider";
+import { useDownloadManager } from "@/components/download/download-provider";
+import { shouldHideVersionDuringInstall } from "@/lib/installing-version-filter";
 import { LoaderIcon, inferLoaderKind, type LoaderKind } from "@/components/launch/loader-icon";
 import type { InstanceData } from "@/types";
 
@@ -235,6 +237,7 @@ export function VersionSelectorDialog({ open: controlledOpen, onOpenChange, comp
   const { t } = useI18n();
   const router = useRouter();
   const { config, updateConfig } = useLaunchContext();
+  const { tasks } = useDownloadManager();
   const [internalOpen, setInternalOpen] = useState(false);
   const [versions, setVersions] = useState<ParsedVersion[]>([]);
   const [loading, setLoading] = useState(false);
@@ -255,7 +258,7 @@ export function VersionSelectorDialog({ open: controlledOpen, onOpenChange, comp
       loadVersions();
       setSearchQuery("");
     }
-  }, [open, config.minecraftPath]);
+  }, [open, config.minecraftPath, tasks]);
 
   const loadVersions = async () => {
     if (!config.minecraftPath) {
@@ -283,7 +286,10 @@ export function VersionSelectorDialog({ open: controlledOpen, onOpenChange, comp
   };
 
   const filteredVersions = useMemo(() => {
-    const sorted = [...versions].sort((a, b) => {
+    const visible = versions.filter(
+      (v) => !shouldHideVersionDuringInstall(v.name, tasks)
+    );
+    const sorted = [...visible].sort((a, b) => {
       const byMc = compareMcVersionDesc(a.mcVersion, b.mcVersion);
       if (byMc !== 0) return byMc;
       return a.name.localeCompare(b.name);
@@ -299,7 +305,7 @@ export function VersionSelectorDialog({ open: controlledOpen, onOpenChange, comp
         v.loaderVersion.toLowerCase().includes(q) ||
         v.loaderType.toLowerCase().includes(q)
     );
-  }, [versions, searchQuery]);
+  }, [versions, searchQuery, tasks]);
 
   const handleSelectVersion = (version: ParsedVersion) => {
     updateConfig(versionToLaunchConfig(version));

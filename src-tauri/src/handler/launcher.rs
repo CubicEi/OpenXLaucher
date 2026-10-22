@@ -1,4 +1,5 @@
 mod arguments;
+pub(crate) mod game_process_state;
 mod identity;
 mod java_runtime;
 mod memory;
@@ -8,10 +9,12 @@ use std::path::PathBuf;
 
 use arguments::{build_jvm_arguments_inner, VersionJson};
 use java_runtime::{get_java_major_version, required_java_major_from_jar};
+use crate::handler::game_dir::compute_game_directory;
 use process::run_command;
 use tauri::Emitter;
 
 pub use arguments::build_jvm_arguments;
+pub use game_process_state::get_running_game_state;
 pub use process::kill_game_process;
 
 /// 启动游戏（构建参数并执行 Java 进程）
@@ -153,6 +156,8 @@ pub fn launch_game(
     )
     .map_err(|e| e.to_string())?;
 
+    let game_directory = compute_game_directory(minecraft_path, loadType, loadName);
+
     // 再启动游戏
     run_command(
         args.clone(),
@@ -160,6 +165,7 @@ pub fn launch_game(
         PathBuf::from(minecraft_path),
         app,
         minecraft_version.to_string(),
+        game_directory.to_string_lossy().to_string(),
     )
     .map_err(|e| e.to_string())?;
 

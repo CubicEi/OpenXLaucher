@@ -28,7 +28,6 @@ use handler::cache_paths::{
     get_mod_cache_dir_cmd, init_cache_dirs, instance_to_cache, list_cache_dirs, list_cached_files,
     list_cached_mods,
 };
-use handler::chinese_search::{get_moddata_info, search_moddata};
 use handler::config::{
     get_java_download_dir, get_launcher_paths_config, run_portable_first_launch_setup,
     save_launcher_paths_config,
@@ -45,8 +44,10 @@ use handler::java_downloader::{
 };
 use handler::java_scanner::{search_java_installations, validate_java_path};
 use handler::launcher::build_jvm_arguments;
+use handler::launcher::get_running_game_state;
 use handler::launcher::kill_game_process;
 use handler::launcher::launch_game;
+use handler::mod_file_registry::ensure_registry_db;
 use handler::liteloader_handler::{
     cancel_liteloader_download, download_and_install_liteloader, get_liteloader_versions,
 };
@@ -81,9 +82,10 @@ use handler::quilt_handler::{
     get_quilt_loader_versions,
 };
 use handler::runtime_dependencies::check_runtime_dependencies;
-use handler::runtime_log::write_runtime_log;
+use handler::runtime_log::{append_runtime_log, format_runtime_log_line, write_runtime_log};
 use handler::system::{
-    get_system_memory, open_external, optimize_memory_usage, read_file_base64, write_file,
+    get_system_memory, open_external, optimize_memory_usage, read_file_base64, vm_open_path,
+    write_file,
 };
 use handler::diagnostics::{
     get_mod_dependencies_analysis, get_system_info, auto_download_missing_dependency,
@@ -104,8 +106,8 @@ use updater::handler::{
     get_update_status, install_update,
 };
 use version_management::{
-    vm_delete_cached_file, vm_delete_file, vm_ensure_instance_dirs, vm_find_resource_packs,
-    vm_list_dir, vm_modify_game_rule, vm_parse_level_dat, vm_rename_file,
+    vm_clear_version_cache, vm_delete_cached_file, vm_delete_file, vm_ensure_instance_dirs,
+    vm_find_resource_packs, vm_list_dir, vm_modify_game_rule, vm_parse_level_dat, vm_rename_file,
     vm_rename_version_dir, vm_scan_instances, vm_write_file_base64,
 };
 
@@ -188,6 +190,8 @@ pub fn run() {
             vm_rename_version_dir,
             vm_write_file_base64,
             vm_delete_cached_file,
+            vm_clear_version_cache,
+            vm_open_path,
             get_system_memory,
             optimize_memory_usage,
             open_external,
@@ -238,8 +242,7 @@ pub fn run() {
             get_liteloader_versions,
             download_and_install_liteloader,
             cancel_liteloader_download,
-            search_moddata,
-            get_moddata_info,
+            get_running_game_state,
             get_mod_links,
             get_curseforge_mod_files,
             get_mod_files_by_slug,
@@ -306,7 +309,25 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
+            let default_panic_hook = std::panic::take_hook();
+            std::panic::set_hook(Box::new(move |info| {
+                let payload = if let Some(s) = info.payload().downcast_ref::<&str>() {
+                    (*s).to_string()
+                } else if let Some(s) = info.payload().downcast_ref::<String>() {
+                    s.clone()
+                } else {
+                    "unknown panic payload".to_string()
+                };
+                let detail = match info.location() {
+                    Some(loc) => format!("{} ({}:{})", payload, loc.file(), loc.line()),
+                    None => payload,
+                };
+                let _ = append_runtime_log("panic", "panic", &detail, None);
+                default_panic_hook(info);
+            }));
+
             app_paths::ensure_portable_dirs();
+            let _ = ensure_registry_db();
             themes::commands::report_theme_store_initialization(
                 themes::commands::initialize_theme_store(app.handle()),
             );
@@ -324,6 +345,17 @@ pub fn run() {
                 app.handle().plugin(
                     tauri_plugin_log::Builder::default()
                         .level(log::LevelFilter::Info)
+                        .format(|out, message, record| {
+                            let level = match record.level() {
+                                log::Level::Error => "error",
+                                log::Level::Warn => "warn",
+                                log::Level::Info => "info",
+                                log::Level::Debug | log::Level::Trace => "debug",
+                            };
+                            let line =
+                                format_runtime_log_line(level, &format!("{message}"));
+                            out.finish(format_args!("{line}"))
+                        })
                         .build(),
                 )?;
             }

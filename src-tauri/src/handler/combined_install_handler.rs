@@ -5,8 +5,9 @@ use crate::downloader::dwPatch::get_minecraft_dir;
 use crate::downloader::mod_loader_installer_shared::pick_java_executable;
 use crate::downloader::original_dwl::{process_version, ProgressUpdate};
 use crate::downloader::shared_utils::{
-    cleanup_loader_version_dir, cleanup_vanilla_version_dir, copy_version_mods_to_instance,
-    merge_version_jsons_to_instance, sanitize_instance_name,
+    cleanup_loader_version_dir, cleanup_vanilla_version_dir,
+    cleanup_vanilla_version_dir_after_combined, copy_version_mods_to_instance,
+    merge_version_jsons_to_instance, sanitize_instance_name, scrub_vanilla_staging_dir,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -243,7 +244,9 @@ async fn run_combined_install(
         .join(mc_version)
         .join(format!("{}.jar", mc_version));
     send_progress(1.0, "下载原版文件");
-    if vanilla_json.exists() && vanilla_jar.exists() {
+    let vanilla_pre_existed = vanilla_json.exists() && vanilla_jar.exists();
+    let mut downloaded_vanilla_this_run = false;
+    if vanilla_pre_existed {
         println!("[Combined] 原版 {} 已存在，跳过下载", mc_version);
     } else {
         let (tx1, mut rx1) = tokio::sync::mpsc::channel::<ProgressUpdate>(64);
@@ -265,6 +268,7 @@ async fn run_combined_install(
         process_version(mc_version, minecraft_path, tx1, cancel.clone())
             .await
             .map_err(|e| format!("原版下载失败: {}", e))?;
+        downloaded_vanilla_this_run = true;
     }
     send_progress(42.0, "安装原版 Minecraft");
 
@@ -472,20 +476,37 @@ async fn run_combined_install(
         }
     }
 
-    // ===== 7. 清理中间 loader/OptiFine/原版版本目录 =====
+    // ===== 7. 清理中间 loader/OptiFine/原版版本目录（先 loader，再原版）=====
     if let Some(of_ver) = optifine_version_name.as_ref() {
         if of_ver != &final_name {
             cleanup_loader_version_dir(of_ver, minecraft_path);
+        } else {
+            println!(
+                "[Combined] 保留 OptiFine 目录 {}（与最终实例同名）",
+                of_ver
+            );
         }
     }
     if let Some(loader_ver) = loader_version_name.as_ref() {
         if loader_ver != &final_name {
             cleanup_loader_version_dir(loader_ver, minecraft_path);
+        } else {
+            println!(
+                "[Combined] 保留 loader 目录 {}（已合并为最终实例）",
+                loader_ver
+            );
         }
     }
     // 加载器/OptiFine 组包后：中间原版 versions/{mc} 仅用于下载与合并，成功后删除（失败不会走到此处）
-    if loader_target.is_some() && final_name != mc_version {
-        cleanup_vanilla_version_dir(mc_version, minecraft_path);
+    if loader_target.is_some() {
+        scrub_vanilla_staging_dir(mc_version, minecraft_path);
+        cleanup_vanilla_version_dir_after_combined(
+            mc_version,
+            minecraft_path,
+            &final_name,
+            downloaded_vanilla_this_run,
+            vanilla_pre_existed,
+        );
     }
 
     send_progress(98.0, "合并实例 / 清理中间版本");

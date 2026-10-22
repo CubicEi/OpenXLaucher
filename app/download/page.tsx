@@ -131,7 +131,7 @@ export default function DownloadPage() {
   const [selectedVersion, setSelectedVersion] =
     useState<MinecraftVersion | null>(null);
 
-  const [tab, setTab] = useState<"minecraft" | "java" | "chinese" | "english" | "favorites">("minecraft");
+  const [tab, setTab] = useState<"minecraft" | "java" | "english" | "favorites">("minecraft");
 
   // Java 多源下载状态
   type JavaVendorId = "zulu" | "adoptium" | "oracle" | "microsoft";
@@ -148,14 +148,6 @@ export default function DownloadPage() {
   const [javaMessage, setJavaMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
   const [javaVendorFilter, setJavaVendorFilter] = useState<"all" | JavaVendorId>("all");
   const [javaSearchQuery, setJavaSearchQuery] = useState("");
-
-  // 中文检索状态
-  const [chineseSearchQuery, setChineseSearchQuery] = useState("");
-  const [chineseSearchResults, setChineseSearchResults] = useState<
-    { slug: string; chinese_name: string; mcmod_id?: number }[] | null
-  >(null);
-  const [chineseSearchLoading, setChineseSearchLoading] = useState(false);
-  const [chineseSearchError, setChineseSearchError] = useState<string | null>(null);
 
   // 英文检索状态
   const [englishQuery, setEnglishQuery] = useState("");
@@ -179,7 +171,7 @@ export default function DownloadPage() {
       return;
     }
     if (tabParam === "chinese") {
-      setTab("chinese");
+      setTab("english");
       return;
     }
     if (tabParam !== "english") return;
@@ -191,69 +183,6 @@ export default function DownloadPage() {
       setEnglishCategory(category as EnglishCategory);
     }
   }, []);
-
-  // 检查字符串是否包含中文字符（用于判断输入）
-  const hasChinese = (text: string): boolean => {
-    // Unicode 范围：基本汉字区 + 扩展 A + 扩展 B + 常见标点
-    const chineseRegex = /[\u4e00-\u9fff\u3400-\u4dbf\u20000-\u2a6df\u3000-\u303f\uff00-\uffef]/;
-    return chineseRegex.test(text);
-  };
-
-  // 检查字符串是否全为标点/空白/非实质内容
-  const isOnlyPunctuationOrEmpty = (text: string): boolean => {
-    const trimmed = text.trim();
-    if (trimmed.length === 0) return true;
-    // 仅包含常见标点符号、空白、数字
-    const nonContentRegex = /^[\s\d\p{P}\p{S}]+$/u;
-    return nonContentRegex.test(trimmed);
-  };
-
-  const handleChineseSearch = async () => {
-    const query = chineseSearchQuery.trim();
-
-    setChineseSearchLoading(true);
-    setChineseSearchResults(null);
-    setChineseSearchError(null);
-
-    try {
-      // 1) Empty content check
-      if (query.length === 0) {
-        setChineseSearchError(t("download.pleaseEnterKeywords"));
-        return;
-      }
-
-      // 2) Punctuation/numbers only check
-      if (isOnlyPunctuationOrEmpty(query)) {
-        setChineseSearchError(t("download.pleaseEnterChineseKeywords"));
-        return;
-      }
-
-      // 3) Non-Chinese check — must contain at least one Chinese character
-      if (!hasChinese(query)) {
-        setChineseSearchError(t("download.pleaseUseChineseKeywords"));
-        return;
-      }
-
-      // 4) Call backend SQLite query
-      const result = await invoke<string>("search_moddata", { keyword: query });
-      const parsed = JSON.parse(result) as { slug: string; chinese_name: string }[];
-      setChineseSearchResults(parsed);
-
-      if (parsed.length === 0) {
-        setChineseSearchError(t("download.noModsForQuery", { query }));
-      }
-    } catch (err) {
-      console.error("Chinese search failed:", err);
-      setChineseSearchError(t("download.searchFailed", { error: String(err) }));
-    } finally {
-      setChineseSearchLoading(false);
-    }
-  };
-
-  // Navigate to mod detail page when clicking result item
-  const handleResultClick = (item: { slug: string; chinese_name: string }) => {
-    router.push(`/download/detail?mod=${encodeURIComponent(item.slug)}&forceType=mod&returnTo=chinese`);
-  };
 
   // English search handling
   const handleEnglishSearch = useCallback(async () => {
@@ -588,14 +517,6 @@ export default function DownloadPage() {
               </button>
               <button
                 className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
-                  tab === "chinese" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
-                }`}
-                onClick={() => setTab("chinese")}
-              >
-                {t("download.tabChineseSearch")}
-              </button>
-              <button
-                className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
                   tab === "english" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
                 }`}
 onClick={() => setTab("english")}
@@ -806,131 +727,6 @@ onClick={() => setTab("favorites")}
                         </button>
                       );
                     })}
-                  </motion.div>
-                )}
-              </AnimatePresence>
-            </div>}
-
-            {/* Chinese search (new version: based on local moddata.db) */}
-            {tab === "chinese" && <div className="flex-1 min-h-0 flex flex-col gap-4 mt-4">
-              <div className="shrink-0">
-                <div className="flex items-center justify-between gap-4">
-                  <div className="relative flex-1">
-                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-muted-foreground" />
-                    <Input
-                      placeholder={t("download.searchModPlaceholder")}
-                      value={chineseSearchQuery}
-                      onChange={(e) => {
-                        setChineseSearchQuery(e.target.value);
-                        setChineseSearchError(null);
-                      }}
-                      onKeyDown={(e) => e.key === "Enter" && handleChineseSearch()}
-                      className={`pl-9 h-8 text-sm ${
-                        chineseSearchError ? "border-destructive focus-visible:ring-destructive" : ""
-                      }`}
-                    />
-                  </div>
-                  <Button
-                    size="sm"
-                    onClick={handleChineseSearch}
-                    disabled={chineseSearchLoading || !chineseSearchQuery.trim()}
-                  >
-                    {chineseSearchLoading ? <Loader2 className="size-4 animate-spin" /> : t("download.search")}
-                  </Button>
-                </div>
-                {/* Error message */}
-                {chineseSearchError && (
-                  <div className="flex items-center gap-2 mt-2 text-xs text-destructive">
-                    <AlertCircle className="size-3.5" />
-                    <span>{chineseSearchError}</span>
-                  </div>
-                )}
-                {/* Hint */}
-                {!chineseSearchError && !chineseSearchLoading && !chineseSearchResults && (
-                  <p className="mt-2 text-xs text-muted-foreground">
-                    {t("download.chineseSearchHint")}
-                  </p>
-                )}
-              </div>
-
-              <AnimatePresence mode="wait">
-                {chineseSearchLoading ? (
-                  <motion.div
-                    key="loading"
-                    className="flex flex-1 flex-col items-center justify-center gap-3 text-muted-foreground"
-                    variants={fadeIn}
-                    initial="initial"
-                    animate="animate"
-                    exit="exit"
-                  >
-                    <Loader2 className="size-8 animate-spin" />
-                    <p className="text-sm">{t("download.searching")}</p>
-                  </motion.div>
-                ) : chineseSearchResults && chineseSearchResults.length > 0 ? (
-                  <motion.div
-                    key="results"
-                    className="flex-1 min-h-0 overflow-y-auto rounded-xl border border-border bg-card"
-                    variants={fadeIn}
-                    initial="initial"
-                    animate="animate"
-                    exit="exit"
-                  >
-                    <div className="divide-y divide-border">
-                      {chineseSearchResults.map((result, index) => {
-                        const mcmodUrl = result.mcmod_id ? `https://www.mcmod.cn/class/${result.mcmod_id}.html` : null;
-                        return (
-                          <button
-                            key={index}
-                            onClick={() => handleResultClick(result)}
-                            className="group w-full text-left px-4 py-3 hover:bg-accent/50 transition-colors flex items-center gap-3"
-                          >
-                            <div className="flex flex-col gap-0.5 min-w-0 flex-1">
-                              {/* Chinese name (main title) */}
-                              <span className="font-semibold text-sm leading-tight truncate">
-                                {result.chinese_name || result.slug}
-                              </span>
-                              {/* slug (subtitle, secondary info) */}
-                              <span className="text-xs text-muted-foreground truncate">
-                                {result.chinese_name ? result.slug : ""}
-                              </span>
-                            </div>
-                            <div className="flex items-center gap-2 shrink-0">
-                              {mcmodUrl && (
-                                <a
-                                  href={mcmodUrl}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  onClick={(e) => e.stopPropagation()}
-                                  className="text-xs text-muted-foreground hover:text-foreground inline-flex items-center gap-1 px-2 py-1 rounded border border-border hover:border-primary/50 transition-colors"
-                                >
-                                  <ExternalLink className="size-3" />
-                                  {t("download.mcmod")}
-                                </a>
-                              )}
-                              <ArrowRight className="size-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
-                            </div>
-                          </button>
-                        );
-                      })}
-                    </div>
-                    {/* Result count hint */}
-                    <div className="px-4 py-2 text-xs text-muted-foreground border-t border-border bg-muted/30">
-                      {t("download.totalResults", { count: chineseSearchResults.length })}
-                    </div>
-                  </motion.div>
-                ) : (
-                  <motion.div
-                    key="empty"
-                    className="flex flex-1 flex-col items-center justify-center gap-3 text-muted-foreground"
-                    variants={fadeIn}
-                    initial="initial"
-                    animate="animate"
-                    exit="exit"
-                  >
-                    <Search className="size-10 opacity-40" />
-                    <p className="text-sm">
-                      {chineseSearchResults ? t("download.noMatchingMods") : t("download.enterKeywordsToStart")}
-                    </p>
                   </motion.div>
                 )}
               </AnimatePresence>

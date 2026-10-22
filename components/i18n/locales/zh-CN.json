@@ -28,7 +28,13 @@
     "addToInstance": "加入实例",
     "removeFromInstance": "移出实例",
     "openFolder": "打开目录 {name}",
-    "deleteConfirm": "确定删除“{name}”吗？"
+    "deleteConfirm": "确定删除“{name}”吗？",
+    "deleteConfirmTitle": "确认删除",
+    "openInstanceFolder": "在资源管理器中打开文件夹",
+    "clearCacheLibrary": "清空缓存库",
+    "clearCacheConfirmTitle": "清空缓存库",
+    "clearCacheConfirm": "将当前版本缓存库中的全部文件移入系统回收站？",
+    "clearCacheConfirmDetail": "此操作不可撤销，但可从回收站恢复。"
   },
   "launch": {
     "title": "游戏启动",
@@ -189,7 +195,8 @@
       "maximumMemoryMaxMemoryMb": "最大内存: {maxMemory}MB",
       "loaderLoadName": "加载器: {loadName}",
       "gameLaunched": "游戏已启动！",
-      "launchFailed": "启动失败"
+      "launchFailed": "启动失败",
+      "modUpdateInProgress": "该实例模组正在更新，请稍后再启动"
     },
     "javaIncompatible": {
       "title": "Java 版本不兼容",
@@ -262,6 +269,7 @@
     "updatesFound": "{count} 个可更新",
     "noUpdatesFound": "未发现可用更新",
     "updateSourceNotFound": "未找到更新源",
+    "closeGameBeforeUpdate": "该游戏实例正在运行，请先关闭游戏后再更新模组",
     "updating": "更新中…",
     "remoteVersionsTitle": "可下载版本",
     "remoteVersionsLoading": "正在加载远程版本…",

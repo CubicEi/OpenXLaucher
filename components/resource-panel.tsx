@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useRef, useState } from "react";
 import { motion } from "framer-motion";
 import {
   Search,
@@ -21,6 +21,15 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
+import {
+  AlertDialog,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { fadeSlideUp, staggerContainer, staggerItem } from "@/lib/motion";
 import { useI18n } from "@/components/i18n/use-i18n";
 
@@ -114,6 +123,10 @@ export interface ResourcePanelProps {
   onRefresh?: () => void;
   // 文件上传回调
   onUploadFiles?: () => Promise<void>;
+  /** Open the instance resource subfolder in the system file explorer */
+  onOpenInstanceFolder?: () => void | Promise<void>;
+  /** Clear all files in the version cache library (moved to recycle bin) */
+  onClearCache?: () => Promise<void>;
   // 文件名简化（可选回调）
   simplifyName?: (name: string) => string;
   // 文件副标题（可选回调）- 从文件名或其他信息生成的描述
@@ -163,6 +176,8 @@ export default function ResourcePanel({
   onRenameLeft,
   onRefresh,
   onUploadFiles,
+  onOpenInstanceFolder,
+  onClearCache,
   simplifyName,
   getFileSubtitle,
   onOpenViewer,
@@ -188,6 +203,58 @@ export default function ResourcePanel({
     : (n: string) => decodeUrlName(n);
   const [renamingName, setRenamingName] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
+  type PendingDelete = {
+    fileName: string;
+    displayName: string;
+    handler: (fileName: string) => Promise<void>;
+  };
+  const [pendingDelete, setPendingDelete] = useState<PendingDelete | null>(null);
+  const pendingDeleteRef = useRef<PendingDelete | null>(null);
+  const [deleteInProgress, setDeleteInProgress] = useState(false);
+  const [clearCacheOpen, setClearCacheOpen] = useState(false);
+  const [clearingCache, setClearingCache] = useState(false);
+
+  const requestDelete = (
+    fileName: string,
+    displayName: string,
+    handler: (fileName: string) => Promise<void>,
+  ) => {
+    const payload = { fileName, displayName, handler };
+    pendingDeleteRef.current = payload;
+    setPendingDelete(payload);
+  };
+
+  const clearPendingDelete = () => {
+    pendingDeleteRef.current = null;
+    setPendingDelete(null);
+  };
+
+  const handleConfirmDelete = async () => {
+    const pending = pendingDeleteRef.current;
+    if (!pending) return;
+    setDeleteInProgress(true);
+    try {
+      await pending.handler(pending.fileName);
+    } catch (e) {
+      console.error("删除失败:", e);
+    } finally {
+      setDeleteInProgress(false);
+      clearPendingDelete();
+    }
+  };
+
+  const handleConfirmClearCache = async () => {
+    if (!onClearCache) return;
+    setClearingCache(true);
+    try {
+      await onClearCache();
+    } catch (e) {
+      console.error("清空缓存库失败:", e);
+    } finally {
+      setClearingCache(false);
+      setClearCacheOpen(false);
+    }
+  };
 
   const formatSize = (bytes: number): string => {
     if (bytes === 0) return "";
@@ -247,6 +314,7 @@ export default function ResourcePanel({
     deleteHandler: ((fileName: string) => Promise<void>) | undefined,
     canRename: boolean,
     modInfoMap?: Map<string, ModInfo>,
+    onRequestDelete?: (fileName: string, displayName: string) => void,
   ) => {
     const canViewer = !!onOpenViewer;
     const matchViewer = (name: string) => {
@@ -462,15 +530,14 @@ export default function ResourcePanel({
                   )}
 
                   {/* 删除按钮 */}
-                  {deleteHandler && (
+                  {deleteHandler && onRequestDelete && (
                     <Button
                       variant="ghost"
                       size="icon"
                       className="size-7 text-destructive opacity-0 group-hover:opacity-100 transition-opacity hover:bg-destructive/10"
-                      onClick={() => {
-                        if (confirm(t("resource.deleteConfirm", { name: simplify(file.name) }))) {
-                          deleteHandler(file.name);
-                        }
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onRequestDelete(file.name, displayName);
                       }}
                       title={t("common.delete")}
                     >
@@ -534,9 +601,22 @@ export default function ResourcePanel({
             </Button>
           )}
           {onUploadFiles && (
-            <Button variant="default" size="icon" className="size-8" onClick={onUploadFiles} title={t("resource.uploadFiles")}>
-              <Plus className="size-3.5" />
-            </Button>
+            <>
+              <Button variant="default" size="icon" className="size-8" onClick={onUploadFiles} title={t("resource.uploadFiles")}>
+                <Plus className="size-3.5" />
+              </Button>
+              {onOpenInstanceFolder && (
+                <Button
+                  variant="secondary"
+                  size="icon"
+                  className="size-8 rounded-full bg-background border border-border shadow-sm"
+                  onClick={() => void onOpenInstanceFolder()}
+                  title={t("resource.openInstanceFolder")}
+                >
+                  <Folder className="size-3.5" />
+                </Button>
+              )}
+            </>
           )}
           {onRefresh && (
             <Button variant="ghost" size="icon" className="size-8" onClick={onRefresh} title={t("common.refresh")}>
@@ -606,6 +686,9 @@ export default function ResourcePanel({
               onDeleteLeft,
               true,
               leftModInfo,
+              onDeleteLeft
+                ? (fileName, displayName) => requestDelete(fileName, displayName, onDeleteLeft)
+                : undefined,
             )}
           </div>
         </motion.div>
@@ -626,14 +709,27 @@ export default function ResourcePanel({
               <p className="text-xs text-muted-foreground truncate">{t("resource.matchingVersionAvailable")}</p>
             </div>
             {rightBadge && <Badge variant="secondary" className="text-xs shrink-0">{rightBadge}</Badge>}
-            <div className="relative w-40 shrink-0">
-              <Search className="absolute left-2 top-1/2 -translate-y-1/2 size-3.5 text-muted-foreground pointer-events-none" />
-              <Input
-                value={rightSearch}
-                onChange={(e) => setRightSearch(e.target.value)}
-                placeholder={t("common.search")}
-                className="pl-7 h-7 text-xs"
-              />
+            <div className="flex items-center gap-1 shrink-0">
+              <div className="relative w-28 shrink-0">
+                <Search className="absolute left-2 top-1/2 -translate-y-1/2 size-3.5 text-muted-foreground pointer-events-none" />
+                <Input
+                  value={rightSearch}
+                  onChange={(e) => setRightSearch(e.target.value)}
+                  placeholder={t("common.search")}
+                  className="pl-7 h-7 text-xs"
+                />
+              </div>
+              {onClearCache && (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="size-7 text-destructive hover:bg-destructive/10 shrink-0"
+                  onClick={() => setClearCacheOpen(true)}
+                  title={t("resource.clearCacheLibrary")}
+                >
+                  <Trash2 className="size-3.5" />
+                </Button>
+              )}
             </div>
           </div>
           <div className="flex-1 overflow-y-auto p-3">
@@ -648,10 +744,65 @@ export default function ResourcePanel({
               onDeleteRight,
               false,
               rightModInfo,
+              onDeleteRight
+                ? (fileName, displayName) => requestDelete(fileName, displayName, onDeleteRight)
+                : undefined,
             )}
           </div>
         </motion.div>
       </div>
+
+      <AlertDialog
+        open={pendingDelete !== null}
+        onOpenChange={(open) => {
+          if (!open && !deleteInProgress) clearPendingDelete();
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t("resource.deleteConfirmTitle")}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {pendingDelete
+                ? t("resource.deleteConfirm", { name: pendingDelete.displayName })
+                : ""}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleteInProgress} onClick={clearPendingDelete}>
+              {t("common.cancel")}
+            </AlertDialogCancel>
+            <Button
+              variant="destructive"
+              disabled={deleteInProgress}
+              onClick={() => void handleConfirmDelete()}
+            >
+              {t("common.delete")}
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={clearCacheOpen} onOpenChange={(open) => !clearingCache && setClearCacheOpen(open)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t("resource.clearCacheConfirmTitle")}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {t("resource.clearCacheConfirm")}
+              <span className="mt-2 block text-muted-foreground">{t("resource.clearCacheConfirmDetail")}</span>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={clearingCache}>{t("common.cancel")}</AlertDialogCancel>
+            <Button
+              variant="destructive"
+              disabled={clearingCache}
+              onClick={() => void handleConfirmClearCache()}
+            >
+              {t("resource.clearCacheLibrary")}
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

@@ -475,7 +475,10 @@ export function LaunchProvider({ children }: { children: React.ReactNode }) {
         setStatus("running");
         addLog("info", t("launch.provider.gameLaunched"));
       } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
+        const raw = err instanceof Error ? err.message : String(err);
+        const msg = raw.includes("模组正在更新")
+          ? t("launch.provider.modUpdateInProgress")
+          : raw;
         const endedAt = Date.now();
         setLaunchEndedAt(endedAt);
         setStatus("error");

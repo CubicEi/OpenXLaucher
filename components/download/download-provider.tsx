@@ -36,6 +36,8 @@ export interface DownloadTask {
   failedCount?: number;
   /** 时间戳，用于排序 */
   startedAt: number;
+  /** 目标实例目录名（组包/加载器安装完成后的 versions 文件夹名） */
+  targetInstanceName?: string;
 }
 
 /** Matches Rust `ModUpdateInfo` (camelCase serde). */
@@ -77,9 +79,26 @@ interface DownloadContextValue {
     instanceName: string
   ) => Promise<number>;
   /** Mod 文件下载 */
-  startModDownload: (modSlug: string, modName: string, mcVersion: string, modLoader: string, downloadUrl: string) => Promise<number>;
+  startModDownload: (
+    modSlug: string,
+    modName: string,
+    mcVersion: string,
+    modLoader: string,
+    downloadUrl: string,
+    platform?: "modrinth" | "curseforge",
+    projectId?: string
+  ) => Promise<number>;
   /** 通用资源文件下载（mod / resourcepack / shaderpack / datapack / world） */
-  startResourceDownload: (resourceKind: string, resourceSlug: string, resourceName: string, mcVersion: string, modLoader: string, downloadUrl: string) => Promise<number>;
+  startResourceDownload: (
+    resourceKind: string,
+    resourceSlug: string,
+    resourceName: string,
+    mcVersion: string,
+    modLoader: string,
+    downloadUrl: string,
+    platform?: "modrinth" | "curseforge",
+    projectId?: string
+  ) => Promise<number>;
   /** 整合包安装（异步） */
   startModpackDownload: (modpackName: string, path: string) => Promise<number>;
   /** 单个模组更新（下载到临时目录后替换，进度走 mod-download 事件） */
@@ -235,6 +254,9 @@ export function DownloadProvider({ children }: { children: React.ReactNode }) {
             mcVersion,
             status: "downloading",
             startedAt: Date.now(),
+            ...(instanceName?.trim()
+              ? { targetInstanceName: instanceName.trim() }
+              : {}),
           };
           setTasks((prev) => [task, ...prev]);
           return taskId;
@@ -252,6 +274,9 @@ export function DownloadProvider({ children }: { children: React.ReactNode }) {
           mcVersion,
           status: "queued",
           startedAt: Date.now(),
+          ...(instanceName?.trim()
+            ? { targetInstanceName: instanceName.trim() }
+            : {}),
         };
         setTasks((prev) => [task, ...prev]);
         return localId;
@@ -375,13 +400,29 @@ export function DownloadProvider({ children }: { children: React.ReactNode }) {
 
   /** Mod 文件下载 */
   const startModDownload = useCallback(
-    async (modSlug: string, modName: string, mcVersion: string, modLoader: string, downloadUrl: string) => {
+    async (
+      modSlug: string,
+      modName: string,
+      mcVersion: string,
+      modLoader: string,
+      downloadUrl: string,
+      platform?: "modrinth" | "curseforge",
+      projectId?: string
+    ) => {
       const label = `${modName} (${mcVersion})`;
       return startModLoaderDownload({
         label,
         mcVersion,
         tauriCommand: "download_mod_file",
-        params: { modSlug, modName, mcVersion, modLoader, downloadUrl },
+        params: {
+          modSlug,
+          modName,
+          mcVersion,
+          modLoader,
+          downloadUrl,
+          platform: platform ?? null,
+          projectId: projectId ?? null,
+        },
       });
     },
     [startModLoaderDownload]
@@ -389,13 +430,31 @@ export function DownloadProvider({ children }: { children: React.ReactNode }) {
 
   /** 通用资源文件下载（mod / resourcepack / shaderpack / datapack / world） */
   const startResourceDownload = useCallback(
-    async (resourceKind: string, resourceSlug: string, resourceName: string, mcVersion: string, modLoader: string, downloadUrl: string) => {
+    async (
+      resourceKind: string,
+      resourceSlug: string,
+      resourceName: string,
+      mcVersion: string,
+      modLoader: string,
+      downloadUrl: string,
+      platform?: "modrinth" | "curseforge",
+      projectId?: string
+    ) => {
       const label = `${resourceName} (${mcVersion})`;
       return startModLoaderDownload({
         label,
         mcVersion,
         tauriCommand: "download_resource_file",
-        params: { resourceKind, resourceSlug, resourceName, mcVersion, modLoader, downloadUrl },
+        params: {
+          resourceKind,
+          resourceSlug,
+          resourceName,
+          mcVersion,
+          modLoader,
+          downloadUrl,
+          platform: resourceKind === "mod" ? (platform ?? null) : null,
+          projectId: resourceKind === "mod" ? (projectId ?? null) : null,
+        },
       });
     },
     [startModLoaderDownload]
@@ -422,6 +481,7 @@ export function DownloadProvider({ children }: { children: React.ReactNode }) {
         mcVersion,
         status: "downloading",
         startedAt: Date.now(),
+        targetInstanceName: instanceName.trim() || undefined,
       };
       setTasks((prev) => [task, ...prev]);
       return taskId;

@@ -92,6 +92,8 @@ export function useResourceManager(
   removeFromInstance: (fileName: string) => Promise<void>;
   deleteFromInstance: (fileName: string) => Promise<void>;
   deleteFromCache: (fileName: string) => Promise<void>;
+  openInstanceFolderInExplorer: () => Promise<void>;
+  clearCacheLibrary: () => Promise<void>;
   renameInInstance: (oldName: string, newName: string) => Promise<void>;
   uploadFiles: () => Promise<void>;
   refresh: () => void;
@@ -467,6 +469,30 @@ export function useResourceManager(
     fetchCacheFilesRef.current();
   }, []);
 
+  const openInstanceFolderInExplorer = useCallback(async () => {
+    if (!instanceDir) return;
+    const base = instanceDir.replace(/\\/g, "/").replace(/\/+$/, "");
+    const sub = currentInstanceSubdir.replace(/\\/g, "/").replace(/^\/+/, "");
+    const dirPath = sub ? `${base}/${sub}` : base;
+    try {
+      await invoke("vm_ensure_instance_dirs", { instanceDir: base });
+      await invoke("vm_open_path", { path: dirPath });
+    } catch (error) {
+      appLog.error("resources", "打开实例资源目录失败", { error: String(error) });
+      throw error;
+    }
+  }, [instanceDir, currentInstanceSubdir]);
+
+  const clearCacheLibrary = useCallback(async () => {
+    if (!mcVersion) return;
+    await invoke("vm_clear_version_cache", {
+      kind: cacheKind,
+      mcVersion,
+      modLoader: cacheKind === "mod" ? modLoader || null : null,
+    });
+    fetchCacheFilesRef.current();
+  }, [cacheKind, mcVersion, modLoader]);
+
   const openInstanceDirectory = useCallback(
     (directoryName: string) => {
       if (!directoryNavigation) return;
@@ -542,6 +568,8 @@ export function useResourceManager(
     removeFromInstance,
     deleteFromInstance,
     deleteFromCache,
+    openInstanceFolderInExplorer,
+    clearCacheLibrary,
     renameInInstance,
     uploadFiles,
     refresh,

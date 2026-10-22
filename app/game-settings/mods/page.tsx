@@ -38,8 +38,6 @@ const MODS_CONFIG = {
   needsModLoader: true,
   extensions: ["jar", "litemod", "zip"],
   simplifyName: (name: string) => name.replace(/\.(jar|litemod|zip)$/i, ""),
-  rightIcon: <Package className="size-5 text-sky-500" />,
-  rightIconBg: "bg-sky-500/10",
 };
 
 /**
@@ -358,11 +356,35 @@ export default function ModsPage() {
     }
   }, [extra, t]);
 
+  const normalizeGameDir = (path: string) =>
+    path.replace(/\//g, "\\").toLowerCase();
+
+  const assertInstanceNotRunning = useCallback(
+    async (instanceDir: string) => {
+      if (!isTauriRuntime()) return true;
+      const state = await invoke<{
+        running: boolean;
+        gameDir?: string | null;
+      }>("get_running_game_state");
+      if (
+        state.running &&
+        state.gameDir &&
+        normalizeGameDir(state.gameDir) === normalizeGameDir(instanceDir)
+      ) {
+        setCheckMessage(t("panel.closeGameBeforeUpdate"));
+        return false;
+      }
+      return true;
+    },
+    [t]
+  );
+
   const handleUpdateOne = useCallback(
     async (fileName: string) => {
       const update = updatesByFile.get(fileName);
       const { instanceDir, mcVersion, modLoader } = extra;
       if (!update || !instanceDir || !mcVersion || !modLoader) return;
+      if (!(await assertInstanceNotRunning(instanceDir))) return;
       setUpdatingFiles((prev) => new Set(prev).add(fileName));
       try {
         await startModUpdate(instanceDir, mcVersion, modLoader, update);
@@ -382,12 +404,13 @@ export default function ModsPage() {
         });
       }
     },
-    [updatesByFile, extra, startModUpdate]
+    [updatesByFile, extra, startModUpdate, assertInstanceNotRunning]
   );
 
   const handleUpdateAll = useCallback(async () => {
     const { instanceDir, mcVersion, modLoader } = extra;
     if (!instanceDir || !mcVersion || !modLoader || updatesByFile.size === 0) return;
+    if (!(await assertInstanceNotRunning(instanceDir))) return;
     const updates = Array.from(updatesByFile.values());
     const files = updates.map((u) => u.fileName);
     setUpdatingFiles(new Set(files));
@@ -400,7 +423,7 @@ export default function ModsPage() {
     } finally {
       setUpdatingFiles(new Set());
     }
-  }, [extra, updatesByFile, startModUpdateAll]);
+  }, [extra, updatesByFile, startModUpdateAll, assertInstanceNotRunning]);
 
   const blockingInstanceScan =
     loadingState.instancesScanning && !loadingState.instanceDir;

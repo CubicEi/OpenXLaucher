@@ -1,4 +1,4 @@
-[build]
-# Limit parallel jobs to reduce memory usage during compilation
-# Set to 1 for minimal memory usage on low-memory systems
-jobs = 1
+# Cargo 默认按 CPU 逻辑核心数并行编译（32GB 内存通常无需限制）。
+# 若机器内存 ≤8GB 且编译 OOM，可取消下面注释并改为 jobs = 1～2：
+# [build]
+# jobs = 2

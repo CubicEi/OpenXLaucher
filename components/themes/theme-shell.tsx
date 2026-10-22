@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect } from "react";
 import { usePathname } from "next/navigation";
 import type { ReactNode } from "react";
 
@@ -31,6 +32,12 @@ export function ThemeShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const { routes, slots, snapshot, reportThemeError } = useThemeRuntime();
   const owner = snapshot.activeOwner;
+
+  useEffect(() => {
+    const preventContextMenu = (event: MouseEvent) => event.preventDefault();
+    document.addEventListener("contextmenu", preventContextMenu);
+    return () => document.removeEventListener("contextmenu", preventContextMenu);
+  }, []);
 
   return (
     <>

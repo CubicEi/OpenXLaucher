@@ -20,6 +20,15 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import {
+  AlertDialog,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { fadeSlideUp } from "@/lib/motion";
 import { useDownloadManager } from "@/components/download/download-provider";
 
@@ -94,6 +103,8 @@ export default function ModpackManagementPage() {
   const [selectedFromCache, setSelectedFromCache] = useState<CachedModpackEntry | null>(null);
   const dropRef = useRef<HTMLDivElement | null>(null);
   const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
+  const [pendingDeleteEntry, setPendingDeleteEntry] = useState<CachedModpackEntry | null>(null);
+  const [deletingCached, setDeletingCached] = useState(false);
 
   const refreshCache = useCallback(async () => {
     setCacheLoading(true);
@@ -281,19 +292,23 @@ export default function ModpackManagementPage() {
     acceptFilePath(entry.full_path);
   }
 
-  // 删除一个缓存的整合包压缩包
-  async function handleDeleteCached(entry: CachedModpackEntry, e: React.MouseEvent) {
+  function handleDeleteCached(entry: CachedModpackEntry, e: React.MouseEvent) {
     e.stopPropagation();
-    const confirmed = window.confirm(
-      `确认删除缓存整合包「${entry.file_name}」？\n\n此操作不可撤销。`
-    );
-    if (!confirmed) return;
+    setPendingDeleteEntry(entry);
+  }
+
+  async function handleConfirmDeleteCached() {
+    if (!pendingDeleteEntry) return;
     try {
-      await invoke("delete_cached_modpack_cmd", { fullPath: entry.full_path });
-      setMessage({ type: "success", text: `已删除 ${entry.file_name}` });
+      setDeletingCached(true);
+      await invoke("delete_cached_modpack_cmd", { fullPath: pendingDeleteEntry.full_path });
+      setMessage({ type: "success", text: `已删除 ${pendingDeleteEntry.file_name}` });
+      setPendingDeleteEntry(null);
       await refreshCache();
     } catch (err) {
       setMessage({ type: "error", text: String(err) });
+    } finally {
+      setDeletingCached(false);
     }
   }
 
@@ -635,6 +650,33 @@ export default function ModpackManagementPage() {
           </div>
         )}
       </div>
+
+      <AlertDialog
+        open={pendingDeleteEntry !== null}
+        onOpenChange={(open) => !deletingCached && !open && setPendingDeleteEntry(null)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>确认删除</AlertDialogTitle>
+            <AlertDialogDescription>
+              {pendingDeleteEntry
+                ? `确认删除缓存整合包「${pendingDeleteEntry.file_name}」？\n\n此操作不可撤销。`
+                : ""}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deletingCached}>取消</AlertDialogCancel>
+            <Button
+              variant="destructive"
+              disabled={deletingCached}
+              onClick={() => void handleConfirmDeleteCached()}
+            >
+              {deletingCached ? <Loader2 className="size-3.5 animate-spin" /> : null}
+              删除
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </motion.div>
   );
 }

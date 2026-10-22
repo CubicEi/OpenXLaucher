@@ -46,7 +46,6 @@ interface LiveModDetail {
   };
   modrinthUrl?: string;
   curseforgeUrl?: string;
-  mcmodUrl?: string;
   classId?: number;
 }
 
@@ -468,18 +467,7 @@ export default function ModDetailContent({ modId }: { modId: string }) {
         .then((r) => (r.ok ? r.json() : null))
         .catch(() => null);
 
-      const [mrData, cfData, mcmodData] = await Promise.all([
-        mrPromise,
-        cfPromise,
-        invoke<string>("search_moddata", { keyword: modId }).then(result => {
-          try {
-            const parsed = JSON.parse(result) as { slug: string; chinese_name: string; mcmod_id?: number }[];
-            return parsed.find(r => r.slug.toLowerCase() === modId.toLowerCase()) || null;
-          } catch {
-            return null;
-          }
-        }).catch(() => null)
-      ]);
+      const [mrData, cfData] = await Promise.all([mrPromise, cfPromise]);
 
       let mrTitle = '';
       let mrDescription = '';
@@ -613,8 +601,6 @@ export default function ModDetailContent({ modId }: { modId: string }) {
         ? `https://www.curseforge.com/minecraft/${cfPath}/${modId}`
         : undefined;
 
-      const mcmodUrl = mcmodData?.mcmod_id ? `https://www.mcmod.cn/class/${mcmodData.mcmod_id}.html` : undefined;
-
       setLiveInfo({
         slug: modId,
         title,
@@ -632,7 +618,6 @@ export default function ModDetailContent({ modId }: { modId: string }) {
         },
         modrinthUrl,
         curseforgeUrl,
-        mcmodUrl,
         classId: cfId,
       });
     } catch (err) {
@@ -806,6 +791,24 @@ export default function ModDetailContent({ modId }: { modId: string }) {
     addedAt: 0,
   });
 
+  const resolveFilePlatform = (
+    fileUrl: string
+  ): "modrinth" | "curseforge" => {
+    try {
+      const host = new URL(fileUrl).hostname.toLowerCase();
+      if (host.includes("modrinth")) return "modrinth";
+      if (host.includes("curseforge") || host.includes("forgecdn")) {
+        return "curseforge";
+      }
+    } catch {
+      /* ignore */
+    }
+    const source = liveInfo?.source;
+    if (source === "curseforge") return "curseforge";
+    if (source === "modrinth") return "modrinth";
+    return "modrinth";
+  };
+
   const handleDownload = async (file: ParsedFile, mcVersion: string) => {
     const status = getDownloadStatus(file.url);
     if (status === "downloading") return;
@@ -851,13 +854,22 @@ export default function ModDetailContent({ modId }: { modId: string }) {
         return next;
       });
 
+      const platform =
+        resourceKind === "mod" ? resolveFilePlatform(file.url) : undefined;
+      const projectId =
+        resourceKind === "mod" && platform === "curseforge" && liveInfo?.classId
+          ? String(liveInfo.classId)
+          : undefined;
+
       const taskId = await startResourceDownload(
         resourceKind,
         modSlug,
         modName,
         mcVersion,
         modLoader,
-        file.url
+        file.url,
+        platform,
+        projectId
       );
 
       // Update to real taskId
@@ -913,6 +925,10 @@ export default function ModDetailContent({ modId }: { modId: string }) {
                   mcVersion,
                   modLoader,
                   dependency.downloadUrl,
+                  resolveFilePlatform(dependency.downloadUrl),
+                  dependency.projectId
+                    ? String(dependency.projectId)
+                    : undefined
                 );
               } catch (error) {
                 console.error(`Failed to download dependency ${dependency.projectName}:`, error);
@@ -951,10 +967,6 @@ export default function ModDetailContent({ modId }: { modId: string }) {
           const query = params.get("query") || "";
           const category = params.get("category") || "mod";
           router.push(`/download?tab=english&query=${encodeURIComponent(query)}&category=${encodeURIComponent(category)}`);
-          return;
-        }
-        if (returnTarget === "chinese") {
-          router.push("/download?tab=chinese");
           return;
         }
         router.push("/download");
@@ -1050,12 +1062,6 @@ export default function ModDetailContent({ modId }: { modId: string }) {
                   <Button variant="outline" size="sm" onClick={() => openExternalUrl(liveInfo.curseforgeUrl!)}>
                     <ExternalLink className="mr-1.5 size-3.5" />
                     View on CurseForge
-                  </Button>
-                )}
-                {liveInfo?.mcmodUrl && (
-                  <Button variant="outline" size="sm" onClick={() => openExternalUrl(liveInfo.mcmodUrl!)}>
-                    <ExternalLink className="mr-1.5 size-3.5" />
-                    View on MCMod
                   </Button>
                 )}
                 {liveError && (

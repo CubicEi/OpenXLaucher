@@ -2,7 +2,8 @@
 
 import React, { useCallback } from "react";
 import { motion } from "framer-motion";
-import { Boxes, Folder, Package } from "lucide-react";
+import { Boxes, Package } from "lucide-react";
+import { CACHE_LIBRARY_ICON_BG, CacheLibraryIcon } from "@/components/resource/cache-library-icon";
 import { useRouter } from "next/navigation";
 import ResourcePanel from "@/components/resource-panel";
 import { useInstancePath } from "@/hooks/use-instance-path";
@@ -67,6 +68,11 @@ export default function SchematicsPage() {
     openInstanceDirectory,
     goToParentInstanceDirectory,
     instanceDirectoryPath,
+    openInstanceFolderInExplorer,
+    clearCacheLibrary,
+    deleteFromInstance,
+    deleteFromCache,
+    uploadFiles,
   } = useResourceManager(
     instanceDir,
     "schematics",
@@ -131,8 +137,8 @@ export default function SchematicsPage() {
       onOpenLeftDirectory={openInstanceDirectory}
       onNavigateUpLeft={goToParentInstanceDirectory}
       rightTitle=""
-      rightIcon={<Folder className="size-5 text-sky-500" />}
-      rightIconBg="bg-sky-500/10"
+      rightIcon={<CacheLibraryIcon />}
+      rightIconBg={CACHE_LIBRARY_ICON_BG}
       rightFiles={filteredCacheFiles}
       rightLoading={cacheLoading}
       rightError={cacheError}
@@ -141,6 +147,11 @@ export default function SchematicsPage() {
       rightBadge={`${cacheFiles.length} 个`}
       onMoveRightToLeft={addToInstance}
       onMoveLeftToRight={removeFromInstance}
+      onDeleteLeft={deleteFromInstance}
+      onDeleteRight={deleteFromCache}
+      onUploadFiles={uploadFiles}
+      onOpenInstanceFolder={openInstanceFolderInExplorer}
+      onClearCache={clearCacheLibrary}
       onRefresh={refresh}
       onOpenViewer={handleOpenViewer}
       viewerExtensions={viewerExtensions}

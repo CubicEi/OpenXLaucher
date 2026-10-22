@@ -29,6 +29,15 @@ import {
 } from "@/hooks/use-instances";
 import { fadeSlideUp } from "@/lib/motion";
 import { Button } from "@/components/ui/button";
+import {
+  AlertDialog,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { useI18n, type Translation } from "@/components/i18n/use-i18n";
 import { GAME_SETTINGS_FEATURE_NAV } from "./feature-nav";
 import {
@@ -84,6 +93,7 @@ export default function GameSettings() {
   const { config, updateConfig } = useLaunchContext();
   const { t } = useI18n();
   const [versionDialogOpen, setVersionDialogOpen] = useState(false);
+  const [deleteVersionOpen, setDeleteVersionOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [renameDialogOpen, setRenameDialogOpen] = useState(false);
   const [renaming, setRenaming] = useState(false);
@@ -102,21 +112,17 @@ export default function GameSettings() {
       ? config.loadName
       : config.versionName;
 
-  async function handleDeleteVersion(e: React.MouseEvent) {
+  function handleDeleteVersionClick(e: React.MouseEvent) {
     e.stopPropagation();
     if (!config.minecraftPath || !effectiveVersionDirName) {
       alert(t("gameSettings.pleaseSelectAVersionToDeleteFirst"));
       return;
     }
+    setDeleteVersionOpen(true);
+  }
 
-    const confirmed = window.confirm(
-      t("gameSettings.confirmDeletionOfGameVersionDirectoryEffectiveVersionDir", {
-        effectiveVersionDirName: effectiveVersionDirName,
-        minecraftPath: config.minecraftPath,
-        effectiveVersionDirName2: effectiveVersionDirName,
-      })
-    );
-    if (!confirmed) return;
+  async function handleConfirmDeleteVersion() {
+    if (!config.minecraftPath || !effectiveVersionDirName) return;
 
     try {
       setDeleting(true);
@@ -130,6 +136,7 @@ export default function GameSettings() {
         loadName: "",
       });
       setVersionDialogOpen(false);
+      setDeleteVersionOpen(false);
       alert(
         t("gameSettings.deletedVersionDirectoryEffectiveVersionDirName", {
           effectiveVersionDirName: effectiveVersionDirName,
@@ -236,7 +243,7 @@ export default function GameSettings() {
                 variant="outline"
                 size="sm"
                 className="shrink-0 gap-1.5 hover:border-red-500/50 hover:text-red-500"
-                onClick={handleDeleteVersion}
+                onClick={handleDeleteVersionClick}
                 disabled={deleting}
                 title={t("gameSettings.deleteCurrentlySelectedGameVersionDirectory")}
               >
@@ -358,6 +365,37 @@ export default function GameSettings() {
         confirming={renaming}
         onConfirm={handleRenameVersionConfirm}
       />
+
+      <AlertDialog
+        open={deleteVersionOpen}
+        onOpenChange={(open) => !deleting && setDeleteVersionOpen(open)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t("resource.deleteConfirmTitle")}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {effectiveVersionDirName
+                ? t("gameSettings.confirmDeletionOfGameVersionDirectoryEffectiveVersionDir", {
+                    effectiveVersionDirName,
+                    minecraftPath: config.minecraftPath ?? "",
+                    effectiveVersionDirName2: effectiveVersionDirName,
+                  })
+                : ""}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleting}>{t("common.cancel")}</AlertDialogCancel>
+            <Button
+              variant="destructive"
+              disabled={deleting}
+              onClick={() => void handleConfirmDeleteVersion()}
+            >
+              {deleting ? <Loader2 className="size-3.5 animate-spin" /> : null}
+              {t("gameSettings.deleteVersion")}
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

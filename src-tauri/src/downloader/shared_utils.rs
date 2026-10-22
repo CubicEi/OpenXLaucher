@@ -533,8 +533,14 @@ pub fn merge_version_jsons_to_instance(
     Ok(())
 }
 
-/// 扫描所有版本的 version.json，判断是否有版本通过 inheritsFrom 引用 target。
-fn is_referenced_by_other_versions(versions_root: &Path, target: &str) -> bool {
+fn version_json_inherits_from(v: &Value, target: &str) -> bool {
+    v.get("inheritsFrom").and_then(|x| x.as_str()) == Some(target)
+        || v.get("inherits-from").and_then(|x| x.as_str()) == Some(target)
+}
+
+/// 返回所有通过 inheritsFrom / inherits-from 引用 `target` 的版本目录名。
+fn inheritors_of_version(versions_root: &Path, target: &str) -> Vec<String> {
+    let mut refs = Vec::new();
     if let Ok(entries) = fs::read_dir(versions_root) {
         for entry in entries.flatten() {
             let path = entry.path();
@@ -549,15 +555,59 @@ fn is_referenced_by_other_versions(versions_root: &Path, target: &str) -> bool {
             let Ok(v) = serde_json::from_str::<Value>(&text) else {
                 continue;
             };
-            if v.get("inheritsFrom")
-                .and_then(|x| x.as_str())
-                .is_some_and(|s| s == target)
-            {
-                return true;
+            if version_json_inherits_from(&v, target) {
+                refs.push(dir_name);
             }
         }
     }
-    false
+    refs
+}
+
+/// 扫描所有版本的 version.json，判断是否有版本通过 inheritsFrom 引用 target。
+fn is_referenced_by_other_versions(versions_root: &Path, target: &str) -> bool {
+    !inheritors_of_version(versions_root, target).is_empty()
+}
+
+/// 判断 `versions/{mc}` 是否仅含下载/组包产生的可清理文件（无用户存档等）。
+fn vanilla_dir_not_pristine_reason(mc_version: &str, vanilla_dir: &Path) -> Option<String> {
+    let Ok(entries) = fs::read_dir(vanilla_dir) else {
+        return Some("无法读取目录".to_string());
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let name = entry.file_name().to_string_lossy().to_string();
+        let is_core_file = path.is_file()
+            && (name == format!("{}.json", mc_version) || name == format!("{}.jar", mc_version));
+        let is_launcher_options = path.is_file() && name == "options.txt";
+        // original_dwl 会下载 logging client 配置到版本根目录
+        let is_log_config = path.is_file() && name.ends_with(".xml");
+        let is_natives_dir = path.is_dir() && name == format!("{}-natives", mc_version);
+        let is_empty_std_dir = path.is_dir()
+            && [
+                "mods",
+                "resourcepacks",
+                "shaderpacks",
+                "config",
+                "saves",
+                "datapacks",
+                "logs",
+                "crash-reports",
+            ]
+            .contains(&name.as_str())
+            && fs::read_dir(&path)
+                .map(|mut d| d.next().is_none())
+                .unwrap_or(false);
+        if !(
+            is_core_file
+                || is_launcher_options
+                || is_log_config
+                || is_natives_dir
+                || is_empty_std_dir
+        ) {
+            return Some(path.display().to_string());
+        }
+    }
+    None
 }
 
 /// 合并成功后清理中间的 loader 版本目录（如 {mc}-neoforge-{lv}）。
@@ -573,10 +623,18 @@ pub fn cleanup_loader_version_dir(loader_version: &str, minecraft_path: &Path) {
     if !loader_dir.is_dir() {
         return;
     }
-    if is_referenced_by_other_versions(&versions_root, loader_version) {
+    if let Some(refs) = {
+        let r = inheritors_of_version(&versions_root, loader_version);
+        if r.is_empty() {
+            None
+        } else {
+            Some(r)
+        }
+    } {
         println!(
-            "[Cleanup] 版本 {} 仍被其他版本 inheritsFrom 引用，保留中间目录",
-            loader_version
+            "[Cleanup] 版本 {} 仍被其他版本 inheritsFrom 引用（{}），保留中间目录",
+            loader_version,
+            refs.join(", ")
         );
         return;
     }
@@ -597,66 +655,129 @@ pub fn cleanup_loader_version_dir(loader_version: &str, minecraft_path: &Path) {
 /// 安全删除条件：
 /// 1. 没有其他版本 json 通过 inheritsFrom 引用它；
 /// 2. 目录内容干净（仅 json/jar/natives 与空的标准子目录），避免误删用户文件。
-pub fn cleanup_vanilla_version_dir(mc_version: &str, minecraft_path: &Path) {
-    let versions_root = minecraft_path.join("versions");
-    let vanilla_dir = versions_root.join(mc_version);
+/// Remove launcher staging artifacts from `versions/{mc}` before deleting the vanilla folder
+/// after a combined / loader install (Fabric API jars, empty logs, etc.).
+pub fn scrub_vanilla_staging_dir(mc_version: &str, minecraft_path: &Path) {
+    let vanilla_dir = minecraft_path.join("versions").join(mc_version);
     if !vanilla_dir.is_dir() {
         return;
     }
-    if is_referenced_by_other_versions(&versions_root, mc_version) {
-        println!(
-            "[Cleanup] 原版版本 {} 仍被其他版本 inheritsFrom 引用，保留目录",
-            mc_version
-        );
-        return;
-    }
-    let Ok(entries) = fs::read_dir(&vanilla_dir) else {
-        return;
-    };
-    let mut not_pristine = false;
-    for entry in entries.flatten() {
-        let path = entry.path();
-        let name = entry.file_name().to_string_lossy().to_string();
-        let is_core_file = path.is_file()
-            && (name == format!("{}.json", mc_version) || name == format!("{}.jar", mc_version));
-        // 下载流程会写入默认 options.txt（语言等），合并后删除中间原版目录时应视为可清理产物
-        let is_launcher_options = path.is_file() && name == "options.txt";
-        let is_natives_dir =
-            path.is_dir() && name == format!("{}-natives", mc_version);
-        let is_empty_std_dir = path.is_dir()
-            && [
-                "mods",
-                "resourcepacks",
-                "shaderpacks",
-                "config",
-                "saves",
-                "datapacks",
-                "logs",
-                "crash-reports",
-            ]
-            .contains(&name.as_str())
-            && fs::read_dir(&path)
-                .map(|mut d| d.next().is_none())
-                .unwrap_or(false);
-        if !(is_core_file || is_launcher_options || is_natives_dir || is_empty_std_dir) {
-            not_pristine = true;
-            println!(
-                "[Cleanup] 原版目录含用户文件，跳过删除: {}",
-                path.display()
-            );
-            break;
+    let mods = vanilla_dir.join("mods");
+    if mods.is_dir() {
+        if let Ok(entries) = fs::read_dir(&mods) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_file() {
+                    let _ = fs::remove_file(&path);
+                }
+            }
         }
     }
-    if not_pristine {
-        return;
+    for sub in ["logs", "crash-reports"] {
+        let p = vanilla_dir.join(sub);
+        if p.is_dir() {
+            let _ = fs::remove_dir_all(&p);
+        }
     }
-    match fs::remove_dir_all(&vanilla_dir) {
+    if let Ok(entries) = fs::read_dir(&vanilla_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_file() {
+                let name = entry.file_name().to_string_lossy().to_string();
+                if name.ends_with(".xml") {
+                    let _ = fs::remove_file(&path);
+                }
+            }
+        }
+    }
+}
+
+fn remove_vanilla_version_dir_tree(vanilla_dir: &Path) {
+    match fs::remove_dir_all(vanilla_dir) {
         Ok(_) => println!(
             "[Cleanup] 已删除原版版本目录（已与加载器合并为单个实例）: {}",
             vanilla_dir.display()
         ),
         Err(e) => eprintln!("[Cleanup] 删除原版版本目录失败（忽略）: {}", e),
     }
+}
+
+pub fn cleanup_vanilla_version_dir(mc_version: &str, minecraft_path: &Path) {
+    let versions_root = minecraft_path.join("versions");
+    let vanilla_dir = versions_root.join(mc_version);
+    if !vanilla_dir.is_dir() {
+        return;
+    }
+    let inheritors = inheritors_of_version(&versions_root, mc_version);
+    if !inheritors.is_empty() {
+        println!(
+            "[Cleanup] 原版版本 {} 仍被 inheritsFrom 引用（{}），保留目录",
+            mc_version,
+            inheritors.join(", ")
+        );
+        return;
+    }
+    if let Some(reason) = vanilla_dir_not_pristine_reason(mc_version, &vanilla_dir) {
+        println!(
+            "[Cleanup] 原版目录含用户文件，跳过删除: {}",
+            reason
+        );
+        return;
+    }
+    remove_vanilla_version_dir_tree(&vanilla_dir);
+}
+
+/// 组合安装完成后清理中间 `versions/{mc}`（仅当最终实例目录名与原版 MC 版本号不同）。
+pub fn cleanup_vanilla_version_dir_after_combined(
+    mc_version: &str,
+    minecraft_path: &Path,
+    final_instance_name: &str,
+    downloaded_vanilla_this_run: bool,
+    vanilla_pre_existed: bool,
+) {
+    if final_instance_name == mc_version {
+        println!(
+            "[Cleanup] 组合安装：最终实例名为 {}，与原版版本号相同，保留 versions/{} 作为实例目录",
+            mc_version,
+            mc_version
+        );
+        return;
+    }
+    let versions_root = minecraft_path.join("versions");
+    let vanilla_dir = versions_root.join(mc_version);
+    if !vanilla_dir.is_dir() {
+        println!(
+            "[Cleanup] 组合安装：中间原版目录 versions/{} 不存在，跳过",
+            mc_version
+        );
+        return;
+    }
+    let inheritors = inheritors_of_version(&versions_root, mc_version);
+    if !inheritors.is_empty() {
+        println!(
+            "[Cleanup] 组合安装：原版 {} 仍被 inheritsFrom 引用（{}），保留目录（请确认中间 loader 目录已先删除）",
+            mc_version,
+            inheritors.join(", ")
+        );
+        return;
+    }
+    let pristine_issue = vanilla_dir_not_pristine_reason(mc_version, &vanilla_dir);
+    if vanilla_pre_existed && !downloaded_vanilla_this_run {
+        if let Some(reason) = pristine_issue {
+            println!(
+                "[Cleanup] 组合安装：原版 {} 安装前已存在且含用户数据（{}），跳过删除",
+                mc_version,
+                reason
+            );
+            return;
+        }
+    } else if let Some(reason) = pristine_issue {
+        println!(
+            "[Cleanup] 组合安装：中间原版目录含额外文件（{}），本次为下载/组包产物，仍删除",
+            reason
+        );
+    }
+    remove_vanilla_version_dir_tree(&vanilla_dir);
 }
 
 /// 把原版/加载器版本目录里的 mods/*.jar 复制到实例的 mods/ 目录。

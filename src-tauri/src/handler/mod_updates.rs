@@ -9,10 +9,14 @@
 
 use crate::handler::cache_paths::{get_mod_cache_dir, parse_mod_loader};
 use crate::handler::diagnostics::{download_file, ModSearchResult};
+use crate::handler::game_dir::canonical_game_dir;
+use crate::handler::launcher::game_process_state::is_game_running_for_dir;
+use crate::handler::mod_update_locks::{begin_mod_update, end_mod_update, instance_dir_key};
+use crate::handler::mod_file_registry::register_file_at_path;
 use crate::handler::mod_parser::{parse_mod, parse_mods_in_dir, ModInfo};
 use crate::handler::mod_platform::{
-    list_compatible_versions, mod_versions_match, pick_update_if_newer, resolve_mod_platform,
-    ModRemoteVersionsResponse,
+    file_sha1_hex, list_compatible_versions, mod_versions_match, pick_update_if_newer,
+    resolve_mod_platform, ModRemoteVersionsResponse,
 };
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -62,6 +66,8 @@ struct BackupEntry {
     mod_id: String,
     mod_name: String,
     mc_version: String,
+    /// Canonical instance game directory (`--game-dir`).
+    game_dir: String,
     loader: String,
     old_version: String,
     new_version: String,
@@ -104,6 +110,33 @@ fn save_tracking(store: &TrackingStore) -> Result<(), String> {
 fn tracking_lock() -> &'static Mutex<()> {
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
     LOCK.get_or_init(|| Mutex::new(()))
+}
+
+fn assert_can_update_instance(instance_dir: &str) -> Result<(), String> {
+    if is_game_running_for_dir(instance_dir) {
+        return Err("该游戏实例正在运行，请先关闭游戏后再更新模组".to_string());
+    }
+    Ok(())
+}
+
+struct ModUpdateLockGuard {
+    instance_dir: String,
+}
+
+impl ModUpdateLockGuard {
+    fn acquire(instance_dir: &str) -> Result<Self, String> {
+        assert_can_update_instance(instance_dir)?;
+        begin_mod_update(instance_dir)?;
+        Ok(Self {
+            instance_dir: instance_dir.to_string(),
+        })
+    }
+}
+
+impl Drop for ModUpdateLockGuard {
+    fn drop(&mut self) {
+        end_mod_update(&self.instance_dir);
+    }
 }
 
 fn backup_entry_key(mod_id: &str, mc_version: &str, new_version: &str) -> String {
@@ -202,7 +235,7 @@ pub async fn list_mod_remote_versions(
     Ok(ModRemoteVersionsResponse {
         resolved: None,
         versions: Vec::new(),
-        message: Some("未能识别 Modrinth / CurseForge 项目（可尝试在百科或 jar 主页链接中核对）".to_string()),
+        message: Some("未能识别 Modrinth / CurseForge 项目（可检查 jar 内主页链接或通过启动器下载以写入本地注册库）".to_string()),
     })
 }
 
@@ -323,11 +356,16 @@ fn register_backup_entry(entry: BackupEntry) -> Result<(), String> {
 }
 
 /// Called when a game process exits with return code 0.
-pub fn on_successful_game_exit(minecraft_version: &str) {
+pub fn on_successful_game_exit(minecraft_version: &str, game_dir: &str) {
     let mc = minecraft_version.trim();
     if mc.is_empty() {
         return;
     }
+    let game_key = if game_dir.trim().is_empty() {
+        String::new()
+    } else {
+        canonical_game_dir(Path::new(game_dir.trim()))
+    };
     let Ok(_guard) = tracking_lock().lock() else {
         return;
     };
@@ -341,6 +379,16 @@ pub fn on_successful_game_exit(minecraft_version: &str) {
     store.entries.retain_mut(|entry| {
         if entry.mc_version != mc {
             return true;
+        }
+        if !game_key.is_empty() {
+            let entry_key = if entry.game_dir.is_empty() {
+                String::new()
+            } else {
+                entry.game_dir.clone()
+            };
+            if !entry_key.is_empty() && entry_key != game_key {
+                return true;
+            }
         }
         entry.success_count = entry.success_count.saturating_add(1);
         changed = true;
@@ -380,6 +428,9 @@ async fn perform_single_update(
     loader: &str,
     update: &ModUpdateInfo,
 ) -> Result<ModUpdateResult, String> {
+    let instance_dir_str = instance_dir.to_string_lossy();
+    let _lock = ModUpdateLockGuard::acquire(instance_dir_str.as_ref())?;
+
     let mods_dir = instance_dir.join("mods");
     fs::create_dir_all(&mods_dir).map_err(|e| format!("创建 mods 目录失败: {}", e))?;
 
@@ -460,12 +511,24 @@ async fn perform_single_update(
 
     let _ = fs::remove_dir_all(&temp_dir);
 
+    if let Some(sha1) = file_sha1_hex(&dest_path) {
+        let _ = register_file_at_path(
+            &dest_path,
+            &sha1,
+            &update.source,
+            &update.slug,
+            None,
+        );
+    }
+
+    let game_dir_key = instance_dir_key(instance_dir_str.as_ref());
     let key = backup_entry_key(&update.mod_id, mc_version, &update.new_version);
     register_backup_entry(BackupEntry {
         key,
         mod_id: update.mod_id.clone(),
         mod_name: update.mod_name.clone(),
         mc_version: mc_version.to_string(),
+        game_dir: game_dir_key,
         loader: loader.to_string(),
         old_version: update.current_version.clone(),
         new_version: update.new_version.clone(),

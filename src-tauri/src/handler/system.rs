@@ -46,6 +46,56 @@ pub fn open_external(url: String) -> Result<(), String> {
     webbrowser::open(&url).map_err(|e| format!("Failed to open URL: {}", e))
 }
 
+/// Open a file or folder in the system file manager (Explorer on Windows).
+#[tauri::command]
+pub fn vm_open_path(path: String) -> Result<(), String> {
+    use std::path::PathBuf;
+
+    let trimmed = path.trim();
+    if trimmed.is_empty() {
+        return Err("路径不能为空".to_string());
+    }
+
+    let target = PathBuf::from(trimmed);
+    if !target.is_absolute() {
+        return Err(format!("路径必须是绝对路径: {}", trimmed));
+    }
+
+    if !target.exists() {
+        fs::create_dir_all(&target)
+            .map_err(|e| format!("创建目录失败: {} ({})", target.display(), e))?;
+    }
+
+    let canonical = fs::canonicalize(&target)
+        .map_err(|e| format!("无法解析路径: {} ({})", target.display(), e))?;
+
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("explorer")
+            .arg(&canonical)
+            .spawn()
+            .map_err(|e| format!("打开文件夹失败: {}", e))?;
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .arg(&canonical)
+            .spawn()
+            .map_err(|e| format!("打开文件夹失败: {}", e))?;
+    }
+
+    #[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
+    {
+        std::process::Command::new("xdg-open")
+            .arg(&canonical)
+            .spawn()
+            .map_err(|e| format!("打开文件夹失败: {}", e))?;
+    }
+
+    Ok(())
+}
+
 #[tauri::command]
 pub fn read_file_base64(path: String) -> Result<String, String> {
     let content = fs::read(&path).map_err(|e| format!("读取文件失败: {}", e))?;

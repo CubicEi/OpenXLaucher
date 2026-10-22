@@ -2,8 +2,9 @@
 
 import React, { useState, useEffect } from "react";
 import { motion } from "framer-motion";
-import { Package, Folder, Loader2 } from "lucide-react";
+import { Package, Loader2 } from "lucide-react";
 import ResourcePanel from "@/components/resource-panel";
+import { CACHE_LIBRARY_ICON_BG, CacheLibraryIcon } from "@/components/resource/cache-library-icon";
 import { useInstancePath, getMcVersion, getModLoader } from "@/hooks/use-instance-path";
 import { useResourceManager } from "@/hooks/use-resource-manager";
 import { useLaunchContext } from "@/components/launch/launch-provider";
@@ -93,7 +94,7 @@ export function createResourcePage(config: ResourcePageConfig): React.FC {
     directoryNavigation = false,
     simplifyName,
     rightIcon,
-    rightIconBg = "bg-emerald-500/10",
+    rightIconBg = CACHE_LIBRARY_ICON_BG,
     onOpenViewer,
     viewerExtensions,
   } = config;
@@ -143,6 +144,8 @@ export function createResourcePage(config: ResourcePageConfig): React.FC {
       removeFromInstance,
       deleteFromInstance,
       deleteFromCache,
+      openInstanceFolderInExplorer,
+      clearCacheLibrary,
       uploadFiles,
       refresh,
       instanceSearch,
@@ -234,7 +237,7 @@ export function createResourcePage(config: ResourcePageConfig): React.FC {
         onOpenLeftDirectory={directoryNavigation ? openInstanceDirectory : undefined}
         onNavigateUpLeft={directoryNavigation ? goToParentInstanceDirectory : undefined}
         rightTitle=""
-        rightIcon={rightIcon || <Folder className="size-5 text-emerald-500" />}
+        rightIcon={rightIcon ?? <CacheLibraryIcon />}
         rightIconBg={rightIconBg}
         rightFiles={filteredCacheFiles}
         rightLoading={cacheLoading}
@@ -248,6 +251,8 @@ export function createResourcePage(config: ResourcePageConfig): React.FC {
         onDeleteRight={deleteFromCache}
         onRefresh={refresh}
         onUploadFiles={uploadFiles}
+        onOpenInstanceFolder={openInstanceFolderInExplorer}
+        onClearCache={clearCacheLibrary}
         simplifyName={simplifyName}
         onOpenViewer={onOpenViewer}
         viewerExtensions={viewerExtensions}
@@ -292,7 +297,7 @@ export function useResourcePage(config: ResourcePageConfig): {
     directoryNavigation = false,
     simplifyName,
     rightIcon,
-    rightIconBg = "bg-emerald-500/10",
+    rightIconBg = CACHE_LIBRARY_ICON_BG,
     onOpenViewer,
     viewerExtensions,
   } = config;
@@ -361,7 +366,7 @@ export function useResourcePage(config: ResourcePageConfig): {
       onNavigateUpLeft: directoryNavigation ? manager.goToParentInstanceDirectory : undefined,
       leftModInfo: manager.instanceModInfo,
       rightTitle: "",
-      rightIcon: rightIcon || <Folder className="size-5 text-emerald-500" />,
+      rightIcon: rightIcon ?? <CacheLibraryIcon />,
       rightIconBg,
       rightFiles: manager.filteredCacheFiles,
       rightLoading: manager.cacheLoading,
@@ -377,6 +382,8 @@ export function useResourcePage(config: ResourcePageConfig): {
       onRenameLeft: manager.renameInInstance,
       onRefresh: manager.refresh,
       onUploadFiles: manager.uploadFiles,
+      onOpenInstanceFolder: manager.openInstanceFolderInExplorer,
+      onClearCache: manager.clearCacheLibrary,
       simplifyName,
       onOpenViewer,
       viewerExtensions,

@@ -18,6 +18,8 @@ const STANDARD_INSTANCE_SUBDIRS: &[&str] = &[
     "saves",
     "datapacks",
     "config",
+    "schematics",
+    "screenshots",
 ];
 
 /// 确保指定实例目录下存在所有 Minecraft 标准子目录
@@ -1162,6 +1164,44 @@ pub async fn vm_delete_cached_file(
     }
     Ok(())
 }
+
+/// Move all entries in the version-specific cache directory to the system trash/recycle bin.
+#[tauri::command]
+pub async fn vm_clear_version_cache(
+    kind: String,
+    mc_version: String,
+    mod_loader: Option<String>,
+) -> Result<u32, String> {
+    use crate::handler::cache_paths::{
+        get_cache_dir_for_version, get_mod_cache_dir, parse_mod_loader, parse_resource_kind,
+        CacheResourceKind,
+    };
+
+    let resource_kind = parse_resource_kind(&kind)?;
+
+    let cache_dir = if resource_kind == CacheResourceKind::Mod {
+        let loader_str = mod_loader.as_ref().map(|s| s.as_str()).unwrap_or("forge");
+        let loader = parse_mod_loader(loader_str)?;
+        get_mod_cache_dir(&mc_version, loader)?
+    } else {
+        get_cache_dir_for_version(resource_kind, &mc_version)?
+    };
+
+    if !cache_dir.exists() {
+        return Ok(0);
+    }
+
+    let mut removed = 0u32;
+    let entries = std::fs::read_dir(&cache_dir).map_err(|e| format!("读取缓存目录失败: {}", e))?;
+    for entry in entries {
+        let entry = entry.map_err(|e| format!("读取缓存条目失败: {}", e))?;
+        let path = entry.path();
+        trash::delete(&path).map_err(|e| format!("移入回收站失败: {} ({})", path.display(), e))?;
+        removed += 1;
+    }
+    Ok(removed)
+}
+
 #[cfg(test)]
 mod tests {
     use super::{

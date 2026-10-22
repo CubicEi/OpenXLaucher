@@ -1,65 +1,17 @@
+use crate::handler::game_dir::canonical_game_dir;
+use crate::handler::launcher::game_process_state::{
+    claim_termination_request, clear_process_if_pid, game_process_store, insert_process_if_empty,
+    reset_termination_request_if_pid, GameProcess,
+};
+use crate::handler::mod_update_locks::is_game_dir_mod_update_locked;
 use serde::Serialize;
 use std::{
     io::{BufRead, BufReader},
-    path::PathBuf,
+    path::{Path, PathBuf},
     process::{Command, Stdio},
-    sync::{Mutex, OnceLock},
     thread,
 };
 use tauri::Emitter;
-
-/// 全局游戏进程跟踪。
-/// 等待线程持有 Child，避免终止命令提前清除状态并漏掉进程回收。
-struct GameProcess {
-    pid: u32,
-    fully_started: bool,
-    termination_requested: bool,
-    /// Minecraft version string used for mod-update backup success counting.
-    minecraft_version: String,
-}
-
-fn game_process_store() -> &'static Mutex<Option<GameProcess>> {
-    static STORE: OnceLock<Mutex<Option<GameProcess>>> = OnceLock::new();
-    STORE.get_or_init(|| Mutex::new(None))
-}
-
-fn insert_process_if_empty(
-    store: &mut Option<GameProcess>,
-    process: GameProcess,
-) -> Result<(), String> {
-    if let Some(current) = store.as_ref() {
-        return Err(format!("已有游戏进程正在运行 (PID {})", current.pid));
-    }
-    *store = Some(process);
-    Ok(())
-}
-
-fn clear_process_if_pid(store: &mut Option<GameProcess>, pid: u32) -> bool {
-    if store.as_ref().is_some_and(|process| process.pid == pid) {
-        *store = None;
-        true
-    } else {
-        false
-    }
-}
-
-fn claim_termination_request(store: &mut Option<GameProcess>) -> Result<(u32, bool), String> {
-    let process = store
-        .as_mut()
-        .ok_or_else(|| "当前没有运行中的游戏进程".to_string())?;
-    if process.termination_requested {
-        return Err(format!("游戏进程 (PID {}) 正在终止", process.pid));
-    }
-
-    process.termination_requested = true;
-    Ok((process.pid, process.fully_started))
-}
-
-fn reset_termination_request_if_pid(store: &mut Option<GameProcess>, pid: u32) {
-    if let Some(process) = store.as_mut().filter(|process| process.pid == pid) {
-        process.termination_requested = false;
-    }
-}
 
 /// 检测游戏是否完全启动（JVM 启动、加载完资源、主窗口就绪）
 /// 通过 Minecraft 日志中的标志性字符串判断
@@ -182,6 +134,7 @@ pub fn run_command(
     MCPath: PathBuf,
     app_handle: tauri::AppHandle,
     minecraft_version: String,
+    game_directory: String,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // 检查 Java 路径是否存在
     if !javaPath.exists() {
@@ -228,6 +181,11 @@ pub fn run_command(
     command.stdout(Stdio::piped());
     command.stderr(Stdio::piped());
 
+    let game_dir_key = canonical_game_dir(Path::new(&game_directory));
+    if is_game_dir_mod_update_locked(&game_dir_key) {
+        return Err("该实例模组正在更新，请稍后再启动".into());
+    }
+
     // 持有同一个锁完成“检查 + 启动 + 登记”。这样两个并发请求不能覆盖彼此。
     let mut store = game_process_store()
         .lock()
@@ -253,6 +211,7 @@ pub fn run_command(
                     fully_started: false,
                     termination_requested: false,
                     minecraft_version: minecraft_version.clone(),
+                    game_dir: game_dir_key.clone(),
                 },
             )?;
             drop(store);
@@ -347,20 +306,24 @@ pub fn run_command(
                 info!("游戏进程 {} 已结束，退出码: {}", pid, exit_code);
 
                 // 仅清除此等待线程对应的进程。旧线程不能清除或上报新进程。
-                let (should_emit, launched_mc_version) = game_process_store()
+                let (should_emit, launched_mc_version, launched_game_dir) = game_process_store()
                     .lock()
                     .map(|mut store| {
-                        let mc = store
+                        let snapshot = store
                             .as_ref()
                             .filter(|gp| gp.pid == pid)
-                            .map(|gp| gp.minecraft_version.clone())
-                            .unwrap_or_default();
-                        (clear_process_if_pid(&mut store, pid), mc)
+                            .map(|gp| (gp.minecraft_version.clone(), gp.game_dir.clone()));
+                        let mc = snapshot.as_ref().map(|s| s.0.clone()).unwrap_or_default();
+                        let gd = snapshot.as_ref().map(|s| s.1.clone()).unwrap_or_default();
+                        (clear_process_if_pid(&mut store, pid), mc, gd)
                     })
-                    .unwrap_or((false, String::new()));
+                    .unwrap_or((false, String::new(), String::new()));
                 if should_emit {
                     if exit_code == 0 && !launched_mc_version.is_empty() {
-                        crate::handler::mod_updates::on_successful_game_exit(&launched_mc_version);
+                        crate::handler::mod_updates::on_successful_game_exit(
+                            &launched_mc_version,
+                            &launched_game_dir,
+                        );
                     }
                     let _ = app_handle.emit("game-exited", exit_code);
                 }
@@ -432,9 +395,10 @@ pub fn kill_game_process() -> Result<String, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        claim_startup_transition, claim_termination_request, clear_process_if_pid,
-        insert_process_if_empty, parse_log_level, reset_termination_request_if_pid, GameProcess,
+    use super::{claim_startup_transition, parse_log_level};
+    use crate::handler::launcher::game_process_state::{
+        claim_termination_request, clear_process_if_pid, insert_process_if_empty,
+        reset_termination_request_if_pid, GameProcess,
     };
     use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -500,6 +464,7 @@ mod tests {
                 fully_started: false,
                 termination_requested: false,
                 minecraft_version: "1.20.1".to_string(),
+                game_dir: "C:\\game".to_string(),
             },
         )
         .expect("insert the first process");
@@ -511,6 +476,7 @@ mod tests {
                 fully_started: false,
                 termination_requested: false,
                 minecraft_version: "1.20.1".to_string(),
+                game_dir: "C:\\game".to_string(),
             },
         );
         assert!(second.is_err());
@@ -530,6 +496,7 @@ mod tests {
             fully_started: false,
             termination_requested: false,
             minecraft_version: "1.20.1".to_string(),
+            game_dir: "C:\\game".to_string(),
         });
 
         assert_eq!(claim_termination_request(&mut store), Ok((100, false)));
@@ -543,6 +510,7 @@ mod tests {
             fully_started: false,
             termination_requested: false,
             minecraft_version: "1.20.1".to_string(),
+            game_dir: "C:\\game".to_string(),
         });
         claim_termination_request(&mut store).expect("claim the first termination request");
 

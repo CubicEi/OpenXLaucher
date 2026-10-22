@@ -1,7 +1,7 @@
 //! Modrinth / CurseForge project resolution and version listing for local mods.
 
-use crate::handler::chinese_search::lookup_moddata_platform_hint;
 use crate::handler::diagnostics::ModSearchResult;
+use crate::handler::mod_file_registry::RegistryBinding;
 use crate::handler::mod_parser::ModInfo;
 use crate::http_client::{
     curseforge_client, get_with_retry, global_semaphore, modrinth_client, shared_client, RetryConfig,
@@ -9,16 +9,10 @@ use crate::http_client::{
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use sha1::{Digest, Sha1};
-use std::collections::HashMap;
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
-use std::time::{SystemTime, UNIX_EPOCH};
-
-const MCMOD_CACHE_FILE: &str = "mcmod-platform-cache.json";
-const MCMOD_CACHE_TTL_SECS: u64 = 7 * 24 * 3600;
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ResolvedPlatform {
@@ -46,20 +40,6 @@ pub struct ModRemoteVersionsResponse {
     pub resolved: Option<ResolvedPlatform>,
     pub versions: Vec<RemoteModVersion>,
     pub message: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct McmodCacheEntry {
-    fetched_at: u64,
-    modrinth_slug: Option<String>,
-    modrinth_project_id: Option<String>,
-    curseforge_slug: Option<String>,
-    curseforge_mod_id: Option<i64>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-struct McmodCacheStore {
-    entries: HashMap<String, McmodCacheEntry>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -224,7 +204,7 @@ pub fn platform_refs_from_mod_info(mod_info: &ModInfo) -> Vec<PlatformRef> {
     out
 }
 
-fn file_sha1_hex(path: &Path) -> Option<String> {
+pub fn file_sha1_hex(path: &Path) -> Option<String> {
     let mut file = fs::File::open(path).ok()?;
     let mut hasher = Sha1::new();
     let mut buf = [0u8; 64 * 1024];
@@ -559,120 +539,27 @@ async fn lookup_curseforge_by_fingerprint(
     None
 }
 
-fn mcmod_cache_path() -> Option<PathBuf> {
-    crate::handler::cache_paths::cache_root_dir()
-        .ok()
-        .map(|p| p.join(MCMOD_CACHE_FILE))
-}
-
-fn load_mcmod_cache() -> McmodCacheStore {
-    let Some(path) = mcmod_cache_path() else {
-        return McmodCacheStore::default();
-    };
-    let text = match fs::read_to_string(&path) {
-        Ok(t) => t,
-        Err(_) => return McmodCacheStore::default(),
-    };
-    serde_json::from_str(&text).unwrap_or_default()
-}
-
-fn save_mcmod_cache(store: &McmodCacheStore) {
-    if let Some(path) = mcmod_cache_path() {
-        if let Some(parent) = path.parent() {
-            let _ = fs::create_dir_all(parent);
+fn platform_ref_from_registry(record: &RegistryBinding) -> PlatformRef {
+    match record.source.as_str() {
+        "curseforge" => {
+            let cf_id = record
+                .project_id
+                .as_deref()
+                .and_then(|s| s.parse::<i64>().ok());
+            PlatformRef {
+                kind: PlatformKind::CurseForge,
+                slug: record.project_slug.clone(),
+                modrinth_project_id: None,
+                curseforge_mod_id: cf_id,
+            }
         }
-        if let Ok(text) = serde_json::to_string_pretty(store) {
-            let _ = fs::write(path, text);
-        }
-    }
-}
-
-fn now_unix() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0)
-}
-
-fn parse_mcmod_html(html: &str) -> McmodCacheEntry {
-    let mut entry = McmodCacheEntry {
-        fetched_at: now_unix(),
-        modrinth_slug: None,
-        modrinth_project_id: None,
-        curseforge_slug: None,
-        curseforge_mod_id: None,
-    };
-    static MR_SLUG: OnceLock<Regex> = OnceLock::new();
-    static CF_SLUG: OnceLock<Regex> = OnceLock::new();
-    static MR_ID: OnceLock<Regex> = OnceLock::new();
-    let mr_slug = MR_SLUG.get_or_init(|| {
-        Regex::new(r"(?i)modrinth\.com/mod/([a-zA-Z0-9_\-\.]+)").expect("regex")
-    });
-    let cf_slug = CF_SLUG.get_or_init(|| {
-        Regex::new(r"(?i)curseforge\.com/minecraft/mc-mods/([a-zA-Z0-9_\-\.]+)").expect("regex")
-    });
-    let mr_id = MR_ID.get_or_init(|| {
-        Regex::new(r"(?i)Modrinth\s+Project\s+ID[^A-Za-z0-9]*([A-Za-z0-9]{4,12})").expect("regex")
-    });
-    if let Some(m) = mr_slug.captures(html) {
-        entry.modrinth_slug = m.get(1).map(|c| c.as_str().to_string());
-    }
-    if let Some(m) = cf_slug.captures(html) {
-        entry.curseforge_slug = m.get(1).map(|c| c.as_str().to_string());
-    }
-    if let Some(m) = mr_id.captures(html) {
-        entry.modrinth_project_id = m.get(1).map(|c| c.as_str().to_string());
-    }
-    entry
-}
-
-async fn fetch_mcmod_platform_links(mcmod_id: i64) -> Option<McmodCacheEntry> {
-    let key = mcmod_id.to_string();
-    let mut store = load_mcmod_cache();
-    if let Some(existing) = store.entries.get(&key) {
-        if now_unix().saturating_sub(existing.fetched_at) < MCMOD_CACHE_TTL_SECS {
-            return Some(existing.clone());
-        }
-    }
-    let client = shared_client().await;
-    let url = format!("https://www.mcmod.cn/class/{}.html", mcmod_id);
-    let response = client.get(&url).send().await.ok()?;
-    if !response.status().is_success() {
-        return None;
-    }
-    let html = response.text().await.ok()?;
-    let entry = parse_mcmod_html(&html);
-    store.entries.insert(key, entry.clone());
-    save_mcmod_cache(&store);
-    Some(entry)
-}
-
-fn platform_ref_from_mcmod_entry(entry: &McmodCacheEntry) -> Option<PlatformRef> {
-    if let Some(slug) = entry.modrinth_slug.clone() {
-        return Some(PlatformRef {
+        _ => PlatformRef {
             kind: PlatformKind::Modrinth,
-            slug,
-            modrinth_project_id: entry.modrinth_project_id.clone(),
+            slug: record.project_slug.clone(),
+            modrinth_project_id: record.project_id.clone(),
             curseforge_mod_id: None,
-        });
+        },
     }
-    if let Some(id) = entry.modrinth_project_id.clone() {
-        return Some(PlatformRef {
-            kind: PlatformKind::Modrinth,
-            slug: id.clone(),
-            modrinth_project_id: Some(id),
-            curseforge_mod_id: None,
-        });
-    }
-    if let Some(slug) = entry.curseforge_slug.clone() {
-        return Some(PlatformRef {
-            kind: PlatformKind::CurseForge,
-            slug,
-            modrinth_project_id: None,
-            curseforge_mod_id: entry.curseforge_mod_id,
-        });
-    }
-    None
 }
 
 async fn platform_ref_to_resolved(
@@ -691,18 +578,22 @@ pub async fn resolve_mod_platform(mod_info: &ModInfo, jar_path: &Path) -> Option
     let mr = modrinth_client().await;
     let cf = curseforge_client().await;
 
-    if jar_path.is_file() {
-        if let Some(sha1) = file_sha1_hex(jar_path) {
-            if let Some(pref) = lookup_modrinth_by_sha1(&mr, &sha1).await {
+    let sha1 = if jar_path.is_file() {
+        file_sha1_hex(jar_path)
+    } else {
+        None
+    };
+
+    if let Some(ref sha1) = sha1 {
+        if let Some(pref) = lookup_modrinth_by_sha1(&mr, sha1).await {
+            if let Some(r) = platform_ref_to_resolved(&mr, &cf, &pref).await {
+                return Some(r);
+            }
+        }
+        if let Some(fp) = curseforge_fingerprint_file(jar_path) {
+            if let Some(pref) = lookup_curseforge_by_fingerprint(&cf, fp).await {
                 if let Some(r) = platform_ref_to_resolved(&mr, &cf, &pref).await {
                     return Some(r);
-                }
-            }
-            if let Some(fp) = curseforge_fingerprint_file(jar_path) {
-                if let Some(pref) = lookup_curseforge_by_fingerprint(&cf, fp).await {
-                    if let Some(r) = platform_ref_to_resolved(&mr, &cf, &pref).await {
-                        return Some(r);
-                    }
                 }
             }
         }
@@ -714,43 +605,11 @@ pub async fn resolve_mod_platform(mod_info: &ModInfo, jar_path: &Path) -> Option
         }
     }
 
-    let mod_id = mod_info.mod_id.trim();
-    if !mod_id.is_empty() {
-        if let Some(r) = resolve_from_modrinth_slug(&mr, mod_id).await {
-            return Some(r);
-        }
-        if let Some(r) = resolve_from_curseforge_slug(&cf, mod_id).await {
-            return Some(r);
-        }
-    }
-
-    if let Some(hint) = lookup_moddata_platform_hint(&mod_info.mod_id, &mod_info.name) {
-        let pref_mr = PlatformRef {
-            kind: PlatformKind::Modrinth,
-            slug: hint.slug.clone(),
-            modrinth_project_id: None,
-            curseforge_mod_id: None,
-        };
-        if let Some(r) = platform_ref_to_resolved(&mr, &cf, &pref_mr).await {
-            return Some(r);
-        }
-        let pref_cf = PlatformRef {
-            kind: PlatformKind::CurseForge,
-            slug: hint.slug.clone(),
-            modrinth_project_id: None,
-            curseforge_mod_id: None,
-        };
-        if let Some(r) = platform_ref_to_resolved(&mr, &cf, &pref_cf).await {
-            return Some(r);
-        }
-
-        if let Some(mcmod_id) = hint.mcmod_id {
-            if let Some(entry) = fetch_mcmod_platform_links(mcmod_id).await {
-                if let Some(pref) = platform_ref_from_mcmod_entry(&entry) {
-                    if let Some(r) = platform_ref_to_resolved(&mr, &cf, &pref).await {
-                        return Some(r);
-                    }
-                }
+    if let Some(ref sha1) = sha1 {
+        if let Some(record) = crate::handler::mod_file_registry::lookup_by_sha1(sha1) {
+            let pref = platform_ref_from_registry(&record);
+            if let Some(r) = platform_ref_to_resolved(&mr, &cf, &pref).await {
+                return Some(r);
             }
         }
     }
@@ -1146,14 +1005,4 @@ mod tests {
         assert!(should_offer_update("8.2.19+26.2", &versions, "26.2").is_some());
     }
 
-    #[test]
-    fn parse_mcmod_html_fixture() {
-        let html = r#"
-        <div>Modrinth Project ID: qa2H4BS9</div>
-        <a href="https://www.curseforge.com/minecraft/mc-mods/jei">CF</a>
-        "#;
-        let entry = parse_mcmod_html(html);
-        assert_eq!(entry.modrinth_project_id.as_deref(), Some("qa2H4BS9"));
-        assert_eq!(entry.curseforge_slug.as_deref(), Some("jei"));
-    }
 }

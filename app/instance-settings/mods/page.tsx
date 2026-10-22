@@ -1,7 +1,7 @@
 "use client";
 
 import React from "react";
-import { Puzzle, Package, Folder } from "lucide-react";
+import { Puzzle } from "lucide-react";
 import { createResourcePage } from "@/components/resource-page-factory";
 
 export default createResourcePage({
@@ -15,6 +15,4 @@ export default createResourcePage({
   versionSource: "instance",
   extensions: ["jar", "litemod", "zip"],
   simplifyName: (name) => name.replace(/\.(jar|litemod|zip)$/i, ""),
-  rightIcon: <Folder className="size-5 text-sky-500" />,
-  rightIconBg: "bg-sky-500/10",
 });
