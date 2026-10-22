@@ -2,6 +2,8 @@
 
 一款现代化的 **Minecraft 桌面启动器**，基于 **Tauri 2**（Rust）与 **Next.js 16**（React 19）构建，注重便携数据目录、跨平台与较低资源占用。
 
+由Real Time Launcher 修改而来，原项目地址 https://github.com/cqw-acq/RTLauncher_new ，社区驱动，加速更新
+
 **社区**
 
 - 原 RTLauncher QQ 群：1013525092  
@@ -149,13 +151,11 @@ OpenXLauncher/
 
 ## 贡献
 
-1. Fork 本仓库  
-2. 创建分支：`git checkout -b feature/your-feature`  
-3. 提交：`git commit -m 'feat: ...'`  
-4. 推送并打开 Pull Request  
+1. 提交 issue  
+2. 提交 Pull Request  
 
 提交前请运行 `pnpm test`、`pnpm exec tsc --noEmit` 与 `cargo check`（在 `src-tauri` 下）。
 
 ## 开源协议
 
-本项目采用 **[GNU General Public License v3.0](https://www.gnu.org/licenses/gpl-3.0.html)**（见 `src-tauri/Cargo.toml` 中的 `license` 字段）。
+本项目采用 **MIT协议**开源
