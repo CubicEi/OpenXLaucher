@@ -32,8 +32,7 @@ struct LiteLoaderInfo {
 
 /// 从官方 versions.json 获取指定 MC 版本可用的 LiteLoader 子版本列表
 async fn fetch_versions_from_json(mc_version: &str) -> Result<Vec<String>> {
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(30))
+    let client = crate::http_client::client_builder_with_timeout(std::time::Duration::from_secs(30))
         .build()
         .context("构造 reqwest 客户端失败")?;
     println!("[LiteLoader] 获取版本列表: GET {}", LITELOADER_VERSIONS_URL);
@@ -131,8 +130,7 @@ fn parse_library_entries(libs_arr: &[Value]) -> Vec<LibraryDef> {
 
 /// 从 versions.json 解析 LiteLoader 的详细信息（文件、tweak 类、库依赖）
 async fn fetch_liteloader_info(mc_version: &str, lite_version: &str) -> Result<LiteLoaderInfo> {
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(30))
+    let client = crate::http_client::client_builder_with_timeout(std::time::Duration::from_secs(30))
         .build()
         .context("构造 reqwest 客户端失败")?;
     let resp = client
@@ -301,8 +299,7 @@ async fn resolve_snapshot_jar_name(
         version
     );
 
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(15))
+    let client = crate::http_client::client_builder_with_timeout(std::time::Duration::from_secs(15))
         .build()
         .context("构造 reqwest 客户端失败")?;
 

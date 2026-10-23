@@ -8,18 +8,46 @@ static SHARED_CLIENT: OnceCell<Arc<reqwest::Client>> = OnceCell::const_new();
 static MODRINTH_CLIENT: OnceCell<Arc<reqwest::Client>> = OnceCell::const_new();
 static CURSEFORGE_CLIENT: OnceCell<Arc<reqwest::Client>> = OnceCell::const_new();
 static GLOBAL_SEMAPHORE: OnceCell<Arc<Semaphore>> = OnceCell::const_new();
-fn base_client_builder() -> reqwest::ClientBuilder {
-    reqwest::Client::builder()
-        .user_agent(
-            "Mozilla/5.0 (compatible; OpenXLauncher/1.0; +https://github.com/CubicEi/OpenXLaucher)",
-        )
-        .connect_timeout(Duration::from_secs(15))
-        .pool_idle_timeout(Duration::from_secs(300))
-        .pool_max_idle_per_host(128)
-        .tcp_nodelay(true)
-        .http1_title_case_headers()
-        .tcp_keepalive(Some(Duration::from_secs(30)))
-        .redirect(reqwest::redirect::Policy::limited(8))
+fn proxy_url_from_env() -> Option<String> {
+    for key in ["HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy", "ALL_PROXY", "all_proxy"] {
+        if let Ok(value) = std::env::var(key) {
+            let trimmed = value.trim();
+            if !trimmed.is_empty() {
+                return Some(trimmed.to_string());
+            }
+        }
+    }
+    None
+}
+
+fn apply_env_proxy(mut builder: reqwest::ClientBuilder) -> reqwest::ClientBuilder {
+    if let Some(url) = proxy_url_from_env() {
+        if let Ok(proxy) = reqwest::Proxy::all(&url) {
+            builder = builder.proxy(proxy);
+        }
+    }
+    builder
+}
+
+/// 共享 HTTP 客户端配置（使用启动时同步的系统代理 / 环境变量代理）。
+pub fn base_client_builder() -> reqwest::ClientBuilder {
+    apply_env_proxy(
+        reqwest::Client::builder()
+            .user_agent(
+                "Mozilla/5.0 (compatible; OpenXLauncher/1.0; +https://github.com/CubicEi/OpenXLaucher)",
+            )
+            .connect_timeout(Duration::from_secs(15))
+            .pool_idle_timeout(Duration::from_secs(300))
+            .pool_max_idle_per_host(128)
+            .tcp_nodelay(true)
+            .http1_title_case_headers()
+            .tcp_keepalive(Some(Duration::from_secs(30)))
+            .redirect(reqwest::redirect::Policy::limited(8)),
+    )
+}
+
+pub fn client_builder_with_timeout(timeout: Duration) -> reqwest::ClientBuilder {
+    base_client_builder().timeout(timeout)
 }
 pub async fn shared_client() -> Arc<reqwest::Client> {
     SHARED_CLIENT
@@ -80,13 +108,7 @@ pub async fn global_semaphore() -> Arc<Semaphore> {
         .clone()
 }
 pub async fn resolve_redirect_url(url: &str) -> Result<String, String> {
-    let client = reqwest::Client::builder()
-        .user_agent(
-            "Mozilla/5.0 (compatible; OpenXLauncher/1.0; +https://github.com/CubicEi/OpenXLaucher)",
-        )
-        .connect_timeout(Duration::from_secs(15))
-        .timeout(Duration::from_secs(30))
-        .redirect(reqwest::redirect::Policy::limited(8))
+    let client = client_builder_with_timeout(Duration::from_secs(30))
         .build()
         .map_err(|e| format!("构建客户端失败: {}", e))?;
     let resp = client

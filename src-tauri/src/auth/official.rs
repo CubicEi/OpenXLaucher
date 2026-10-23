@@ -1383,9 +1383,8 @@ async fn add_new_account(
 
 /// 构造带连接超时和读取超时的 HTTP 客户端，避免断网时无限卡死
 fn build_http_client() -> Result<Client, String> {
-    Client::builder()
+    crate::http_client::client_builder_with_timeout(Duration::from_secs(30))
         .connect_timeout(Duration::from_secs(10))
-        .timeout(Duration::from_secs(30))
         .build()
         .map_err(|e| format!("无法创建 HTTP 客户端: {}", e))
 }

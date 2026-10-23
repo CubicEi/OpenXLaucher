@@ -198,8 +198,9 @@ impl UpdateFetcher {
             Some(json!({ "currentVersion": current_version })),
         );
 
-        let client = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(UPDATE_CHECK_TIMEOUT_SECS))
+        let client = crate::http_client::client_builder_with_timeout(
+            std::time::Duration::from_secs(UPDATE_CHECK_TIMEOUT_SECS),
+        )
             .redirect(redirect_policy())
             .build()
             .map_err(|e| format!("创建 HTTP 客户端失败: {}", e))?;
@@ -378,8 +379,7 @@ impl UpdateFetcher {
         // 告诉 guard 如果异常退出就删除这个半下载文件
         guard.set_cleanup_path(download_path.clone());
 
-        let client = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(600))
+        let client = crate::http_client::client_builder_with_timeout(std::time::Duration::from_secs(600))
             .redirect(redirect_policy())
             .build()
             .map_err(|e| format!("创建 HTTP 客户端失败: {}", e))?;

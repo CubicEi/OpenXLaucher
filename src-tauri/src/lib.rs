@@ -9,6 +9,7 @@ mod auth;
 mod downloader;
 mod handler;
 mod http_client;
+mod system_proxy;
 mod multiplayer;
 mod themes;
 mod updater;
@@ -327,6 +328,7 @@ pub fn run() {
                 default_panic_hook(info);
             }));
 
+            system_proxy::apply_system_proxy_env();
             app_paths::ensure_portable_dirs();
             if let Err(error) = updater::identity::ensure_portable_self_hash() {
                 eprintln!("[identity] {}", error);

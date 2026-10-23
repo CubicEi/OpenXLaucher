@@ -1736,7 +1736,7 @@ async fn browser_style_download(
     let start = Instant::now();
     let hard_timeout = Duration::from_secs(600);
     
-    let client = reqwest::Client::builder()
+    let client = crate::http_client::base_client_builder()
         .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
         .connect_timeout(Duration::from_secs(30))
         .build()
@@ -2005,8 +2005,7 @@ pub async fn resolve_cf_download_info(
     let first4 = fid / 1000;
     let last3 = fid % 1000;
 
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(10))
+    let client = crate::http_client::client_builder_with_timeout(Duration::from_secs(10))
         .connect_timeout(Duration::from_secs(5))
         .build()
         .ok()?;

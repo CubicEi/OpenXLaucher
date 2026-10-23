@@ -50,6 +50,7 @@ futures = "0.3"
 zip = { version = "0.6", default-features = false, features = ["deflate"] }
 tokio = { version = "1.0", default-features = false, features = ["rt-multi-thread", "macros", "sync", "time", "io-util", "process"] }
 reqwest = { version = "0.11", default-features = false, features = ["json", "stream", "blocking", "rustls-tls", "gzip"] }
+sysproxy = "0.3.0"
 scraper = "0.18"
 rayon = "1.8"
 fastnbt = "2"
