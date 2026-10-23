@@ -10,7 +10,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { check } from "@tauri-apps/plugin-updater";
+import { invoke } from "@tauri-apps/api/core";
 import { useI18n } from "@/components/i18n/use-i18n";
 import type { AppLanguage } from "@/components/settings/settings-provider";
 
@@ -42,15 +42,21 @@ function updateAlert(language: AppLanguage, chinese: string, english: string) {
   return language === "en-US" ? english : chinese;
 }
 
+interface UpdateCheckResult {
+  update_available: boolean;
+  target_version: string | null;
+  changelog: string | null;
+}
+
 async function checkInBackground(showError = false, language: AppLanguage = "zh-CN") {
   setAppUpdateState({ kind: "checking" });
   try {
-    const update = await check();
-    if (update?.available) {
+    const result = await invoke<UpdateCheckResult>("check_for_updates", { force: true });
+    if (result.update_available && result.target_version) {
       setAppUpdateState({
         kind: "available",
-        version: update.version ?? "",
-        notes: (update.body ?? "").toString(),
+        version: result.target_version,
+        notes: result.changelog ?? "",
         prepared: false,
       });
     } else {
@@ -75,13 +81,13 @@ async function checkInBackground(showError = false, language: AppLanguage = "zh-
 // 手动触发下载安装（弹窗模式用）
 async function downloadAndInstall(language: AppLanguage = "zh-CN"): Promise<boolean> {
   try {
-    const update = await check();
-    if (!update?.available) {
+    const checkResult = await invoke<UpdateCheckResult>("check_for_updates", { force: true });
+    if (!checkResult.update_available) {
       window.alert(updateAlert(language, "没有可用更新", "No updates are available"));
       return false;
     }
-    await update.downloadAndInstall(() => {});
-    window.alert(updateAlert(language, "新版本下载完成，即将重启并安装。", "The update has downloaded and will restart to install."));
+    await invoke("download_update");
+    await invoke("install_update");
     return true;
   } catch (e) {
     console.error("[updater] install failed:", e);

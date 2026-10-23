@@ -1,7 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "OpenXLauncher",
-  "version": "0.2.0-beta",
   "identifier": "com.openxlauncher.app",
   "build": {
     "frontendDist": "../out",

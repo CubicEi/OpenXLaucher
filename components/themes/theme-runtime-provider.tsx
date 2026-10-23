@@ -36,6 +36,7 @@ import type {
   ThemeManifest,
   ThemeSettingsService,
 } from "@/lib/themes/protocol";
+import { APP_VERSION } from "@/lib/app-version";
 import { BUILTIN_THEME_ID, THEME_API_VERSION } from "@/lib/themes/protocol";
 import { ThemeRouteRegistry } from "@/lib/themes/route-registry";
 import {
@@ -127,7 +128,7 @@ function createRuntime(
   mutableState: ThemeRuntimeMutableState,
 ) {
   return new ThemeRuntime({
-    appVersion: "1.0.0",
+    appVersion: APP_VERSION,
     platform: detectPlatform(),
     routes,
     slots,
@@ -470,7 +471,7 @@ function ConnectedThemeRuntimeProvider({ children }: { children: ReactNode }) {
         events: eventBus,
         platform: {
           os: detectPlatform(),
-          appVersion: "1.0.0",
+          appVersion: APP_VERSION,
           themeApiVersion: THEME_API_VERSION,
         },
       });

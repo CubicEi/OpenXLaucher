@@ -5,9 +5,7 @@ on:
     branches:
       - main
 
-# 构建产物统一命名（与 0.2.0-beta Release 保持一致），修改版本时只需更新这里
-env:
-  APP_VERSION: 0.2.0-beta
+# 构建产物命名使用 package.json 中的 version
 
 # This workflow will build your tauri app without uploading it anywhere.
 
@@ -65,6 +63,10 @@ jobs:
       - name: install frontend dependencies
         run: pnpm install
 
+      - name: Set APP_VERSION from package.json
+        shell: bash
+        run: echo "APP_VERSION=$(node -p "require('./package.json').version")" >> "$GITHUB_ENV"
+
       # If tagName and releaseId are omitted tauri-action will only build the app and won't try to upload any assets.
       - uses: tauri-apps/tauri-action@v1
         id: tauri-build
@@ -88,7 +90,7 @@ jobs:
           $certBytes = [Convert]::FromBase64String($env:CERT_BASE64)
           $certPath = Join-Path $env:RUNNER_TEMP "signing-cert.pfx"
           [System.IO.File]::WriteAllBytes($certPath, $certBytes)
-          $signTargets = @("src-tauri/target/release/openxlauncher.exe")
+          $signTargets = @("src-tauri/target/release/OpenXLauncher.exe")
           $signTargets += @(Get-ChildItem -Path "src-tauri/target/release/bundle/nsis/*-setup.exe" -File | ForEach-Object { $_.FullName })
           foreach ($target in $signTargets) {
             $signArgs = @(
@@ -139,11 +141,20 @@ jobs:
         with:
           name: OpenXLauncher_${{ env.APP_VERSION }}_${{ matrix.artifact_name }}
           path: |
-            src-tauri/target/release/openxlauncher
+            src-tauri/target/release/OpenXLauncher
             src-tauri/install-deps.sh
             src-tauri/PORTABLE_README.md
           if-no-files-found: error
           retention-days: 90
+
+      - name: Prepare Windows portable update asset
+        if: matrix.platform == 'windows-latest'
+        shell: pwsh
+        run: |
+          $exe = "src-tauri/target/release/OpenXLauncher.exe"
+          if (-not (Test-Path $exe)) { throw "Missing $exe" }
+          $dest = "src-tauri/target/release/OpenXLauncher_${{ env.APP_VERSION }}_windows-x86_64.exe"
+          Copy-Item -Force $exe $dest
 
       - name: upload artifacts (Windows)
         if: matrix.platform == 'windows-latest'
@@ -152,5 +163,6 @@ jobs:
           name: OpenXLauncher_${{ env.APP_VERSION }}_${{ matrix.artifact_name }}
           path: |
             src-tauri/target/release/bundle/nsis/*-setup.exe
+            src-tauri/target/release/OpenXLauncher_${{ env.APP_VERSION }}_windows-x86_64.exe
           if-no-files-found: error
           retention-days: 90

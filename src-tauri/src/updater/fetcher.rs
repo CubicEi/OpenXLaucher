@@ -10,9 +10,9 @@ use std::sync::Arc;
 
 use super::config::{
     get_current_arch_keywords, get_current_os, get_current_os_keywords, get_update_config,
-    get_update_endpoints, is_trusted_download_url, is_trusted_release_asset_url,
+    get_update_endpoint, is_trusted_download_url, is_trusted_release_asset_url,
     is_valid_sha256_hex, matches_asset_name_for, save_update_config, should_check_update,
-    UpdateStatus, HASH_TAG,
+    update_download_dir, UpdateStatus, HASH_TAG,
 };
 
 #[derive(Debug, Clone, Deserialize)]
@@ -67,30 +67,13 @@ struct ReleaseAsset {
     size: Option<u64>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ReleaseSource {
-    LightingTeam,
-    GitHub,
-}
-
-impl ReleaseSource {
-    fn priority(self) -> u8 {
-        match self {
-            Self::LightingTeam => 1,
-            Self::GitHub => 0,
-        }
-    }
-}
-
 #[derive(Debug, Clone)]
 struct NormalizedRelease {
     version: Version,
     notes: String,
-    prerelease: bool,
     draft: bool,
     assets: Vec<ReleaseAsset>,
     checksums: HashMap<String, String>,
-    source: ReleaseSource,
 }
 
 fn parse_semver(input: &str) -> Option<Version> {
@@ -104,10 +87,7 @@ fn parse_semver(input: &str) -> Option<Version> {
     Version::parse(value).ok()
 }
 
-fn parse_release_response_for_source(
-    json: &str,
-    source: ReleaseSource,
-) -> Result<Vec<NormalizedRelease>, String> {
+fn parse_release_response(json: &str) -> Result<Vec<NormalizedRelease>, String> {
     let response: WireReleaseResponse =
         serde_json::from_str(json).map_err(|e| format!("解析更新信息失败: {}", e))?;
     let releases = match response {
@@ -140,7 +120,6 @@ fn parse_release_response_for_source(
             Some(NormalizedRelease {
                 version,
                 notes,
-                prerelease: release.prerelease,
                 draft: release.draft,
                 assets: release
                     .assets
@@ -153,23 +132,13 @@ fn parse_release_response_for_source(
                     })
                     .collect(),
                 checksums,
-                source,
             })
         })
         .collect())
 }
 
-fn parse_release_response(json: &str) -> Result<Vec<NormalizedRelease>, String> {
-    let source = if json.trim_start().starts_with('[') {
-        ReleaseSource::GitHub
-    } else {
-        ReleaseSource::LightingTeam
-    };
-    parse_release_response_for_source(json, source)
-}
-
-fn is_stable_release(release: &NormalizedRelease) -> bool {
-    !release.prerelease && !release.draft && release.version.pre.is_empty()
+fn is_publishable_release(release: &NormalizedRelease) -> bool {
+    !release.draft
 }
 
 fn select_latest_release<'a>(
@@ -179,12 +148,8 @@ fn select_latest_release<'a>(
     let current = parse_semver(current_version)?;
     releases
         .iter()
-        .filter(|release| is_stable_release(release) && release.version > current)
-        .max_by(|left, right| {
-            left.version
-                .cmp(&right.version)
-                .then_with(|| left.source.priority().cmp(&right.source.priority()))
-        })
+        .filter(|release| is_publishable_release(release) && release.version > current)
+        .max_by(|left, right| left.version.cmp(&right.version))
 }
 
 fn select_latest_candidate<'a>(
@@ -197,11 +162,11 @@ fn select_latest_candidate<'a>(
         .clone();
     releases
         .iter()
-        .filter(|release| is_stable_release(release) && release.version == latest_version)
+        .filter(|release| is_publishable_release(release) && release.version == latest_version)
         .filter_map(|release| {
             UpdateFetcher::select_asset(release, current_os).map(|asset| (release, asset))
         })
-        .max_by_key(|(release, _)| release.source.priority())
+        .next()
 }
 
 fn available_update_result(
@@ -397,8 +362,18 @@ impl UpdateFetcher {
             score += 5;
         }
 
-        if name_lower.contains("setup") || name_lower.contains("installer") {
-            score += 8;
+        if name_lower.contains("setup") || name_lower.contains("installer") || name_lower.contains("nsis") {
+            score -= 80;
+        }
+
+        #[cfg(target_os = "windows")]
+        {
+            if name_lower == "openxlauncher.exe" || name_lower.ends_with("/openxlauncher.exe") {
+                score += 200;
+            }
+            if name_lower.contains("openxlauncher") && name_lower.ends_with(".exe") && !name_lower.contains("setup") {
+                score += 40;
+            }
         }
 
         score
@@ -484,11 +459,7 @@ impl UpdateFetcher {
         Ok(hex_encode_lower(&digest))
     }
 
-    async fn fetch_source_releases(
-        client: &reqwest::Client,
-        endpoint: &str,
-        source: ReleaseSource,
-    ) -> Result<Vec<NormalizedRelease>, String> {
+    async fn fetch_github_releases(client: &reqwest::Client, endpoint: &str) -> Result<Vec<NormalizedRelease>, String> {
         let response = client
             .get(endpoint)
             .header(
@@ -508,7 +479,7 @@ impl UpdateFetcher {
             .text()
             .await
             .map_err(|e| format!("读取 {} 响应失败: {}", endpoint, e))?;
-        parse_release_response_for_source(&body, source).map_err(|e| format!("{}: {}", endpoint, e))
+        parse_release_response(&body).map_err(|e| format!("{}: {}", endpoint, e))
     }
 
     fn platform_matches_current(platform: &str, current_os: &str) -> bool {
@@ -609,34 +580,13 @@ impl UpdateFetcher {
             .timeout(std::time::Duration::from_secs(30))
             .build()
             .map_err(|e| format!("创建 HTTP 客户端失败: {}", e))?;
-        let [lighting_team_endpoint, github_endpoint] = get_update_endpoints();
-        let (lighting_team_result, github_result) = tokio::join!(
-            Self::fetch_source_releases(
-                &client,
-                lighting_team_endpoint,
-                ReleaseSource::LightingTeam
-            ),
-            Self::fetch_source_releases(&client, github_endpoint, ReleaseSource::GitHub)
-        );
-
-        let mut releases = Vec::new();
-        let mut errors = Vec::new();
-        for result in [lighting_team_result, github_result] {
-            match result {
-                Ok(mut source_releases) => releases.append(&mut source_releases),
-                Err(error) => errors.push(error),
-            }
-        }
-
-        if releases.is_empty() && errors.len() == 2 {
-            let message = format!("所有更新源均不可用: {}", errors.join("；"));
-            cfg.status = UpdateStatus::Error(message.clone());
-            let _ = save_update_config(cfg);
-            return Err(message);
-        }
-        for error in &errors {
-            eprintln!("[更新器] 更新源不可用，已使用其他来源: {}", error);
-        }
+        let releases = Self::fetch_github_releases(&client, get_update_endpoint())
+            .await
+            .map_err(|error| {
+                cfg.status = UpdateStatus::Error(error.clone());
+                let _ = save_update_config(cfg.clone());
+                error
+            })?;
 
         let current_os = get_current_os();
         let selected_release = select_latest_release(&releases, current_version);
@@ -736,8 +686,7 @@ impl UpdateFetcher {
 
         // ------ 下面的所有 ? 都会触发 guard drop 做清理 ------
 
-        let config_dir = super::config::config_dir();
-        let download_dir = PathBuf::from(&config_dir).join("updates");
+        let download_dir = update_download_dir();
         fs::create_dir_all(&download_dir).map_err(|e| format!("创建下载目录失败: {}", e))?;
 
         let target_filename = filename_from_download_url(&download_url)?;
@@ -937,453 +886,20 @@ impl UpdateFetcher {
             }
         }
 
-        let current_exe =
-            std::env::current_exe().map_err(|e| format!("Failed to get executable path: {}", e))?;
+        #[cfg(target_os = "windows")]
+        {
+            super::windows_replace::launch_windows_replace(&download_path)?;
+        }
 
-        let exe_dir = current_exe
-            .parent()
-            .ok_or_else(|| "Failed to get executable directory".to_string())?
-            .to_path_buf();
-
-        let temp_dir = exe_dir.join("update_temp");
-        let _ = fs::create_dir_all(&temp_dir);
-
-        let extracted = self.extract_if_needed(&download_path, &temp_dir)?;
-
-        let backup_dir = exe_dir.join("backup");
-        let _ = fs::create_dir_all(&backup_dir);
-
-        let timestamp = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
-
-        let current_os = get_current_os();
-
-        if current_os.starts_with("windows") {
-            self.install_windows(
-                &download_path,
-                &temp_dir,
-                &backup_dir,
-                timestamp,
-                extracted,
-                &exe_dir,
-            )?;
-        } else if current_os.starts_with("macos") {
-            self.install_macos(
-                &download_path_str,
-                &temp_dir,
-                &backup_dir,
-                timestamp,
-                extracted,
-                &exe_dir,
-            )?;
-        } else if current_os.starts_with("linux") {
-            self.install_linux(
-                &download_path,
-                &temp_dir,
-                &backup_dir,
-                timestamp,
-                extracted,
-                &exe_dir,
-            )?;
-        } else {
-            return Err("Unsupported OS for update".to_string());
+        #[cfg(not(target_os = "windows"))]
+        {
+            return Err("Launcher self-update is only supported on Windows".to_string());
         }
 
         Ok(InstallResult {
             success: true,
             message: "Installer started".to_string(),
         })
-    }
-
-    fn install_windows(
-        &self,
-        download_path: &PathBuf,
-        temp_dir: &PathBuf,
-        backup_dir: &PathBuf,
-        timestamp: u64,
-        extracted: bool,
-        exe_dir: &PathBuf,
-    ) -> Result<(), String> {
-        let target_exe = exe_dir.join("OpenXLauncher.exe");
-        if target_exe.exists() {
-            let backup_path = backup_dir.join(format!("OpenXLauncher_backup_{}.exe", timestamp));
-            let _ = fs::copy(&target_exe, &backup_path);
-        }
-
-        let source_file = if extracted {
-            self.find_executable_in_dir(temp_dir, "windows")?
-        } else {
-            download_path.clone()
-        };
-
-        let script = format!(
-            "@echo off\n\
-            chcp 65001 >nul\n\
-            echo Installing update...\n\
-            timeout /t 3 /nobreak >nul\n\
-            copy /y \"{source}\" \"{target}\"\n\
-            if %errorlevel% neq 0 (\n\
-                echo Install failed\n\
-                pause\n\
-                exit /b 1\n\
-            )\n\
-            echo Install complete, restarting...\n\
-            start \"\" \"{target}\"\n\
-            timeout /t 2 /nobreak >nul\n\
-            rmdir /s /q \"{temp}\"\n\
-            del \"%~f0\"",
-            source = source_file.to_string_lossy(),
-            target = target_exe.to_string_lossy(),
-            temp = temp_dir.to_string_lossy()
-        );
-
-        let script_path = exe_dir.join("update_installer.bat");
-        fs::write(&script_path, &script)
-            .map_err(|e| format!("Write install script failed: {}", e))?;
-
-        std::process::Command::new("cmd")
-            .args(["/C", script_path.to_string_lossy().as_ref()])
-            .spawn()
-            .map_err(|e| format!("Start installer failed: {}", e))?;
-
-        std::process::exit(0);
-    }
-
-    fn install_macos(
-        &self,
-        download_path_str: &str,
-        temp_dir: &PathBuf,
-        backup_dir: &PathBuf,
-        timestamp: u64,
-        extracted: bool,
-        exe_dir: &PathBuf,
-    ) -> Result<(), String> {
-        if extracted {
-            let target_app = self.find_app_bundle_in_dir(temp_dir)?;
-            let target_path = exe_dir.join("OpenXLauncher.app");
-
-            if target_path.exists() {
-                let backup_path = backup_dir.join(format!("OpenXLauncher_backup_{}.app", timestamp));
-                let _ = self.copy_dir_recursive(&target_path, &backup_path);
-            }
-
-            let script = format!(
-                "#!/bin/bash\n\
-                set -e\n\
-                echo \"Installing update...\"\n\
-                sleep 3\n\
-                rm -rf \"{target}\"\n\
-                cp -R \"{source}\" \"{target}\"\n\
-                echo \"Install complete, restarting...\"\n\
-                open \"{target}\"\n\
-                rm -rf \"{temp}\"\n\
-                rm -- \"$0\"",
-                source = target_app.to_string_lossy(),
-                target = target_path.to_string_lossy(),
-                temp = temp_dir.to_string_lossy()
-            );
-
-            let script_path = exe_dir.join("update_installer.sh");
-            fs::write(&script_path, &script)
-                .map_err(|e| format!("Write install script failed: {}", e))?;
-
-            self.make_executable(&script_path)?;
-
-            // 注意：不要用 `open <script.sh>` 来执行脚本！`open` 会走 LaunchServices，
-            // 可能把 .sh 扔到文本编辑器里，不保证执行。必须显式交给 /bin/bash 运行，
-            // 并用 nohup + setsid 让它在父进程 exit(0) 后继续存活完成复制/重启。
-            let detached = std::process::Command::new("/bin/bash")
-                .args([
-                    "-c",
-                    "nohup /bin/bash \"$0\" </dev/null >/dev/null 2>&1 & disown",
-                    script_path.to_string_lossy().as_ref(),
-                ])
-                .spawn()
-                .map_err(|e| format!("Start installer failed: {}", e))?;
-            let _ = detached;
-
-            std::process::exit(0);
-        } else {
-            let target_binary = exe_dir.join("OpenXLauncher");
-            if target_binary.exists() {
-                let backup_path = backup_dir.join(format!("OpenXLauncher_backup_{}", timestamp));
-                let _ = fs::copy(&target_binary, &backup_path);
-            }
-
-            let script = format!(
-                "#!/bin/bash\n\
-                set -e\n\
-                echo \"Installing update...\"\n\
-                sleep 3\n\
-                cp \"{source}\" \"{target}\"\n\
-                chmod +x \"{target}\"\n\
-                echo \"Install complete, restarting...\"\n\
-                nohup \"{target}\" </dev/null >/dev/null 2>&1 & disown\n\
-                rm -rf \"{temp}\"\n\
-                rm -- \"$0\"",
-                source = download_path_str,
-                target = target_binary.to_string_lossy(),
-                temp = temp_dir.to_string_lossy()
-            );
-
-            let script_path = exe_dir.join("update_installer.sh");
-            fs::write(&script_path, &script)
-                .map_err(|e| format!("Write install script failed: {}", e))?;
-
-            self.make_executable(&script_path)?;
-
-            // 同上：显式 /bin/bash + nohup/setsid/detach，父进程退出后脚本继续跑
-            let detached = std::process::Command::new("/bin/bash")
-                .args([
-                    "-c",
-                    "nohup /bin/bash \"$0\" </dev/null >/dev/null 2>&1 & disown",
-                    script_path.to_string_lossy().as_ref(),
-                ])
-                .spawn()
-                .map_err(|e| format!("Start installer failed: {}", e))?;
-            let _ = detached;
-
-            std::process::exit(0);
-        }
-    }
-
-    fn install_linux(
-        &self,
-        download_path: &PathBuf,
-        temp_dir: &PathBuf,
-        backup_dir: &PathBuf,
-        timestamp: u64,
-        extracted: bool,
-        exe_dir: &PathBuf,
-    ) -> Result<(), String> {
-        let target_binary = exe_dir.join("OpenXLauncher");
-        if target_binary.exists() {
-            let backup_path = backup_dir.join(format!("OpenXLauncher_backup_{}", timestamp));
-            let _ = fs::copy(&target_binary, &backup_path);
-        }
-
-        let source_file = if extracted {
-            self.find_executable_in_dir(temp_dir, "linux")?
-        } else {
-            download_path.clone()
-        };
-
-        let script = format!(
-            "#!/bin/bash\n\
-            set -e\n\
-            echo \"Installing update...\"\n\
-            sleep 3\n\
-            cp \"{source}\" \"{target}\"\n\
-            chmod +x \"{target}\"\n\
-            echo \"Install complete, restarting...\"\n\
-            nohup \"{target}\" &\n\
-            rm -rf \"{temp}\"\n\
-            rm -- \"$0\"",
-            source = source_file.to_string_lossy(),
-            target = target_binary.to_string_lossy(),
-            temp = temp_dir.to_string_lossy()
-        );
-
-        let script_path = exe_dir.join("update_installer.sh");
-        fs::write(&script_path, &script)
-            .map_err(|e| format!("Write install script failed: {}", e))?;
-
-        self.make_executable(&script_path)?;
-
-        // 让安装脚本在父进程退出后继续存活：nohup + setsid + 重定向到 /dev/null
-        let detached = std::process::Command::new("/bin/sh")
-            .args([
-                "-c",
-                "nohup setsid /bin/sh \"$0\" </dev/null >/dev/null 2>&1 &",
-                script_path.to_string_lossy().as_ref(),
-            ])
-            .spawn()
-            .map_err(|e| format!("Start installer failed: {}", e))?;
-        let _ = detached;
-
-        std::process::exit(0);
-    }
-
-    #[allow(unused_variables)]
-    fn make_executable(&self, path: &PathBuf) -> Result<(), String> {
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let perms = fs::Permissions::from_mode(0o755);
-            fs::set_permissions(path, perms)
-                .map_err(|e| format!("Set script permissions failed: {}", e))?;
-        }
-        Ok(())
-    }
-
-    fn extract_if_needed(&self, source: &PathBuf, dest: &PathBuf) -> Result<bool, String> {
-        let ext = source
-            .extension()
-            .and_then(|e| e.to_str())
-            .unwrap_or("")
-            .to_lowercase();
-
-        match ext.as_str() {
-            "zip" => {
-                let file = fs::File::open(source).map_err(|e| e.to_string())?;
-                let mut archive = zip::ZipArchive::new(file).map_err(|e| e.to_string())?;
-
-                let canonical_dest = dest
-                    .canonicalize()
-                    .or_else(|_| {
-                        fs::create_dir_all(dest).ok();
-                        dest.canonicalize()
-                    })
-                    .map_err(|e| format!("无法解析目标目录: {}", e))?;
-
-                for i in 0..archive.len() {
-                    let mut file = archive.by_index(i).map_err(|e| e.to_string())?;
-
-                    let safe_rel_path = file.enclosed_name().ok_or_else(|| {
-                        format!("非法的 zip 条目路径（可能包含路径遍历）: {}", file.name())
-                    })?;
-
-                    if safe_rel_path.is_absolute() {
-                        return Err(format!("拒绝解压绝对路径条目: {}", file.name()));
-                    }
-
-                    if safe_rel_path
-                        .components()
-                        .any(|c| matches!(c, std::path::Component::ParentDir))
-                    {
-                        return Err(format!("拒绝解压包含上级目录引用的条目: {}", file.name()));
-                    }
-
-                    let outpath = canonical_dest.join(&safe_rel_path);
-
-                    if file.is_dir() {
-                        fs::create_dir_all(&outpath).map_err(|e| e.to_string())?;
-                    } else {
-                        if let Some(p) = outpath.parent() {
-                            fs::create_dir_all(p).map_err(|e| e.to_string())?;
-                        }
-
-                        if let Ok(real_parent) = outpath.parent().unwrap().canonicalize() {
-                            let real_final = real_parent.join(outpath.file_name().unwrap());
-                            if !real_final.starts_with(&canonical_dest) {
-                                return Err(format!(
-                                    "解压后路径越界（目录包含符号链接？）: {}",
-                                    file.name()
-                                ));
-                            }
-                        }
-
-                        let mut outfile = fs::File::create(&outpath).map_err(|e| e.to_string())?;
-                        std::io::copy(&mut file, &mut outfile).map_err(|e| e.to_string())?;
-
-                        #[cfg(unix)]
-                        {
-                            use std::os::unix::fs::PermissionsExt;
-                            if let Some(mode) = file.unix_mode() {
-                                let _ =
-                                    fs::set_permissions(&outpath, fs::Permissions::from_mode(mode));
-                            }
-                        }
-                    }
-                }
-                Ok(true)
-            }
-            _ => Ok(false),
-        }
-    }
-
-    fn find_executable_in_dir(&self, dir: &PathBuf, os: &str) -> Result<PathBuf, String> {
-        let expected_name = match os {
-            "windows" => "OpenXLauncher.exe",
-            "macos" => "OpenXLauncher",
-            "linux" => "OpenXLauncher",
-            _ => "OpenXLauncher",
-        };
-
-        let search_paths = vec![
-            dir.join(expected_name),
-            dir.join("OpenXLauncher"),
-            dir.join("bin").join(expected_name),
-            dir.join("bin").join("OpenXLauncher"),
-        ];
-
-        for path in &search_paths {
-            if path.exists() {
-                return Ok(path.clone());
-            }
-        }
-
-        self.find_file_recursive(dir, expected_name)
-    }
-
-    fn find_file_recursive(&self, dir: &PathBuf, name: &str) -> Result<PathBuf, String> {
-        if dir.is_dir() {
-            for entry in fs::read_dir(dir).map_err(|e| e.to_string())? {
-                let entry = entry.map_err(|e| e.to_string())?;
-                let path = entry.path();
-                if path.is_dir() {
-                    if let Ok(found) = self.find_file_recursive(&path, name) {
-                        return Ok(found);
-                    }
-                } else if path.file_name().map(|f| f == name).unwrap_or(false) {
-                    return Ok(path);
-                }
-            }
-        }
-        Err(format!("找不到可执行文件: {}", name))
-    }
-
-    fn find_app_bundle_in_dir(&self, dir: &PathBuf) -> Result<PathBuf, String> {
-        let search_paths = vec![
-            dir.join("OpenXLauncher.app"),
-            dir.join("OpenXLauncher-macos").join("OpenXLauncher.app"),
-            dir.join("OpenXLauncher-aarch64").join("OpenXLauncher.app"),
-        ];
-
-        for path in &search_paths {
-            if path.exists() && path.is_dir() {
-                return Ok(path.clone());
-            }
-        }
-
-        self.find_app_bundle_recursive(dir)
-    }
-
-    fn find_app_bundle_recursive(&self, dir: &PathBuf) -> Result<PathBuf, String> {
-        if dir.is_dir() {
-            for entry in fs::read_dir(dir).map_err(|e| e.to_string())? {
-                let entry = entry.map_err(|e| e.to_string())?;
-                let path = entry.path();
-                if path.is_dir() {
-                    if path.extension().map(|e| e == "app").unwrap_or(false) {
-                        return Ok(path);
-                    }
-                    if let Ok(found) = self.find_app_bundle_recursive(&path) {
-                        return Ok(found);
-                    }
-                }
-            }
-        }
-        Err("找不到 .app 包".to_string())
-    }
-
-    fn copy_dir_recursive(&self, src: &PathBuf, dst: &PathBuf) -> Result<(), String> {
-        if !dst.exists() {
-            fs::create_dir_all(dst).map_err(|e| e.to_string())?;
-        }
-        for entry in fs::read_dir(src).map_err(|e| e.to_string())? {
-            let entry = entry.map_err(|e| e.to_string())?;
-            let path = entry.path();
-            let target_path = dst.join(entry.file_name());
-            if path.is_dir() {
-                self.copy_dir_recursive(&path, &target_path)?;
-            } else {
-                fs::copy(&path, &target_path).map_err(|e| e.to_string())?;
-            }
-        }
-        Ok(())
     }
 }
 
@@ -1427,44 +943,6 @@ mod tests {
     const HASH: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 
     #[test]
-    fn parses_lighting_team_release_body_and_asset_metadata() {
-        let json = format!(
-            r#"{{
-                "tag_name":"1.2.0",
-                "name":"Stable 1.2.0",
-                "body":{{
-                    "update_info":"release notes",
-                    "sum":{{"OpenXLauncher_1.2.0_x64-setup.exe":"{HASH}"}}
-                }},
-                "prerelease":false,
-                "assets":[{{
-                    "name":"OpenXLauncher_1.2.0_x64-setup.exe",
-                    "platform":"windows-x64",
-                    "size":1234,
-                    "browser_download_url":"https://7463-tcb-charcaius-d0gpaxdu6e2408df8-1306022435.tcb.qcloud.la/RTL/releases/1.2.0/OpenXLauncher_1.2.0_x64-setup.exe"
-                }}]
-            }}"#
-        );
-
-        let releases = parse_release_response(&json).expect("Lighting-Team response must parse");
-
-        assert_eq!(releases.len(), 1);
-        assert_eq!(releases[0].version.to_string(), "1.2.0");
-        assert_eq!(releases[0].notes, "release notes");
-        assert_eq!(
-            releases[0]
-                .checksums
-                .get("openxlauncher_1.2.0_x64-setup.exe")
-                .map(String::as_str),
-            Some(HASH)
-        );
-        assert_eq!(
-            releases[0].assets[0].platform.as_deref(),
-            Some("windows-x64")
-        );
-    }
-
-    #[test]
     fn parses_github_release_array_and_text_body() {
         let json = r#"[{
             "tag_name":"v1.1.9",
@@ -1499,30 +977,10 @@ mod tests {
 
         assert_eq!(
             select_latest_release(&releases, "1.1.0").map(|release| release.version.to_string()),
-            Some("1.2.0".to_string())
+            Some("1.4.0-beta.1".to_string())
         );
-        assert!(select_latest_release(&releases, "1.2.0").is_none());
+        assert!(select_latest_release(&releases, "1.4.0-beta.1").is_none());
         assert!(select_latest_release(&releases, "2.0.0").is_none());
-    }
-
-    #[test]
-    fn prefers_lighting_team_metadata_when_versions_are_equal() {
-        let primary = r#"{
-            "tag_name":"1.2.0","name":"1.2.0",
-            "body":{"update_info":"primary notes","sum":{}},
-            "prerelease":false,"assets":[]
-        }"#;
-        let github = r#"[{
-            "tag_name":"1.2.0","name":"1.2.0",
-            "body":"GitHub notes","prerelease":false,"assets":[]
-        }]"#;
-        let mut releases = parse_release_response(primary).expect("primary fixture must parse");
-        releases.extend(parse_release_response(github).expect("GitHub fixture must parse"));
-
-        assert_eq!(
-            select_latest_release(&releases, "1.1.0").map(|release| release.notes.as_str()),
-            Some("primary notes")
-        );
     }
 
     #[test]
@@ -1552,8 +1010,8 @@ mod tests {
             "tag_name":"1.2.0","name":"1.2.0",
             "body":{"update_info":"","sum":{}},"prerelease":false,
             "assets":[
-                {"name":"OpenXLauncher_1.2.0_aarch64.dmg","platform":"macos-aarch64","size":1,"browser_download_url":"https://7463-tcb-charcaius-d0gpaxdu6e2408df8-1306022435.tcb.qcloud.la/RTL/releases/1.2.0/arm.dmg"},
-                {"name":"OpenXLauncher_1.2.0_x64.dmg","platform":"macos-x64","size":1,"browser_download_url":"https://7463-tcb-charcaius-d0gpaxdu6e2408df8-1306022435.tcb.qcloud.la/RTL/releases/1.2.0/x64.dmg"}
+                {"name":"OpenXLauncher_1.2.0_aarch64.dmg","platform":"macos-aarch64","size":1,"browser_download_url":"https://github.com/CubicEi/OpenXLaucher/releases/download/1.2.0/arm.dmg"},
+                {"name":"OpenXLauncher_1.2.0_x64.dmg","platform":"macos-x64","size":1,"browser_download_url":"https://github.com/CubicEi/OpenXLaucher/releases/download/1.2.0/x64.dmg"}
             ]
         }"#;
         let releases = parse_release_response(json).expect("fixture must parse");
@@ -1567,7 +1025,7 @@ mod tests {
 
     #[test]
     fn signed_download_url_produces_a_plain_filename() {
-        let url = "https://7463-tcb-charcaius-d0gpaxdu6e2408df8-1306022435.tcb.qcloud.la/RTL/releases/1.2.0/OpenXLauncher_1.2.0_x64-setup.exe?sign=abc&t=123";
+        let url = "https://github.com/CubicEi/OpenXLaucher/releases/download/1.2.0/OpenXLauncher_1.2.0_x64-setup.exe?sign=abc&t=123";
 
         assert_eq!(
             filename_from_download_url(url).as_deref(),
@@ -1590,59 +1048,21 @@ mod tests {
     }
 
     #[test]
-    fn falls_back_to_github_asset_for_the_same_latest_version() {
-        let primary = r#"{
-            "tag_name":"1.2.0","name":"1.2.0",
-            "body":"primary notes","prerelease":false,"assets":[]
-        }"#;
-        let github = r#"[{
-            "tag_name":"1.2.0","name":"1.2.0",
-            "body":"GitHub notes","prerelease":false,
-            "assets":[{
-                "name":"OpenXLauncher_1.2.0_x64-setup.exe","size":1,
-                "browser_download_url":"https://github.com/CubicEi/OpenXLaucher/releases/download/1.2.0/OpenXLauncher_1.2.0_x64-setup.exe"
-            }]
+    fn prefers_portable_exe_over_setup_on_windows() {
+        let json = r#"[{
+            "tag_name":"1.2.0","name":"1.2.0","body":"","prerelease":false,
+            "assets":[
+                {"name":"OpenXLauncher_1.2.0_x64-setup.exe","size":1,
+                 "browser_download_url":"https://github.com/CubicEi/OpenXLaucher/releases/download/1.2.0/setup.exe"},
+                {"name":"OpenXLauncher_0.3.0-beta_windows-x86_64.exe","size":2,
+                 "browser_download_url":"https://github.com/CubicEi/OpenXLaucher/releases/download/1.2.0/OpenXLauncher.exe"}
+            ]
         }]"#;
-        let mut releases = parse_release_response_for_source(primary, ReleaseSource::LightingTeam)
-            .expect("primary fixture must parse");
-        releases.extend(
-            parse_release_response_for_source(github, ReleaseSource::GitHub)
-                .expect("GitHub fixture must parse"),
-        );
-
-        let (release, asset) = select_latest_candidate(&releases, "1.1.0", "windows-x86_64")
-            .expect("GitHub must supply the usable asset");
-        assert_eq!(release.notes, "GitHub notes");
-        assert_eq!(asset.name, "OpenXLauncher_1.2.0_x64-setup.exe");
-    }
-
-    #[test]
-    fn same_version_candidate_never_uses_prerelease_metadata() {
-        let primary = r#"{
-            "tag_name":"1.2.0","name":"1.2.0 beta","body":{"update_info":"beta","sum":{}},
-            "prerelease":true,
-            "assets":[{
-                "name":"OpenXLauncher_1.2.0_x64-setup.exe","platform":"windows-x64","size":1,
-                "browser_download_url":"https://7463-tcb-charcaius-d0gpaxdu6e2408df8-1306022435.tcb.qcloud.la/RTL/releases/1.2.0/OpenXLauncher_1.2.0_x64-setup.exe"
-            }]
-        }"#;
-        let github = r#"[{
-            "tag_name":"1.2.0","name":"1.2.0","body":"stable","prerelease":false,
-            "assets":[{
-                "name":"OpenXLauncher_1.2.0_x64-setup.exe","size":1,
-                "browser_download_url":"https://github.com/CubicEi/OpenXLaucher/releases/download/1.2.0/OpenXLauncher_1.2.0_x64-setup.exe"
-            }]
-        }]"#;
-        let mut releases = parse_release_response_for_source(primary, ReleaseSource::LightingTeam)
-            .expect("primary fixture must parse");
-        releases.extend(
-            parse_release_response_for_source(github, ReleaseSource::GitHub)
-                .expect("GitHub fixture must parse"),
-        );
-
-        let (release, _) = select_latest_candidate(&releases, "1.1.0", "windows-x86_64")
-            .expect("stable GitHub release must be selected");
-        assert_eq!(release.notes, "stable");
+        let releases = parse_release_response(json).expect("fixture must parse");
+        let asset = UpdateFetcher::select_asset(&releases[0], "windows-x86_64")
+            .expect("must select portable exe");
+        assert!(asset.name.contains("windows-x86_64"));
+        assert!(!asset.name.contains("setup"));
     }
 
     #[test]

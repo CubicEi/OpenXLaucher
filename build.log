@@ -1,6 +1,6 @@
 
 
-> openxlauncher@0.2.0-beta build D:\programing\MCprojects\OpenXLauncher
+> openxlauncher@0.3.0-beta build D:\programing\MCprojects\OpenXLauncher
 > next build
 
 ▲ Next.js 16.1.6 (Turbopack)
@@ -8,14 +8,14 @@
   · optimizePackageImports
 
   Creating an optimized production build ...
-✓ Compiled successfully in 20.6s
+✓ Compiled successfully in 9.7s
   Running TypeScript ...
   Collecting page data using 11 workers ...
   Generating static pages using 11 workers (0/32) ...
   Generating static pages using 11 workers (8/32) 
   Generating static pages using 11 workers (16/32) 
   Generating static pages using 11 workers (24/32) 
-✓ Generating static pages using 11 workers (32/32) in 1463.9ms
+✓ Generating static pages using 11 workers (32/32) in 574.6ms
   Finalizing page optimization ...
 
 Route (app)

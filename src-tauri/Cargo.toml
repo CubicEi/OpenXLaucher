@@ -1,7 +1,8 @@
 [package]
 name = "openxlauncher"
-version = "0.2.0-beta"
-default-run = "openxlauncher"
+# Crate placeholder only; app version is read from ../package.json in build.rs (LAUNCHER_VERSION).
+version = "0.0.0"
+default-run = "OpenXLauncher"
 description = "OpenXLauncher - A Modern Minecraft Launcher"
 authors = ["Lighting-Team"]
 license = "GNU GPL v3.0"
@@ -14,6 +15,10 @@ rust-version = "1.77.2"
 [lib]
 name = "openxlauncher_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
+
+[[bin]]
+name = "OpenXLauncher"
+path = "src/main.rs"
 
 [build-dependencies]
 tauri-build = { version = "2.5.4", features = [] }

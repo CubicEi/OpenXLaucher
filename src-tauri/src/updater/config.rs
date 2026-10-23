@@ -7,19 +7,11 @@ use std::time::{SystemTime, UNIX_EPOCH};
 const CONFIG_FILE_NAME: &str = "launcher.json";
 const MIN_CHECK_INTERVAL_SECONDS: i64 = 5;
 
-const LIGHTING_TEAM_UPDATE_ENDPOINT: &str =
-    "http://update-service.lighting-team.com/api/v1/versions";
-const GITHUB_UPDATE_ENDPOINT: &str =
+pub const GITHUB_UPDATE_ENDPOINT: &str =
     "https://api.github.com/repos/CubicEi/OpenXLaucher/releases";
-const LIGHTING_TEAM_ASSET_HOST: &str =
-    "7463-tcb-charcaius-d0gpaxdu6e2408df8-1306022435.tcb.qcloud.la";
 
 /// 允许的更新下载域名白名单。release URL 或重定向目标必须落在这些域名上。
-pub const TRUSTED_DOWNLOAD_HOSTS: &[&str] = &[
-    "github.com",
-    "githubusercontent.com",
-    LIGHTING_TEAM_ASSET_HOST,
-];
+pub const TRUSTED_DOWNLOAD_HOSTS: &[&str] = &["github.com", "githubusercontent.com"];
 
 /// 发布 Release 时，可选地在 Release body 里放一个 SHA-256 清单，匹配格式：
 ///   `SHA256 (filename) = hexhash`  或  `hexhash  filename`  或  `hexhash *filename`
@@ -80,7 +72,7 @@ impl Default for UpdateConfig {
     fn default() -> Self {
         Self {
             last_check_time: None,
-            current_version: env!("CARGO_PKG_VERSION").to_string(),
+            current_version: crate::app_version::VERSION.to_string(),
             target_version: None,
             changelog: None,
             target_os: None,
@@ -127,13 +119,10 @@ pub fn is_trusted_release_asset_url(url: &str) -> bool {
         return false;
     };
 
-    match host {
-        "github.com" => parsed
+    host == "github.com"
+        && parsed
             .path()
-            .starts_with("/CubicEi/OpenXLaucher/releases/download/"),
-        LIGHTING_TEAM_ASSET_HOST => parsed.path().starts_with("/RTL/releases/"),
-        _ => false,
-    }
+            .starts_with("/CubicEi/OpenXLaucher/releases/download/")
 }
 
 pub fn config_dir() -> String {
@@ -174,8 +163,33 @@ fn get_current_timestamp() -> i64 {
         .as_secs() as i64
 }
 
-pub fn get_update_endpoints() -> [&'static str; 2] {
-    [LIGHTING_TEAM_UPDATE_ENDPOINT, GITHUB_UPDATE_ENDPOINT]
+pub fn get_update_endpoint() -> &'static str {
+    GITHUB_UPDATE_ENDPOINT
+}
+
+/// 更新包与替换脚本使用的系统临时目录（如 `%TEMP%\OpenXLauncher`）。
+pub fn update_temp_root() -> PathBuf {
+    std::env::temp_dir().join("OpenXLauncher")
+}
+
+pub fn update_download_dir() -> PathBuf {
+    update_temp_root().join("updates")
+}
+
+/// 读取 `launcher.json` 中的界面语言（用于更新脚本弹窗文案）。
+pub fn read_ui_language() -> String {
+    let path = launcher_config_path();
+    if !path.exists() {
+        return "zh-CN".to_string();
+    }
+    let text = fs::read_to_string(&path).unwrap_or_default();
+    let value: Value = serde_json::from_str(&text).unwrap_or(Value::Null);
+    value
+        .get("general")
+        .and_then(|g| g.get("language"))
+        .and_then(|l| l.as_str())
+        .unwrap_or("zh-CN")
+        .to_string()
 }
 
 pub fn get_update_config() -> UpdateConfig {
@@ -407,12 +421,6 @@ mod tests {
         assert!(is_trusted_download_url(
             "https://release-assets.githubusercontent.com/github-production-release-asset/app.exe"
         ));
-        assert!(is_trusted_download_url(
-            "https://7463-tcb-charcaius-d0gpaxdu6e2408df8-1306022435.tcb.qcloud.la/RTL/releases/1.2.0/app.exe"
-        ));
-        assert!(!is_trusted_download_url(
-            "http://7463-tcb-charcaius-d0gpaxdu6e2408df8-1306022435.tcb.qcloud.la/RTL/releases/1.2.0/app.exe"
-        ));
         assert!(!is_trusted_download_url(
             "https://gitcode.com/bubulaladdi/RTLauncher/releases/download/1.2.0/app.exe"
         ));
@@ -426,14 +434,8 @@ mod tests {
         assert!(is_trusted_release_asset_url(
             "https://github.com/CubicEi/OpenXLaucher/releases/download/1.2.0/app.exe"
         ));
-        assert!(is_trusted_release_asset_url(
-            "https://7463-tcb-charcaius-d0gpaxdu6e2408df8-1306022435.tcb.qcloud.la/RTL/releases/1.2.0/app.exe"
-        ));
         assert!(!is_trusted_release_asset_url(
             "https://github.com/another-owner/another-repo/releases/download/1.2.0/app.exe"
-        ));
-        assert!(!is_trusted_release_asset_url(
-            "https://another-bucket.tcb.qcloud.la/RTL/releases/1.2.0/app.exe"
         ));
         assert!(!is_trusted_release_asset_url(
             "https://release-assets.githubusercontent.com/github-production-release-asset/app.exe"

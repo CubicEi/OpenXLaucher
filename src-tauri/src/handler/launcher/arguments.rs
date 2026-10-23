@@ -758,7 +758,7 @@ pub(super) fn build_jvm_arguments_inner(
                                                 replaced.replace("${launcher_name}", "OpenXLauncher");
                                             replaced = replaced.replace(
                                                 "${launcher_version}",
-                                                env!("CARGO_PKG_VERSION"),
+                                                crate::app_version::VERSION,
                                             );
                                             // 剩余的${}格式参数转换为{}格式（与游戏参数保持一致）
                                             let re = Regex::new(r"\$\{[^}]+\}").unwrap();
@@ -1930,7 +1930,7 @@ pub(super) fn build_jvm_arguments_inner(
                 result = result.replace("${natives_directory}", &jvm_natives_dir);
                 result = result.replace("${version_name}", &version_name);
                 result = result.replace("${launcher_name}", "OpenXLauncher");
-                result = result.replace("${launcher_version}", env!("CARGO_PKG_VERSION"));
+                result = result.replace("${launcher_version}", crate::app_version::VERSION);
 
                 // ===== 关键修复：替换 ${classpath} 占位符 =====
                 // Forge/NeoForge 在 -cp 参数的 value 里用 ${classpath} 来引用整个 classpath

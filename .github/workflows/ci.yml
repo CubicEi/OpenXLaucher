@@ -9,9 +9,7 @@ on:
       - achieve-RTLauncher
     types: [opened, synchronize, labeled]
 
-# 构建产物统一命名（与 0.2.0-beta Release 保持一致），修改版本时只需更新这里
-env:
-  APP_VERSION: 0.2.0-beta
+# 构建产物命名使用 package.json 中的 version
 
 jobs:
   test-tauri:
@@ -49,7 +47,7 @@ jobs:
             name: 'Linux Portable'
             artifact_name: 'linuxx64-portable'
             bundle_path: |
-              src-tauri/target/release/openxlauncher
+              src-tauri/target/release/OpenXLauncher
               src-tauri/install-deps.sh
               src-tauri/PORTABLE_README.md
           - platform: 'windows-latest'
@@ -75,6 +73,10 @@ jobs:
         with:
           node-version: 24
           cache: 'pnpm'
+
+      - name: Set APP_VERSION from package.json
+        shell: bash
+        run: echo "APP_VERSION=$(node -p "require('./package.json').version")" >> "$GITHUB_ENV"
 
       # --- 2. Rust 环境与增量编译缓存 ---
       - name: Setup Rust toolchain
@@ -121,7 +123,7 @@ jobs:
           $certBytes = [Convert]::FromBase64String($env:CERT_BASE64)
           $certPath = Join-Path $env:RUNNER_TEMP "signing-cert.pfx"
           [System.IO.File]::WriteAllBytes($certPath, $certBytes)
-          $signTargets = @("src-tauri/target/release/openxlauncher.exe")
+          $signTargets = @("src-tauri/target/release/OpenXLauncher.exe")
           $signTargets += @(Get-ChildItem -Path "src-tauri/target/release/bundle/nsis/*-setup.exe" -File | ForEach-Object { $_.FullName })
           foreach ($target in $signTargets) {
             $signArgs = @(

@@ -2,6 +2,7 @@
 #[macro_use]
 extern crate log;
 
+mod app_version;
 #[allow(dead_code)]
 mod app_paths;
 mod auth;
@@ -416,6 +417,9 @@ pub fn run() {
 
             #[cfg(not(target_os = "macos"))]
             let _ = &window;
+
+            let _ = window.show();
+            updater::update_ack::write_update_ack_if_requested();
 
             #[cfg(target_os = "macos")]
             unsafe {
