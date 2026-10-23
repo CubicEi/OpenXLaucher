@@ -3,6 +3,24 @@ use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+fn configure_no_window(cmd: &mut Command) {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+}
+
+fn command_no_window(program: &str) -> Command {
+    let mut cmd = Command::new(program);
+    configure_no_window(&mut cmd);
+    cmd
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct JavaInstallation {
     pub path: String,
@@ -55,7 +73,8 @@ fn pick_detect_exe(java_path: &str) -> String {
 }
 fn try_show_settings(detect_exe: &str, java_path: &str) -> Option<ValidatedJava> {
     // 使用 -version 而不是 -XshowSettings:properties，避免某些Java版本对额外参数的兼容性问题
-    let output = Command::new(detect_exe)
+    let mut cmd = command_no_window(detect_exe);
+    let output = cmd
         .arg("-version")
         // 清除全局 JAVA_* 选项环境变量，避免混入 --add-opens 等参数导致
         // 识别失败（尤其 Java 8 不识别 --add-opens 时 java -version 会直接报错）。
@@ -96,7 +115,8 @@ fn try_show_settings(detect_exe: &str, java_path: &str) -> Option<ValidatedJava>
     })
 }
 fn try_version_flag(detect_exe: &str, java_path: &str) -> Option<ValidatedJava> {
-    let output = Command::new(detect_exe)
+    let mut cmd = command_no_window(detect_exe);
+    let output = cmd
         .arg("-version")
         // 同上：清除全局 JAVA_* 选项环境变量，确保 java -version 结果可信
         .env_remove("JAVA_TOOL_OPTIONS")
@@ -302,7 +322,7 @@ fn find_java_in_path() -> Vec<String> {
     } else {
         vec!["-a", "java"]
     };
-    if let Ok(output) = Command::new(which_cmd)
+    if let Ok(output) = command_no_window(which_cmd)
         .args(&args)
         .stderr(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())

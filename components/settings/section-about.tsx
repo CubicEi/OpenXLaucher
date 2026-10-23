@@ -9,6 +9,11 @@ import { useI18n } from "@/components/i18n/use-i18n";
 import { invoke } from "@tauri-apps/api/core";
 import { listenLauncherUpdateProgress } from "@/lib/launcher-update-progress";
 import { LauncherUpdateProgressBar } from "@/components/settings/launcher-update-progress-bar";
+import {
+  markUpToDateAndSuppressAutoCheck,
+  resetUpdateCheckSuppression,
+  shouldSkipAutomaticUpdateCheck,
+} from "@/lib/launcher-update-session";
 
 type UpdateState =
   | { kind: "idle" }
@@ -38,7 +43,10 @@ export function AboutSection() {
     })();
   }, []);
 
-  const check = async () => {
+  const check = async (userInitiated = false) => {
+    if (userInitiated) {
+      resetUpdateCheckSuppression();
+    }
     setState({ kind: "checking" });
     try {
       const result = await invoke<{
@@ -54,6 +62,7 @@ export function AboutSection() {
         });
       } else {
         setState({ kind: "up-to-date" });
+        markUpToDateAndSuppressAutoCheck();
       }
     } catch (e) {
       setState({ kind: "error", message: e instanceof Error ? e.message : String(e) });
@@ -79,10 +88,10 @@ export function AboutSection() {
     }
   };
 
-  // 首次进入自动检查一次
+  // 首次进入自动检查一次（启动时已检查或已确认最新则跳过）
   useEffect(() => {
     const t = setTimeout(() => {
-      if (state.kind === "idle") check();
+      if (state.kind === "idle" && !shouldSkipAutomaticUpdateCheck()) check();
     }, 800);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -128,7 +137,7 @@ export function AboutSection() {
               {state.kind === "error" && <span className="text-destructive">{t("settings.about.updateCheckFailed")}</span>}
             </div>
             <div className="flex items-center gap-2">
-              <Button size="sm" variant="outline" onClick={check} disabled={state.kind === "checking"} className="gap-1.5 h-8">
+              <Button size="sm" variant="outline" onClick={() => check(true)} disabled={state.kind === "checking"} className="gap-1.5 h-8">
                 <RefreshCcw className={cn("size-3.5", state.kind === "checking" && "animate-spin")} />
                 {t("settings.appUpdater.checkForUpdates")}
               </Button>

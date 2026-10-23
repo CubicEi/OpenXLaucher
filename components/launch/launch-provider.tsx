@@ -12,6 +12,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { useAccountContext } from "@/components/accounts/account-provider";
 import { isTauriRuntime } from "@/lib/tauri-runtime";
+import { isAutoJavaSelection, JAVA_AUTO_SELECT_PATH } from "@/lib/java-paths";
 import { appLog } from "@/lib/runtime-log";
 import { readMigratedLocalStorage } from "@/lib/storage-migrate";
 import { log4jParser } from "@/components/launch/log4j-progress-parser";
@@ -175,7 +176,7 @@ export function LaunchProvider({ children }: { children: React.ReactNode }) {
           ...(autoMemory
             ? { maxMemory: String(setup.recommended_memory_mb) }
             : {}),
-          ...(pathsCfg.selected_java_path ? { javaPath: pathsCfg.selected_java_path } : {}),
+          javaPath: pathsCfg.selected_java_path || JAVA_AUTO_SELECT_PATH,
           ...(pathsCfg.selected_minecraft_path
             ? { minecraftPath: pathsCfg.selected_minecraft_path }
             : {}),
@@ -385,7 +386,7 @@ export function LaunchProvider({ children }: { children: React.ReactNode }) {
         setErrorMessage(t("launch.provider.setTheMinecraftGameDirectory"));
         return;
       }
-      if (!merged.javaPath) {
+      if (!isAutoJavaSelection(merged.javaPath) && !merged.javaPath) {
         setErrorMessage(t("launch.provider.setAJavaPath"));
         return;
       }

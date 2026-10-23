@@ -9,6 +9,8 @@ use std::path::PathBuf;
 
 use arguments::{build_jvm_arguments_inner, VersionJson};
 use java_runtime::{get_java_major_version, required_java_major_from_jar};
+use crate::downloader::mod_loader_installer_shared::pick_java_executable;
+use crate::handler::config::is_auto_java_selection;
 use crate::handler::game_dir::compute_game_directory;
 use process::run_command;
 use tauri::Emitter;
@@ -41,7 +43,22 @@ pub fn launch_game(
 ) -> Result<String, String> {
     crate::handler::system::schedule_launcher_profiles_check();
 
-    let mut resolved_java_path = java_path.to_string();
+    let mut resolved_java_path = if is_auto_java_selection(java_path) {
+        let picked = pick_java_executable(minecraft_version);
+        if picked.is_empty() {
+            return Err(
+                "未配置可用的 Java：请先扫描或添加 Java，或下载对应版本的 Java 运行时".to_string(),
+            );
+        }
+        println!(
+            "[启动器] 自动选择 Java（游戏版本 {}）: {}",
+            minecraft_version,
+            picked
+        );
+        picked
+    } else {
+        java_path.to_string()
+    };
     let version_json_path = PathBuf::from(minecraft_path)
         .join("versions")
         .join(version_name)
@@ -76,17 +93,25 @@ pub fn launch_game(
             version_name, major
         );
 
-        let current_major = crate::handler::java_scanner::validate_java_path(java_path.to_string())
-            .ok()
-            .map(|inst| inst.major_version);
+        let current_major =
+            crate::handler::java_scanner::validate_java_path(resolved_java_path.clone())
+                .ok()
+                .map(|inst| inst.major_version);
 
         let needs_swap = match current_major {
             Some(m) => {
-                println!("[启动器] 当前 Java 路径 {} 的大版本号 = {}", java_path, m);
+                println!(
+                    "[启动器] 当前 Java 路径 {} 的大版本号 = {}",
+                    resolved_java_path,
+                    m
+                );
                 m != major as i32
             }
             None => {
-                println!("[启动器] 当前 Java 路径 {} 无效或无法获取版本号", java_path);
+                println!(
+                    "[启动器] 当前 Java 路径 {} 无效或无法获取版本号",
+                    resolved_java_path
+                );
                 true
             }
         };
@@ -112,7 +137,7 @@ pub fn launch_game(
                     serde_json::json!({
                         "requiredMajor": major,
                         "versionName": version_name,
-                        "currentJavaPath": java_path,
+                        "currentJavaPath": resolved_java_path,
                     }),
                 );
                 return Err(format!(
@@ -126,10 +151,10 @@ pub fn launch_game(
             "[启动器] 版本 {} 的版本 json 中未找到 javaVersion 字段",
             version_name
         );
-        let java_major = get_java_major_version(java_path);
+        let java_major = get_java_major_version(&resolved_java_path);
         println!(
             "[启动器] Java 路径 {} 的大版本号 = {}",
-            java_path, java_major
+            resolved_java_path, java_major
         );
     }
 

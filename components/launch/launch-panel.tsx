@@ -23,6 +23,7 @@ import {
   Square,
 } from "lucide-react";
 import { useState, useEffect } from "react";
+import { isAutoJavaSelection } from "@/lib/java-paths";
 import type { LauncherPathsConfig } from "@/types";
 import { useI18n } from "@/components/i18n/use-i18n";
 import { LoaderIcon, inferLoaderKind } from "@/components/launch/loader-icon";
@@ -287,12 +288,15 @@ export function LaunchPanel() {
           <div className="rounded-lg bg-muted/50 p-2">
             <span className="block font-medium text-foreground">Java</span>
             <span className="truncate block">
-              {config.javaPath
-                ? (() => {
-                    const inst = javaInstallations?.[config.javaPath];
-                    return inst ? `Java ${inst.major_version}` : (config.javaPath.split("/").pop() || config.javaPath.split("\\").pop());
-                  })()
-                : t("common.notSet")}
+              {(() => {
+                if (!config.javaPath || isAutoJavaSelection(config.javaPath)) {
+                  return t("launch.config.javaAutoSelect");
+                }
+                const inst = javaInstallations?.[config.javaPath];
+                return inst
+                  ? `Java ${inst.major_version}`
+                  : config.javaPath.split("/").pop() || config.javaPath.split("\\").pop();
+              })()}
             </span>
           </div>
           <div className="rounded-lg bg-muted/50 p-2">

@@ -1,5 +1,7 @@
 use crate::downloader::concurrent_download::{self, DownloadTask};
-use crate::handler::config::{get_java_download_dir, get_launcher_paths_config};
+use crate::handler::config::{
+    get_java_download_dir, get_launcher_paths_config, is_auto_java_selection,
+};
 use anyhow::{anyhow, bail, Context, Result};
 use serde_json::Value;
 use sha1::{Digest, Sha1};
@@ -184,7 +186,9 @@ pub fn pick_java_executable(mc_version: &str) -> String {
             return p.clone();
         }
     }
-    if !selected_java.is_empty() && is_executable_file(Path::new(&selected_java)) {
+    if !is_auto_java_selection(&selected_java)
+        && is_executable_file(Path::new(&selected_java))
+    {
         println!("[JavaPicker] 使用 selected_java_path: {}", selected_java);
         return selected_java;
     }

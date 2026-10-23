@@ -27,6 +27,11 @@ import { useState, useEffect, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import type { LauncherPathsConfig } from "@/types";
 import { useI18n } from "@/components/i18n/use-i18n";
+import {
+  JAVA_AUTO_SELECT_PATH,
+  isAutoJavaSelection,
+} from "@/lib/java-paths";
+import { mergeJavaScanIntoPathsConfig } from "@/lib/java-scan-merge";
 
 interface MemoryInfo {
   totalMB: number;
@@ -64,6 +69,7 @@ function useSystemMemory(autoMemory: boolean): MemoryInfo {
 /** 路径列表条目 */
 function PathItem({
   path,
+  label,
   isSelected,
   isDefault,
   badge,
@@ -72,6 +78,7 @@ function PathItem({
   onRemove,
 }: {
   path: string;
+  label?: string;
   isSelected: boolean;
   isDefault?: boolean;
   badge?: string;
@@ -94,7 +101,7 @@ function PathItem({
       ) : (
         <Circle className="size-3 shrink-0 opacity-40" />
       )}
-      <span className="flex-1 break-all leading-snug">{path}</span>
+      <span className="flex-1 break-all leading-snug">{label ?? path}</span>
       {badge && (
         <span className="shrink-0 rounded px-1.5 py-0.5 text-[9px] font-medium bg-primary/10 text-primary leading-none">
           {badge}
@@ -146,7 +153,12 @@ export function LaunchConfigCard() {
 
   useEffect(() => {
     invoke<LauncherPathsConfig>("get_launcher_paths_config")
-      .then((cfg) => setPathsCfg(cfg))
+      .then((cfg) => {
+        const selected = isAutoJavaSelection(cfg.selected_java_path)
+          ? JAVA_AUTO_SELECT_PATH
+          : cfg.selected_java_path;
+        setPathsCfg({ ...cfg, selected_java_path: selected });
+      })
       .catch(() => {});
   }, []);
 
@@ -164,7 +176,11 @@ export function LaunchConfigCard() {
       try {
         await invoke("save_launcher_paths_config", { config: dedup });
       } catch { /* ignore */ }
-      if (dedup.selected_java_path) updateConfig({ javaPath: dedup.selected_java_path });
+      updateConfig({
+        javaPath: isAutoJavaSelection(dedup.selected_java_path)
+          ? JAVA_AUTO_SELECT_PATH
+          : dedup.selected_java_path,
+      });
       if (dedup.selected_minecraft_path) updateConfig({ minecraftPath: dedup.selected_minecraft_path });
     },
     [updateConfig]
@@ -315,36 +331,25 @@ ${result}
   const handleScanJava = async () => {
     setScanning(true);
     try {
-      type JavaInfo = { path: string; version: string; major_version: number; vendor: string; architecture: string; java_type: string };
-      const results = await invoke<JavaInfo[]>("search_java_installations");
+      const results = await invoke<
+        {
+          path: string;
+          version: string;
+          major_version: number;
+          vendor: string;
+          architecture: string;
+          java_type: string;
+        }[]
+      >("search_java_installations");
 
-      const installations: Record<string, JavaInfo> = {};
-
-      // 先处理已有的路径和验证信息
-      for (const oldPath of pathsCfg.java_paths) {
-        if (pathsCfg.java_installations?.[oldPath]) {
-          // 保留已有的验证信息
-          installations[oldPath] = pathsCfg.java_installations[oldPath] as JavaInfo;
-        }
-      }
-
-      // 扫描结果加入，只添加新的路径
-      for (const r of results) {
-        // 如果这个路径不在已有路径中，或者已有路径没有验证信息，才添加
-        if (!pathsCfg.java_paths.includes(r.path) || !pathsCfg.java_installations?.[r.path]) {
-          installations[r.path] = r;
-        }
-      }
-
-      // 合并所有路径，使用Set去重
-      const allPaths = [...pathsCfg.java_paths, ...results.map((r) => r.path)];
-      const newPaths = [...new Set(allPaths)];
-
+      const merged = mergeJavaScanIntoPathsConfig(pathsCfg, results);
+      const keepAuto = isAutoJavaSelection(pathsCfg.selected_java_path);
       const next = {
-        ...pathsCfg,
-        java_paths: newPaths,
-        java_installations: installations,
-        selected_java_path: pathsCfg.selected_java_path || (results.length > 0 ? results[0].path : ""),
+        ...merged,
+        selected_java_path: keepAuto
+          ? JAVA_AUTO_SELECT_PATH
+          : merged.selected_java_path ||
+            (results.length > 0 ? results[0].path : JAVA_AUTO_SELECT_PATH),
       };
       await savePaths(next);
     } catch { /* ignore */ }
@@ -459,6 +464,16 @@ ${result}
               </Button>
             </div>
           </div>
+          <PathItem
+            path={JAVA_AUTO_SELECT_PATH}
+            label={t("launch.config.javaAutoSelect")}
+            isSelected={isAutoJavaSelection(pathsCfg.selected_java_path)}
+            canRemove={false}
+            onSelect={() =>
+              savePaths({ ...pathsCfg, selected_java_path: JAVA_AUTO_SELECT_PATH })
+            }
+            onRemove={() => {}}
+          />
           {pathsCfg.java_paths.length === 0 ? (
             <p className="text-[10px] text-muted-foreground/60 px-1">
               {t("launch.config.clickScanToSearchAutomaticallyOrAddToChoose")}
@@ -482,7 +497,7 @@ ${result}
                       java_paths: nextPaths,
                       selected_java_path:
                         pathsCfg.selected_java_path === p
-                          ? (nextPaths[0] ?? "")
+                          ? JAVA_AUTO_SELECT_PATH
                           : pathsCfg.selected_java_path,
                     });
                   }}

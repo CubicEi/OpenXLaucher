@@ -14,6 +14,10 @@ import { invoke } from "@tauri-apps/api/core";
 import { useI18n } from "@/components/i18n/use-i18n";
 import type { AppLanguage } from "@/components/settings/settings-provider";
 import { listenLauncherUpdateProgress } from "@/lib/launcher-update-progress";
+import {
+  markUpToDateAndSuppressAutoCheck,
+  resetUpdateCheckSuppression,
+} from "@/lib/launcher-update-session";
 import { LauncherUpdateProgressBar } from "@/components/settings/launcher-update-progress-bar";
 
 /**
@@ -51,6 +55,9 @@ interface UpdateCheckResult {
 }
 
 async function checkInBackground(showError = false, language: AppLanguage = "zh-CN") {
+  if (showError) {
+    resetUpdateCheckSuppression();
+  }
   setAppUpdateState({ kind: "checking" });
   try {
     const result = await invoke<UpdateCheckResult>("check_for_updates", { force: true });
@@ -63,6 +70,7 @@ async function checkInBackground(showError = false, language: AppLanguage = "zh-
       });
     } else {
       setAppUpdateState({ kind: "up-to-date" });
+      markUpToDateAndSuppressAutoCheck();
       if (showError) {
         setTimeout(() => {
           window.alert(updateAlert(language, "当前已是最新版本 ✅", "You're up to date ✅"));

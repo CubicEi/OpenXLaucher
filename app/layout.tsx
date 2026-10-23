@@ -13,6 +13,7 @@ import { UIConfigProvider } from "@/components/ui-config/ui-config-provider";
 import { ThemeRuntimeProvider } from "@/components/themes/theme-runtime-provider";
 import { ThemeShell } from "@/components/themes/theme-shell";
 import { StartupUpdateNotifier } from "@/components/settings/startup-update-notifier";
+import { StartupJavaScan } from "@/components/settings/startup-java-scan";
 import { JavaIncompatibleDialog } from "@/components/launch/java-incompatible-dialog";
 
 export const metadata: Metadata = {
@@ -46,6 +47,7 @@ export default function RootLayout({
                           <DeferredGlobalFeatures />
                           <StartupRuntimeDependencyNotifier />
                           <StartupUpdateNotifier />
+                          <StartupJavaScan />
                           <JavaIncompatibleDialog />
                           <ThemeShell>{children}</ThemeShell>
                           <DownloadTaskList />

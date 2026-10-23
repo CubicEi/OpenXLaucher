@@ -300,6 +300,13 @@ fn is_valid_minecraft_directory(path: &Path) -> bool {
     false
 }
 
+/// 前端「由启动器自动选择」选项对应的占位路径（非真实可执行文件）
+pub const JAVA_AUTO_SELECT_PATH: &str = "@openxlauncher/auto-java";
+
+pub fn is_auto_java_selection(path: &str) -> bool {
+    path.is_empty() || path == JAVA_AUTO_SELECT_PATH
+}
+
 /// 存储在 launcher.json 中的路径配置
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LauncherPathsConfig {
@@ -323,7 +330,7 @@ impl Default for LauncherPathsConfig {
         let def_mc = default_minecraft_path();
         Self {
             java_paths: Vec::new(),
-            selected_java_path: String::new(),
+            selected_java_path: JAVA_AUTO_SELECT_PATH.to_string(),
             java_installations: HashMap::new(),
             minecraft_paths: vec![def_mc.clone()],
             selected_minecraft_path: def_mc.clone(),
@@ -388,7 +395,11 @@ pub fn get_launcher_paths_config() -> LauncherPathsConfig {
                         cfg.minecraft_paths.push(pcl2_path);
                     }
                 }
-                
+
+                if cfg.selected_java_path.is_empty() {
+                    cfg.selected_java_path = JAVA_AUTO_SELECT_PATH.to_string();
+                }
+
                 cfg
             }
             Err(_) => def,

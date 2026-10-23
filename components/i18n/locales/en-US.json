@@ -125,6 +125,7 @@
       "gameDirectory": "Game directory",
       "clickAddToSelectAGameDirectory": "Click Add to select a game directory",
       "javaPath": "Java path",
+      "javaAutoSelect": "Auto-select by launcher (recommended)",
       "scanning": "Scanning",
       "scan": "Scan",
       "clickScanToSearchAutomaticallyOrAddToChoose": "Click Scan to search automatically, or Add to choose Java manually",
@@ -424,7 +425,8 @@
       "updating": "Updating",
       "updateNow": "Update now",
       "installNow": "Install now",
-      "newVersionVVersionViewDetails": "New version v{version} · View details"
+      "newVersionVVersionViewDetails": "New version v{version} · View details",
+      "dismiss": "OK"
     },
     "download": {
       "downloads": "Downloads",
