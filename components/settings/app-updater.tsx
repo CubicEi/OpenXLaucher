@@ -16,8 +16,11 @@ import type { AppLanguage } from "@/components/settings/settings-provider";
 import { listenLauncherUpdateProgress } from "@/lib/launcher-update-progress";
 import {
   markUpToDateAndSuppressAutoCheck,
+  markUpdateCheckTimeout,
   resetUpdateCheckSuppression,
+  shouldResetSuppressionOnSettingsManualCheck,
 } from "@/lib/launcher-update-session";
+import { isUpdateCheckTimeoutError } from "@/lib/update-check";
 import { LauncherUpdateProgressBar } from "@/components/settings/launcher-update-progress-bar";
 
 /**
@@ -55,7 +58,7 @@ interface UpdateCheckResult {
 }
 
 async function checkInBackground(showError = false, language: AppLanguage = "zh-CN") {
-  if (showError) {
+  if (showError && shouldResetSuppressionOnSettingsManualCheck()) {
     resetUpdateCheckSuppression();
   }
   setAppUpdateState({ kind: "checking" });
@@ -79,6 +82,9 @@ async function checkInBackground(showError = false, language: AppLanguage = "zh-
     }
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
+    if (isUpdateCheckTimeoutError(msg)) {
+      markUpdateCheckTimeout(msg);
+    }
     setAppUpdateState({ kind: "error", message: msg });
     if (showError) {
       setTimeout(() => {

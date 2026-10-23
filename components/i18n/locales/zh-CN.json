@@ -680,6 +680,7 @@
     "upToDateMessage": "启动器已在最新版本，无需更新。",
     "checkFailed": "检查更新失败",
     "networkUnreachable": "网络不可达：无法连接 GitHub，请检查网络后重试。",
+    "checkTimeout": "检查更新超时：连接 GitHub 超过 10 秒无响应，请稍后在更新页面重试。",
     "preparedUpdateExpired": "已准备的更新已失效，请重新检查更新。",
     "checkForUpdates": "检查更新",
     "downloadUpdate": "下载更新",

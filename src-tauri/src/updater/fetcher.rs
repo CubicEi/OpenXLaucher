@@ -12,7 +12,10 @@ use super::config::{
     get_current_os, get_update_config, is_trusted_release_asset_url,
     is_valid_sha256_hex, save_update_config, should_check_update, update_download_dir, UpdateStatus,
 };
-use super::github_release::{fetch_latest_release_bundle, redirect_policy};
+use super::github_release::{
+    fetch_latest_release_bundle, redirect_policy, update_check_timeout_message,
+    UPDATE_CHECK_TIMEOUT_SECS,
+};
 use super::identity::{credentials_differ, local_identity_for_update};
 
 pub type UpdateProgressCallback = Arc<dyn Fn(f64) + Send + Sync>;
@@ -196,7 +199,7 @@ impl UpdateFetcher {
         );
 
         let client = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(30))
+            .timeout(std::time::Duration::from_secs(UPDATE_CHECK_TIMEOUT_SECS))
             .redirect(redirect_policy())
             .build()
             .map_err(|e| format!("创建 HTTP 客户端失败: {}", e))?;
@@ -207,14 +210,34 @@ impl UpdateFetcher {
             error
         })?;
 
-        let bundle = fetch_latest_release_bundle(&client)
-            .await
-            .map_err(|error| {
+        let bundle = match tokio::time::timeout(
+            std::time::Duration::from_secs(UPDATE_CHECK_TIMEOUT_SECS),
+            fetch_latest_release_bundle(&client),
+        )
+        .await
+        {
+            Ok(Ok(bundle)) => bundle,
+            Ok(Err(error)) => {
                 cfg.status = UpdateStatus::Error(error.clone());
                 let _ = save_update_config(cfg.clone());
                 log_updater("error", "拉取 Release 失败", Some(json!({ "error": error })));
-                error
-            })?;
+                return Err(error);
+            }
+            Err(_) => {
+                let error = update_check_timeout_message();
+                cfg.status = UpdateStatus::Error(error.clone());
+                let _ = save_update_config(cfg.clone());
+                log_updater(
+                    "error",
+                    "检查更新超时",
+                    Some(json!({
+                        "timeoutSecs": UPDATE_CHECK_TIMEOUT_SECS,
+                        "error": error,
+                    })),
+                );
+                return Err(error);
+            }
+        };
 
         let update_available = credentials_differ(&local_identity, &bundle.identity).map_err(
             |error| {

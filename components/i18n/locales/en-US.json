@@ -680,6 +680,7 @@
     "upToDateMessage": "The launcher is up to date. No updates needed.",
     "checkFailed": "Update check failed",
     "networkUnreachable": "Network unreachable: cannot connect to GitHub. Check your connection and try again.",
+    "checkTimeout": "Update check timed out: no response from GitHub within 10 seconds. Retry from the update page later.",
     "preparedUpdateExpired": "The prepared update is no longer available. Check for updates again.",
     "checkForUpdates": "Check for updates",
     "downloadUpdate": "Download update",

@@ -104,6 +104,9 @@ pub fn ensure_portable_self_hash() -> Result<(), String> {
 
 pub fn local_identity_for_update() -> Result<LocalIdentity, String> {
     if is_portable_build() {
+        if load_stored_build_identity().self_sha256.is_none() {
+            let _ = ensure_portable_self_hash();
+        }
         let stored = load_stored_build_identity();
         return Ok(LocalIdentity {
             self_sha256: stored.self_sha256,

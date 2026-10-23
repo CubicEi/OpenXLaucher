@@ -10,8 +10,10 @@ import { setAppUpdateState } from "@/components/settings/app-updater";
 import {
   markStartupUpdateCheckCompleted,
   markUpToDateAndSuppressAutoCheck,
+  markUpdateCheckTimeout,
   shouldRunStartupUpdateCheck,
 } from "@/lib/launcher-update-session";
+import { isUpdateCheckTimeoutError } from "@/lib/update-check";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -70,9 +72,13 @@ export function StartupUpdateNotifier({ delayMs = 1500 }: { delayMs?: number }) 
           setUpToDateOpen(true);
         } catch (error) {
           if (!active) return;
+          const message = error instanceof Error ? error.message : String(error);
+          if (isUpdateCheckTimeoutError(message)) {
+            markUpdateCheckTimeout(message);
+          }
           setAppUpdateState({
             kind: "error",
-            message: error instanceof Error ? error.message : String(error),
+            message,
           });
         } finally {
           if (active) {

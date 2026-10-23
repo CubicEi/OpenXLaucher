@@ -481,8 +481,31 @@ pub fn save_launcher_paths_config(config: LauncherPathsConfig) -> Result<(), Str
             cfg.minecraft_paths.push(hmcl_path);
         }
     }
-    
-    let text = serde_json::to_string_pretty(&cfg).map_err(|e| e.to_string())?;
+
+    let mut root: serde_json::Value = if path.exists() {
+        fs::read_to_string(&path)
+            .ok()
+            .and_then(|t| serde_json::from_str(&t).ok())
+            .unwrap_or_else(|| serde_json::json!({}))
+    } else {
+        serde_json::json!({})
+    };
+    if !root.is_object() {
+        root = serde_json::json!({});
+    }
+    let paths_value = serde_json::to_value(&cfg).map_err(|e| e.to_string())?;
+    if let serde_json::Value::Object(fields) = paths_value {
+        let root_map = root
+            .as_object_mut()
+            .expect("launcher.json root must be object");
+        for (key, value) in fields {
+            root_map.insert(key, value);
+        }
+    }
+    let text = serde_json::to_string_pretty(&root).map_err(|e| e.to_string())?;
+    if let Some(parent) = path.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
     fs::write(&path, text).map_err(|e| e.to_string())
 }
 

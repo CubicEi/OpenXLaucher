@@ -11,9 +11,12 @@ import { listenLauncherUpdateProgress } from "@/lib/launcher-update-progress";
 import { LauncherUpdateProgressBar } from "@/components/settings/launcher-update-progress-bar";
 import {
   markUpToDateAndSuppressAutoCheck,
+  markUpdateCheckTimeout,
   resetUpdateCheckSuppression,
+  shouldResetSuppressionOnSettingsManualCheck,
   shouldSkipAutomaticUpdateCheck,
 } from "@/lib/launcher-update-session";
+import { isUpdateCheckTimeoutError } from "@/lib/update-check";
 
 type UpdateState =
   | { kind: "idle" }
@@ -44,7 +47,7 @@ export function AboutSection() {
   }, []);
 
   const check = async (userInitiated = false) => {
-    if (userInitiated) {
+    if (userInitiated && shouldResetSuppressionOnSettingsManualCheck()) {
       resetUpdateCheckSuppression();
     }
     setState({ kind: "checking" });
@@ -65,7 +68,11 @@ export function AboutSection() {
         markUpToDateAndSuppressAutoCheck();
       }
     } catch (e) {
-      setState({ kind: "error", message: e instanceof Error ? e.message : String(e) });
+      const message = e instanceof Error ? e.message : String(e);
+      if (isUpdateCheckTimeoutError(message)) {
+        markUpdateCheckTimeout(message);
+      }
+      setState({ kind: "error", message });
     }
   };
 

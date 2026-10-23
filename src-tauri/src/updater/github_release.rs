@@ -10,6 +10,17 @@ use super::identity::{
 
 pub const GITHUB_API_ORIGIN: &str = "https://api.github.com";
 pub const NETWORK_UNREACHABLE: &str = "网络不可达：无法连接 GitHub";
+/// 与前端 `UPDATE_CHECK_TIMEOUT_MARKER` 一致，用于识别检查超时
+pub const UPDATE_CHECK_TIMEOUT_MARKER: &str = "UPDATE_CHECK_TIMEOUT";
+pub const UPDATE_CHECK_TIMEOUT_SECS: u64 = 10;
+
+pub fn update_check_timeout_message() -> String {
+    format!(
+        "{}: 连接 GitHub 超过 {} 秒无响应",
+        UPDATE_CHECK_TIMEOUT_MARKER,
+        UPDATE_CHECK_TIMEOUT_SECS
+    )
+}
 
 #[derive(Debug, Clone, Deserialize)]
 struct ApiAsset {

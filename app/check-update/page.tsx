@@ -20,6 +20,13 @@ import { invoke } from "@tauri-apps/api/core";
 import { getVersion } from "@tauri-apps/api/app";
 import { listenLauncherUpdateProgress } from "@/lib/launcher-update-progress";
 import { LauncherUpdateProgressBar } from "@/components/settings/launcher-update-progress-bar";
+import {
+  getPendingUpdateCheckError,
+  markUpdateCheckTimeout,
+  resetAutoCheckFromUpdatePage,
+  shouldSkipAutomaticUpdateCheck,
+} from "@/lib/launcher-update-session";
+import { isUpdateCheckTimeoutError } from "@/lib/update-check";
 
 type UpdateStatus =
   | "idle"
@@ -62,6 +69,9 @@ function readPreparedVersion(): string | null {
 }
 
 function formatCheckErrorMessage(message: string, t: (key: TranslationKey) => string): string {
+  if (isUpdateCheckTimeoutError(message)) {
+    return t("checkUpdate.checkTimeout");
+  }
   if (message.includes("网络不可达") || /cannot connect to GitHub/i.test(message)) {
     return t("checkUpdate.networkUnreachable");
   }
@@ -129,6 +139,21 @@ export default function CheckUpdatePage() {
         }
       };
       void startPreparedUpdate();
+      return;
+    }
+
+    const pending = getPendingUpdateCheckError();
+    if (pending) {
+      setInfo({
+        status: "error",
+        errorMessage: formatCheckErrorMessage(pending, t),
+        canCheck: true,
+        lastCheckTime: Math.floor(Date.now() / 1000),
+      });
+      return;
+    }
+
+    if (!autoStart && shouldSkipAutomaticUpdateCheck()) {
       return;
     }
 
@@ -226,13 +251,22 @@ export default function CheckUpdatePage() {
       }
     } catch (e) {
       const raw = e instanceof Error ? e.message : String(e);
+      if (isUpdateCheckTimeoutError(raw)) {
+        markUpdateCheckTimeout(raw);
+      }
       setInfo({
         status: "error",
         errorMessage: formatCheckErrorMessage(raw, t),
         canCheck: true,
+        lastCheckTime: Math.floor(Date.now() / 1000),
       });
       return false;
     }
+  };
+
+  const handleManualCheck = () => {
+    resetAutoCheckFromUpdatePage();
+    void handleCheck(true);
   };
 
   const handleDownload = async (): Promise<boolean> => {
@@ -467,7 +501,7 @@ export default function CheckUpdatePage() {
               <div className="flex flex-wrap items-center gap-2 pt-2">
                 <Button
                   variant="outline"
-                  onClick={() => handleCheck()}
+                  onClick={handleManualCheck}
                   disabled={!canCheckNow}
                   className="gap-1.5"
                 >
