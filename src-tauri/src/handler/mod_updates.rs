@@ -15,10 +15,11 @@ use crate::handler::mod_update_locks::{begin_mod_update, end_mod_update, instanc
 use crate::handler::mod_file_registry::register_file_at_path;
 use crate::handler::mod_parser::{parse_mods_in_dir, ModInfo};
 use crate::handler::mod_platform::{
-    file_sha1_hex, list_compatible_versions, pick_update_if_newer, resolve_installed_file,
-    I18N_MOD_UPDATE_HASH_MISS, I18N_MOD_UPDATE_NETWORK_UNREACHABLE, InstalledFileSnapshot,
-    ModRemoteVersionsResponse,
+    file_sha1_hex, list_compatible_versions, pick_update_if_newer,
+    resolve_installed_file, resolve_installed_file_on_platform, I18N_MOD_UPDATE_HASH_MISS,
+    I18N_MOD_UPDATE_NETWORK_UNREACHABLE, InstalledFileSnapshot, ModRemoteVersionsResponse,
 };
+use crate::handler::mod_platform_probe::ModPlatformKind;
 use crate::handler::mod_platform_probe::platform_try_order;
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -174,13 +175,19 @@ fn sanitize_tag(s: &str) -> String {
 
 async fn find_latest_for_mod(
     jar_path: &Path,
-    try_order: &[crate::handler::mod_platform_probe::ModPlatformKind],
+    try_order: &[ModPlatformKind],
     mc_version: &str,
     loader: &str,
 ) -> Option<(InstalledFileSnapshot, ModSearchResult)> {
-    let snapshot = resolve_installed_file(jar_path, try_order).await?;
-    let remote = pick_update_if_newer(&snapshot, mc_version, loader).await?;
-    Some((snapshot, remote))
+    for kind in try_order {
+        let Some(snapshot) = resolve_installed_file_on_platform(jar_path, *kind).await else {
+            continue;
+        };
+        if let Some(remote) = pick_update_if_newer(jar_path, &snapshot, mc_version, loader).await {
+            return Some((snapshot, remote));
+        }
+    }
+    None
 }
 
 #[tauri::command]

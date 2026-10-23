@@ -161,28 +161,34 @@ fn hex_lower(bytes: &[u8]) -> String {
 mod tests {
     use super::*;
 
-    #[test]
-    fn parse_valid_identity() {
-        let json = r#"{
+    /// 单测占位版本，与 `config::TEST_FIXTURE_RELEASE_TAG` 同理，不代表真实 Release。
+    const TEST_FIXTURE_IDENTITY_VERSION: &str = "0.0.0-test-fixture";
+
+    fn sample_identity_json(version: &str, sha256: &str) -> String {
+        format!(
+            r#"{{
             "schema": 1,
             "product": "OpenXLauncher",
-            "version": "0.3.0-beta",
-            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "version": "{version}",
+            "sha256": "{sha256}",
             "build_uuid": "550e8400-e29b-41d4-a716-446655440000"
-        }"#;
-        let id = parse_release_identity_json(json).expect("parse");
-        assert_eq!(id.version, "0.3.0-beta");
+        }}"#
+        )
+    }
+
+    #[test]
+    fn parse_valid_identity() {
+        let json = sample_identity_json(
+            TEST_FIXTURE_IDENTITY_VERSION,
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        );
+        let id = parse_release_identity_json(&json).expect("parse");
+        assert_eq!(id.version, TEST_FIXTURE_IDENTITY_VERSION);
     }
 
     #[test]
     fn rejects_bad_sha256_in_identity() {
-        let json = r#"{
-            "schema": 1,
-            "product": "OpenXLauncher",
-            "version": "0.3.0-beta",
-            "sha256": "not-a-hash",
-            "build_uuid": "550e8400-e29b-41d4-a716-446655440000"
-        }"#;
-        assert!(parse_release_identity_json(json).is_err());
+        let json = sample_identity_json(TEST_FIXTURE_IDENTITY_VERSION, "not-a-hash");
+        assert!(parse_release_identity_json(&json).is_err());
     }
 }

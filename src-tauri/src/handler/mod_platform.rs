@@ -465,32 +465,98 @@ fn snapshot_to_resolved(snapshot: &InstalledFileSnapshot) -> ResolvedPlatform {
     }
 }
 
+/// Resolve installed jar on a single platform (hash / fingerprint APIs).
+pub async fn resolve_installed_file_on_platform(
+    jar_path: &Path,
+    kind: ModPlatformKind,
+) -> Option<InstalledFileSnapshot> {
+    if !jar_path.is_file() {
+        return None;
+    }
+    match kind {
+        ModPlatformKind::Modrinth => {
+            let sha1 = file_sha1_hex(jar_path)?;
+            let client = modrinth_client().await;
+            modrinth_installed_snapshot(&client, &sha1).await
+        }
+        ModPlatformKind::CurseForge => {
+            let client = curseforge_client().await;
+            curseforge_installed_snapshot(&client, jar_path).await
+        }
+    }
+}
+
 /// Identify the installed jar via platform hash APIs only (no homepage / registry fallback).
 pub async fn resolve_installed_file(
     jar_path: &Path,
     try_order: &[ModPlatformKind],
 ) -> Option<InstalledFileSnapshot> {
-    if !jar_path.is_file() {
-        return None;
-    }
-    let sha1 = file_sha1_hex(jar_path)?;
-    let mr = modrinth_client().await;
-    let cf = curseforge_client().await;
     for kind in try_order {
-        match kind {
-            ModPlatformKind::Modrinth => {
-                if let Some(snapshot) = modrinth_installed_snapshot(&mr, &sha1).await {
-                    return Some(snapshot);
-                }
-            }
-            ModPlatformKind::CurseForge => {
-                if let Some(snapshot) = curseforge_installed_snapshot(&cf, jar_path).await {
-                    return Some(snapshot);
-                }
-            }
+        if let Some(snapshot) = resolve_installed_file_on_platform(jar_path, *kind).await {
+            return Some(snapshot);
         }
     }
     None
+}
+
+/// Whether the installed file's upstream metadata supports this instance MC version + loader.
+pub async fn installed_file_supports_instance(
+    jar_path: &Path,
+    snapshot: &InstalledFileSnapshot,
+    mc_version: &str,
+    loader: &str,
+) -> bool {
+    match snapshot.source.as_str() {
+        "modrinth" => {
+            let Some(sha1) = file_sha1_hex(jar_path) else {
+                return false;
+            };
+            let client = modrinth_client().await;
+            let url = format!(
+                "https://api.modrinth.com/v2/version_file/{}?algorithm=sha1",
+                sha1
+            );
+            let Some(json) = get_modrinth_json(&client, &url).await else {
+                return false;
+            };
+            version_is_compatible(&json, mc_version, loader)
+        }
+        "curseforge" => {
+            let Some(fingerprint) = curseforge_fingerprint_file(jar_path) else {
+                return false;
+            };
+            let client = curseforge_client().await;
+            let body = serde_json::json!({ "fingerprints": [fingerprint] });
+            let semaphore = global_semaphore().await;
+            let Ok(_permit) = semaphore.acquire().await else {
+                return false;
+            };
+            let Some(response) = client
+                .post("https://api.curseforge.com/v1/fingerprints/432")
+                .json(&body)
+                .send()
+                .await
+                .ok()
+            else {
+                return false;
+            };
+            if !response.status().is_success() {
+                return false;
+            }
+            let Some(json): Option<serde_json::Value> = response.json().await.ok() else {
+                return false;
+            };
+            let Some(data) = json.get("data") else {
+                return false;
+            };
+            let Some(file_obj) = curseforge_exact_match_file(data) else {
+                return false;
+            };
+            let file = file_obj.get("file").unwrap_or(file_obj);
+            curseforge_file_supports(file, mc_version, loader)
+        }
+        _ => false,
+    }
 }
 
 fn modrinth_release_type(version: &serde_json::Value) -> String {
@@ -574,6 +640,23 @@ pub fn should_offer_update_by_time<'a>(
     Some(candidate)
 }
 
+/// Pick an update candidate from filtered compatible versions.
+/// When the installed file does not support the current instance, any compatible remote
+/// version counts as an update (ignore publish time).
+pub fn pick_update_candidate<'a>(
+    installed_published_at: Option<i64>,
+    versions: &'a [RemoteModVersion],
+    installed_supports_instance: bool,
+) -> Option<&'a RemoteModVersion> {
+    if versions.is_empty() {
+        return None;
+    }
+    if !installed_supports_instance {
+        return pick_best_candidate(versions);
+    }
+    should_offer_update_by_time(installed_published_at, versions)
+}
+
 fn remote_version_to_search_result(
     platform: &ResolvedPlatform,
     pick: &RemoteModVersion,
@@ -594,13 +677,19 @@ fn remote_version_to_search_result(
 }
 
 pub async fn pick_update_if_newer(
+    jar_path: &Path,
     snapshot: &InstalledFileSnapshot,
     mc_version: &str,
     loader: &str,
 ) -> Option<ModSearchResult> {
     let platform = snapshot_to_resolved(snapshot);
     let versions = list_compatible_versions(&platform, mc_version, loader).await;
-    let pick = should_offer_update_by_time(snapshot.published_at, &versions)?;
+    if versions.is_empty() {
+        return None;
+    }
+    let supports_instance =
+        installed_file_supports_instance(jar_path, snapshot, mc_version, loader).await;
+    let pick = pick_update_candidate(snapshot.published_at, &versions, supports_instance)?;
     Some(remote_version_to_search_result(&platform, pick, mc_version))
 }
 
@@ -769,5 +858,20 @@ mod tests {
             published_at: None,
         }];
         assert!(should_offer_update_by_time(Some(50), &versions).is_none());
+    }
+
+    #[test]
+    fn pick_update_candidate_for_incompatible_instance_ignores_time() {
+        let versions = vec![RemoteModVersion {
+            version_number: "2.0.0".into(),
+            release_type: "release".into(),
+            download_url: "u".into(),
+            file_name: "mod.jar".into(),
+            loaders: vec![],
+            source: "modrinth".into(),
+            published_at: Some(10),
+        }];
+        assert!(pick_update_candidate(Some(500), &versions, false).is_some());
+        assert!(pick_update_candidate(Some(500), &versions, true).is_none());
     }
 }
