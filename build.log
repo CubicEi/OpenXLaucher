@@ -8,48 +8,21 @@
   · optimizePackageImports
 
   Creating an optimized production build ...
-✓ Compiled successfully in 9.7s
+✓ Compiled successfully in 7.7s
   Running TypeScript ...
-  Collecting page data using 11 workers ...
-  Generating static pages using 11 workers (0/32) ...
-  Generating static pages using 11 workers (8/32) 
-  Generating static pages using 11 workers (16/32) 
-  Generating static pages using 11 workers (24/32) 
-✓ Generating static pages using 11 workers (32/32) in 574.6ms
-  Finalizing page optimization ...
+Failed to compile.
 
-Route (app)
-┌ ○ /
-├ ○ /_not-found
-├ ○ /api/english-search
-├ ○ /api/mod-detail
-├ ○ /api/mod-links
-├ ○ /check-update
-├ ○ /download
-├ ○ /download/detail
-├ ○ /game-settings
-├ ○ /game-settings/datapacks
-├ ○ /game-settings/modpacks
-├ ○ /game-settings/mods
-├ ○ /game-settings/resources
-├ ○ /game-settings/schematics
-├ ○ /game-settings/schematics/viewer
-├ ○ /game-settings/screenshots
-├ ○ /game-settings/shaders
-├ ○ /game-settings/worlds
-├ ○ /instance-settings/mods
-├ ○ /instance-settings/resources
-├ ○ /instance-settings/schematics
-├ ○ /instance-settings/screenshots
-├ ○ /instance-settings/shaders
-├ ○ /instance-settings/worlds
-├ ○ /launch
-├ ○ /multiplayer
-├ ○ /settings
-├ ○ /tools
-├ ○ /tools/browser
-└ ○ /tools/modpack-builder
+./app/check-update/page.tsx:222:52
+Type error: Argument of type '(key: TranslationKey, values?: TranslationValues) => string' is not assignable to parameter of type '(key: string) => string'.
+  Types of parameters 'key' and 'key' are incompatible.
+    Type 'string' is not assignable to type 'TranslationKey'.
 
-
-○  (Static)  prerendered as static content
-
+[0m [90m 220 |[39m       setInfo({
+ [90m 221 |[39m         status[33m:[39m [32m"error"[39m[33m,[39m
+[31m[1m>[22m[39m[90m 222 |[39m         errorMessage[33m:[39m formatCheckErrorMessage(raw[33m,[39m t)[33m,[39m
+ [90m     |[39m                                                    [31m[1m^[22m[39m
+ [90m 223 |[39m         canCheck[33m:[39m [36mtrue[39m[33m,[39m
+ [90m 224 |[39m       })[33m;[39m
+ [90m 225 |[39m       [36mreturn[39m [36mfalse[39m[33m;[39m[0m
+Next.js build worker exited with code: 1 and signal: null
+ ELIFECYCLE  Command failed with exit code 1.

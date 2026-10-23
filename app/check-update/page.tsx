@@ -15,7 +15,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { useI18n } from "@/components/i18n/use-i18n";
+import { useI18n, type TranslationKey } from "@/components/i18n/use-i18n";
 import { invoke } from "@tauri-apps/api/core";
 import { getVersion } from "@tauri-apps/api/app";
 
@@ -59,7 +59,7 @@ function readPreparedVersion(): string | null {
   return version?.trim() || null;
 }
 
-function formatCheckErrorMessage(message: string, t: (key: string) => string): string {
+function formatCheckErrorMessage(message: string, t: (key: TranslationKey) => string): string {
   if (message.includes("网络不可达") || /cannot connect to GitHub/i.test(message)) {
     return t("checkUpdate.networkUnreachable");
   }
