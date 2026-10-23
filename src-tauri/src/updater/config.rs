@@ -13,11 +13,6 @@ pub const GITHUB_UPDATE_ENDPOINT: &str =
 /// 允许的更新下载域名白名单。release URL 或重定向目标必须落在这些域名上。
 pub const TRUSTED_DOWNLOAD_HOSTS: &[&str] = &["github.com", "githubusercontent.com"];
 
-/// 发布 Release 时，可选地在 Release body 里放一个 SHA-256 清单，匹配格式：
-///   `SHA256 (filename) = hexhash`  或  `hexhash  filename`  或  `hexhash *filename`
-/// 如果找到与下载附件同名的条目，就必须在安装前通过 SHA-256 校验（fail closed）。
-pub const HASH_TAG: &str = "SHA256SUMS";
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpdateConfig {
     #[serde(default)]
@@ -34,7 +29,7 @@ pub struct UpdateConfig {
     pub download_url: Option<String>,
     #[serde(default)]
     pub file_size: Option<u64>,
-    /// 期望的 SHA-256 校验和（小写 16 进制，64 字符）。从 Release body 解析得到后持久化。
+    /// 期望的 SHA-256 校验和（小写 16 进制，64 字符）。来自 `OpenXLauncher.identity.json`。
     /// 如果为 Some，则下载后 **必须** 校验匹配（fail closed）。
     #[serde(default)]
     pub expected_sha256: Option<String>,
@@ -267,12 +262,6 @@ fn has_check_interval_elapsed(last_check: i64, now: i64) -> bool {
     now.saturating_sub(last_check) >= MIN_CHECK_INTERVAL_SECONDS
 }
 
-pub fn update_last_check_time() -> Result<(), String> {
-    let mut cfg = get_update_config();
-    cfg.last_check_time = Some(get_current_timestamp());
-    save_update_config(cfg)
-}
-
 pub fn get_current_os() -> String {
     #[cfg(target_os = "windows")]
     {
@@ -308,122 +297,6 @@ pub fn get_current_os() -> String {
     }
 }
 
-pub fn matches_asset_name_for(asset_name: &str, os: &str) -> bool {
-    let name_lower = asset_name.to_lowercase();
-
-    if name_lower.contains(&os.replace('-', "_")) || name_lower.contains(&os) {
-        return true;
-    }
-
-    let (os_family, arch) = match os {
-        "windows-x86_64" => ("windows", "x86_64"),
-        "windows-aarch64" => ("windows", "aarch64"),
-        "macos-x86_64" => ("macos", "x86_64"),
-        "macos-aarch64" => ("macos", "aarch64"),
-        "linux-x86_64" => ("linux", "x86_64"),
-        "linux-aarch64" => ("linux", "aarch64"),
-        _ => return false,
-    };
-
-    let arch_alt = match arch {
-        "x86_64" => vec!["x86_64", "x64", "amd64"],
-        "aarch64" => vec!["aarch64", "arm64", "arm_64"],
-        _ => vec![arch],
-    };
-
-    let other_arch_keywords: &[&str] = match arch {
-        "x86_64" => &["aarch64", "arm64", "arm_64"],
-        "aarch64" => &["x86_64", "x64", "amd64"],
-        _ => &[],
-    };
-    if other_arch_keywords
-        .iter()
-        .any(|keyword| name_lower.contains(keyword))
-    {
-        return false;
-    }
-
-    let family_alt = match os_family {
-        "macos" => vec!["macos", "darwin", "mac"],
-        "windows" => vec!["windows", "win", "msi", "nsis"],
-        f => vec![f],
-    };
-
-    for f in &family_alt {
-        for a in &arch_alt {
-            let pattern1 = format!("{}_{}", f, a);
-            let pattern2 = format!("{}-{}", f, a);
-            let pattern3 = format!("{}_{}", a, f);
-            let pattern4 = format!("{}-{}", a, f);
-            if name_lower.contains(&pattern1)
-                || name_lower.contains(&pattern2)
-                || name_lower.contains(&pattern3)
-                || name_lower.contains(&pattern4)
-            {
-                return true;
-            }
-        }
-    }
-
-    match os_family {
-        "windows" => {
-            (name_lower.ends_with(".exe")
-                || name_lower.ends_with(".msi")
-                || name_lower.contains(".nsis"))
-                && !name_lower.contains("macos")
-                && !name_lower.contains("darwin")
-                && !name_lower.contains("linux")
-        }
-        "macos" => {
-            name_lower.contains("macos")
-                || name_lower.contains("darwin")
-                || name_lower.ends_with(".dmg")
-                || name_lower.ends_with(".app")
-                || name_lower.ends_with(".app.tar.gz")
-        }
-        "linux" => {
-            name_lower.contains("linux")
-                || name_lower.ends_with(".appimage")
-                || name_lower.ends_with(".deb")
-        }
-        _ => false,
-    }
-}
-
-pub fn get_current_arch_keywords() -> Vec<&'static str> {
-    #[cfg(target_arch = "x86_64")]
-    {
-        vec!["x86_64", "x64", "amd64"]
-    }
-    #[cfg(target_arch = "aarch64")]
-    {
-        vec!["aarch64", "arm64", "arm_64"]
-    }
-    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-    {
-        vec![]
-    }
-}
-
-pub fn get_current_os_keywords() -> Vec<&'static str> {
-    #[cfg(target_os = "windows")]
-    {
-        vec!["windows", "win", "msi", "nsis"]
-    }
-    #[cfg(target_os = "macos")]
-    {
-        vec!["macos", "darwin", "mac", "dmg", "app"]
-    }
-    #[cfg(target_os = "linux")]
-    {
-        vec!["linux", "appimage", "deb"]
-    }
-    #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
-    {
-        vec![]
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -436,27 +309,31 @@ mod tests {
 
     #[test]
     fn updater_accepts_only_configured_release_hosts() {
-        assert!(is_trusted_download_url(
-            "https://github.com/CubicEi/OpenXLaucher/releases/download/1.2.0/app.exe"
-        ));
+        let trusted_repo_asset = github_release_download_url(TEST_FIXTURE_RELEASE_TAG, "app.exe");
+        assert!(is_trusted_download_url(&trusted_repo_asset));
         assert!(is_trusted_download_url(
             "https://release-assets.githubusercontent.com/github-production-release-asset/app.exe"
         ));
-        assert!(!is_trusted_download_url(
-            "https://gitcode.com/bubulaladdi/RTLauncher/releases/download/1.2.0/app.exe"
-        ));
-        assert!(!is_trusted_download_url(
-            "https://example.com/OpenXLauncher/app.exe"
-        ));
+        assert!(!is_trusted_download_url(&format!(
+            "https://example.com/{}/releases/download/{}/app.exe",
+            github_repo_slug(),
+            TEST_FIXTURE_RELEASE_TAG
+        )));
+        assert!(!is_trusted_download_url(&format!(
+            "http://github.com/{}/releases/download/{}/app.exe",
+            github_repo_slug(),
+            TEST_FIXTURE_RELEASE_TAG
+        )));
     }
 
     #[test]
     fn initial_asset_url_is_limited_to_the_configured_repository_or_bucket() {
         let fixture_url = github_release_download_url(TEST_FIXTURE_RELEASE_TAG, "app.exe");
         assert!(is_trusted_release_asset_url(&fixture_url));
-        assert!(!is_trusted_release_asset_url(
-            "https://github.com/another-owner/another-repo/releases/download/1.2.0/app.exe"
-        ));
+        assert!(!is_trusted_release_asset_url(&format!(
+            "https://github.com/another-owner/another-repo/releases/download/{}/app.exe",
+            TEST_FIXTURE_RELEASE_TAG
+        )));
         assert!(!is_trusted_release_asset_url(
             "https://release-assets.githubusercontent.com/github-production-release-asset/app.exe"
         ));
