@@ -27,5 +27,18 @@ fn main() {
     let version = read_package_json_version(&manifest_dir);
     println!("cargo:rustc-env=LAUNCHER_VERSION={}", version);
     println!("cargo:rerun-if-changed=../package.json");
+    println!("cargo:rerun-if-env-changed=OPENX_PORTABLE_BUILD");
+
+    let portable = std::env::var("OPENX_PORTABLE_BUILD").ok().as_deref() == Some("1");
+    if portable {
+        println!("cargo:rustc-cfg=openx_portable_build");
+    } else {
+        let uuid = uuid::Uuid::new_v4().to_string();
+        let uuid_path = Path::new(&manifest_dir).join(".build-uuid");
+        let _ = fs::write(&uuid_path, &uuid);
+        println!("cargo:rustc-env=BUILD_UUID={}", uuid);
+        println!("cargo:rerun-if-changed={}", uuid_path.display());
+    }
+
     tauri_build::build()
 }

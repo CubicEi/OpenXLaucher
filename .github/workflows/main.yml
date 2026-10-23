@@ -29,6 +29,7 @@ jobs:
             args: '--config src-tauri/tauri.portable.conf.json'
             name: 'linux-portable'
             artifact_name: 'linuxx64-portable'
+            portable_build: '1'
           - platform: 'windows-latest'
             args: '--bundles nsis'
             artifact_name: 'windows_x64'
@@ -72,6 +73,7 @@ jobs:
         id: tauri-build
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OPENX_PORTABLE_BUILD: ${{ matrix.portable_build }}
         with:
           args: ${{ matrix.args }}
 
@@ -155,6 +157,7 @@ jobs:
           if (-not (Test-Path $exe)) { throw "Missing $exe" }
           $dest = "src-tauri/target/release/OpenXLauncher_${{ env.APP_VERSION }}_windows-x86_64.exe"
           Copy-Item -Force $exe $dest
+          node scripts/write-release-identity.mjs $exe "src-tauri/target/release/OpenXLauncher.identity.json"
 
       - name: upload artifacts (Windows)
         if: matrix.platform == 'windows-latest'
@@ -164,5 +167,6 @@ jobs:
           path: |
             src-tauri/target/release/bundle/nsis/*-setup.exe
             src-tauri/target/release/OpenXLauncher_${{ env.APP_VERSION }}_windows-x86_64.exe
+            src-tauri/target/release/OpenXLauncher.identity.json
           if-no-files-found: error
           retention-days: 90

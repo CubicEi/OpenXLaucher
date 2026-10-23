@@ -328,6 +328,9 @@ pub fn run() {
             }));
 
             app_paths::ensure_portable_dirs();
+            if let Err(error) = updater::identity::ensure_portable_self_hash() {
+                eprintln!("[identity] {}", error);
+            }
             let _ = ensure_registry_db();
             themes::commands::report_theme_store_initialization(
                 themes::commands::initialize_theme_store(app.handle()),

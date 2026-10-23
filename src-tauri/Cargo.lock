@@ -2944,6 +2944,7 @@ dependencies = [
  "trash",
  "url",
  "urlencoding",
+ "uuid",
  "webbrowser",
  "winapi",
  "winreg 0.52.0",

@@ -16,7 +16,7 @@
     "pretauri:build": "node scripts/sync-app-version.mjs",
     "tauri:build": "tauri build",
     "pretauri:build:portable": "node scripts/sync-app-version.mjs",
-    "tauri:build:portable": "tauri build --config src-tauri/tauri.portable.conf.json",
+    "tauri:build:portable": "node scripts/tauri-build-portable.mjs",
     "tauri:build:debug": "tauri build --debug"
   },
   "dependencies": {

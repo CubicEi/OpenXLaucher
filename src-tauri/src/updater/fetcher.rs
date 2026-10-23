@@ -14,6 +14,8 @@ use super::config::{
     is_valid_sha256_hex, matches_asset_name_for, save_update_config, should_check_update,
     update_download_dir, UpdateStatus, HASH_TAG,
 };
+use super::github_release::{fetch_latest_release_bundle, redirect_policy};
+use super::identity::{credentials_differ, local_identity_for_update};
 
 #[derive(Debug, Clone, Deserialize)]
 struct WireAsset {
@@ -546,13 +548,7 @@ impl UpdateFetcher {
     ) -> Result<UpdateCheckResult, String> {
         if !force && !should_check_update() {
             let cfg = get_update_config();
-            let cached_update_available = cfg
-                .target_version
-                .as_deref()
-                .and_then(parse_semver)
-                .zip(parse_semver(current_version))
-                .map(|(target, current)| target > current)
-                .unwrap_or(false);
+            let cached_update_available = cfg.status == UpdateStatus::Available;
             return Ok(UpdateCheckResult {
                 needs_check: false,
                 update_available: cached_update_available,
@@ -578,9 +574,17 @@ impl UpdateFetcher {
 
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(30))
+            .redirect(redirect_policy())
             .build()
             .map_err(|e| format!("创建 HTTP 客户端失败: {}", e))?;
-        let releases = Self::fetch_github_releases(&client, get_update_endpoint())
+
+        let local_identity = local_identity_for_update().map_err(|error| {
+            cfg.status = UpdateStatus::Error(error.clone());
+            let _ = save_update_config(cfg.clone());
+            error
+        })?;
+
+        let bundle = fetch_latest_release_bundle(&client)
             .await
             .map_err(|error| {
                 cfg.status = UpdateStatus::Error(error.clone());
@@ -588,13 +592,21 @@ impl UpdateFetcher {
                 error
             })?;
 
-        let current_os = get_current_os();
-        let selected_release = select_latest_release(&releases, current_version);
-        let selected_candidate = select_latest_candidate(&releases, current_version, &current_os);
+        let update_available = credentials_differ(&local_identity, &bundle.identity).map_err(
+            |error| {
+                cfg.status = UpdateStatus::Error(error.clone());
+                let _ = save_update_config(cfg.clone());
+                error
+            },
+        )?;
 
-        let Some(release) = selected_release else {
-            cfg.target_version = None;
-            cfg.changelog = None;
+        let changelog = (!bundle.changelog.trim().is_empty()).then(|| bundle.changelog.clone());
+        let target_version = bundle.identity.version.clone();
+        let current_os = get_current_os();
+
+        if !update_available {
+            cfg.target_version = Some(target_version.clone());
+            cfg.changelog = changelog.clone();
             cfg.target_os = None;
             cfg.download_url = None;
             cfg.file_size = None;
@@ -605,50 +617,29 @@ impl UpdateFetcher {
                 needs_check: true,
                 update_available: false,
                 current_version: current_version.to_string(),
-                target_version: None,
-                message: if releases.is_empty() {
-                    "当前没有可用的发布版本".to_string()
-                } else {
-                    "当前已是最新版本".to_string()
-                },
-                changelog: None,
+                target_version: Some(target_version),
+                message: "当前已是最新版本".to_string(),
+                changelog,
             });
-        };
+        }
 
-        let Some((release, asset)) = selected_candidate else {
-            let message = format!(
-                "已找到最新版本 {}，但未找到适配当前系统 ({}) 的可信安装包",
-                release.version, current_os
-            );
-            cfg.target_version = None;
-            cfg.changelog = None;
-            cfg.target_os = None;
-            cfg.download_url = None;
-            cfg.file_size = None;
-            cfg.expected_sha256 = None;
-            cfg.status = UpdateStatus::Error(message.clone());
-            let _ = save_update_config(cfg);
-            return Ok(UpdateCheckResult {
-                needs_check: true,
-                update_available: false,
-                current_version: current_version.to_string(),
-                target_version: None,
-                message,
-                changelog: None,
-            });
-        };
-
-        let release_version = release.version.to_string();
-        cfg.target_version = Some(release_version.clone());
-        cfg.changelog = (!release.notes.trim().is_empty()).then(|| release.notes.clone());
+        cfg.target_version = Some(target_version.clone());
+        cfg.changelog = changelog.clone();
         cfg.target_os = Some(current_os);
-        cfg.download_url = Some(asset.browser_download_url.clone());
-        cfg.file_size = asset.size;
-        cfg.expected_sha256 = Self::checksum_for(release, &asset.name);
+        cfg.download_url = Some(bundle.windows_exe_url.clone());
+        cfg.file_size = bundle.windows_exe_size;
+        cfg.expected_sha256 = Some(bundle.identity.sha256.clone());
         cfg.status = UpdateStatus::Available;
         let _ = save_update_config(cfg);
 
-        Ok(available_update_result(current_version, release))
+        Ok(UpdateCheckResult {
+            needs_check: true,
+            update_available: true,
+            current_version: current_version.to_string(),
+            target_version: Some(target_version),
+            message: "发现新版本可用".to_string(),
+            changelog,
+        })
     }
 
     pub async fn download_update(&self) -> Result<DownloadResult, String> {

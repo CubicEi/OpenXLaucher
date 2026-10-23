@@ -677,6 +677,7 @@
     "downloadedReady": "更新已下载完成，点击立即安装",
     "upToDateMessage": "启动器已在最新版本，无需更新。",
     "checkFailed": "检查更新失败",
+    "networkUnreachable": "网络不可达：无法连接 GitHub，请检查网络后重试。",
     "preparedUpdateExpired": "已准备的更新已失效，请重新检查更新。",
     "checkForUpdates": "检查更新",
     "downloadUpdate": "下载更新",

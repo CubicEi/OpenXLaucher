@@ -156,6 +156,27 @@ fn launcher_config_path() -> PathBuf {
     PathBuf::from(config_dir()).join(CONFIG_FILE_NAME)
 }
 
+/// 与 `launcher_config_path` 相同；供 identity 等模块读写 `launcher.json` 非 update 字段。
+pub fn launcher_config_path_merge() -> PathBuf {
+    launcher_config_path()
+}
+
+pub fn github_repo_slug() -> &'static str {
+    "CubicEi/OpenXLaucher"
+}
+
+pub fn github_release_download_url(tag: &str, file_name: &str) -> String {
+    format!(
+        "https://github.com/{}/releases/download/{}/{}",
+        github_repo_slug(),
+        tag,
+        file_name
+    )
+}
+
+/// 单测用 Release 标签占位，勿当作真实发布版本。
+pub const TEST_FIXTURE_RELEASE_TAG: &str = "v0.0.0-test-fixture";
+
 fn get_current_timestamp() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -431,9 +452,8 @@ mod tests {
 
     #[test]
     fn initial_asset_url_is_limited_to_the_configured_repository_or_bucket() {
-        assert!(is_trusted_release_asset_url(
-            "https://github.com/CubicEi/OpenXLaucher/releases/download/1.2.0/app.exe"
-        ));
+        let fixture_url = github_release_download_url(TEST_FIXTURE_RELEASE_TAG, "app.exe");
+        assert!(is_trusted_release_asset_url(&fixture_url));
         assert!(!is_trusted_release_asset_url(
             "https://github.com/another-owner/another-repo/releases/download/1.2.0/app.exe"
         ));

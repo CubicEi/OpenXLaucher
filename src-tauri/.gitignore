@@ -4,3 +4,4 @@
 # Alternate CARGO_TARGET_DIR output (e.g. agent / isolated checks)
 /target-*/
 /gen/schemas
+.build-uuid

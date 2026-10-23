@@ -677,6 +677,7 @@
     "downloadedReady": "Update downloaded. Click Install now to proceed.",
     "upToDateMessage": "The launcher is up to date. No updates needed.",
     "checkFailed": "Update check failed",
+    "networkUnreachable": "Network unreachable: cannot connect to GitHub. Check your connection and try again.",
     "preparedUpdateExpired": "The prepared update is no longer available. Check for updates again.",
     "checkForUpdates": "Check for updates",
     "downloadUpdate": "Download update",

@@ -59,6 +59,13 @@ function readPreparedVersion(): string | null {
   return version?.trim() || null;
 }
 
+function formatCheckErrorMessage(message: string, t: (key: string) => string): string {
+  if (message.includes("网络不可达") || /cannot connect to GitHub/i.test(message)) {
+    return t("checkUpdate.networkUnreachable");
+  }
+  return message;
+}
+
 export default function CheckUpdatePage() {
   const router = useRouter();
   const [autoStart] = useState<boolean>(() => readAutoStartFlag());
@@ -209,9 +216,10 @@ export default function CheckUpdatePage() {
         return false;
       }
     } catch (e) {
+      const raw = e instanceof Error ? e.message : String(e);
       setInfo({
         status: "error",
-        errorMessage: e instanceof Error ? e.message : String(e),
+        errorMessage: formatCheckErrorMessage(raw, t),
         canCheck: true,
       });
       return false;
