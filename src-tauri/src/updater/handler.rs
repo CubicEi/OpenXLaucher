@@ -1,10 +1,18 @@
-use std::sync::Arc;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
-use tauri::{AppHandle, State};
+use serde::Serialize;
+use tauri::{AppHandle, Emitter, State};
 
 use super::config::{get_update_config, should_check_update, UpdateConfig};
-use super::fetcher::{UpdateCheckResult, UpdateFetcher};
+use super::fetcher::{UpdateCheckResult, UpdateFetcher, UpdateProgressCallback};
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LauncherUpdateProgressEvent {
+    pub percent: f64,
+}
+
+pub const LAUNCHER_UPDATE_PROGRESS_EVENT: &str = "launcher-update-progress";
 
 pub struct UpdaterState {
     fetcher: Arc<Mutex<UpdateFetcher>>,
@@ -33,13 +41,20 @@ pub async fn check_for_updates(
 
 #[tauri::command]
 pub async fn download_update(
+    app: AppHandle,
     state: State<'_, UpdaterState>,
 ) -> Result<super::fetcher::DownloadResult, String> {
     let fetcher = {
         let fetcher = state.fetcher.lock().map_err(|e| e.to_string())?;
         fetcher.clone()
     };
-    fetcher.download_update().await
+    let on_progress: UpdateProgressCallback = Arc::new(move |percent| {
+        let _ = app.emit(
+            LAUNCHER_UPDATE_PROGRESS_EVENT,
+            LauncherUpdateProgressEvent { percent },
+        );
+    });
+    fetcher.download_update(Some(on_progress)).await
 }
 
 #[tauri::command]

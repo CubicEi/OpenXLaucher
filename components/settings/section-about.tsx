@@ -7,6 +7,8 @@ import { Loader2, Download, Check, RefreshCcw, Package, Sparkles } from "lucide-
 import { cn } from "@/lib/utils";
 import { useI18n } from "@/components/i18n/use-i18n";
 import { invoke } from "@tauri-apps/api/core";
+import { listenLauncherUpdateProgress } from "@/lib/launcher-update-progress";
+import { LauncherUpdateProgressBar } from "@/components/settings/launcher-update-progress-bar";
 
 type UpdateState =
   | { kind: "idle" }
@@ -19,6 +21,7 @@ export function AboutSection() {
   const { t } = useI18n();
   const [state, setState] = useState<UpdateState>({ kind: "idle" });
   const [installing, setInstalling] = useState(false);
+  const [downloadProgress, setDownloadProgress] = useState<number | null>(null);
   const [version, setVersion] = useState<string | null>(null);
 
   useEffect(() => {
@@ -59,13 +62,20 @@ export function AboutSection() {
 
   const install = async () => {
     setInstalling(true);
+    setDownloadProgress(0);
     try {
-      await invoke("download_update");
+      const unlisten = await listenLauncherUpdateProgress(setDownloadProgress);
+      try {
+        await invoke("download_update");
+      } finally {
+        unlisten();
+      }
       await invoke("install_update");
     } catch (e) {
       setState({ kind: "error", message: e instanceof Error ? e.message : String(e) });
     } finally {
       setInstalling(false);
+      setDownloadProgress(null);
     }
   };
 
@@ -132,6 +142,13 @@ export function AboutSection() {
               )}
             </div>
           </div>
+
+          {installing && (
+            <LauncherUpdateProgressBar
+              percent={downloadProgress}
+              label={t("settings.about.installing")}
+            />
+          )}
 
           {state.kind === "available" && state.notes && (
             <pre className="max-h-56 overflow-auto whitespace-pre-wrap break-words rounded-lg border border-border bg-muted/30 p-3 text-xs leading-relaxed text-foreground/80">

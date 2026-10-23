@@ -1,10 +1,12 @@
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::time::Instant;
 
 use super::config::{
     get_current_os, get_update_config, is_trusted_release_asset_url,
@@ -12,6 +14,45 @@ use super::config::{
 };
 use super::github_release::{fetch_latest_release_bundle, redirect_policy};
 use super::identity::{credentials_differ, local_identity_for_update};
+
+pub type UpdateProgressCallback = Arc<dyn Fn(f64) + Send + Sync>;
+
+fn log_updater(level: &str, message: &str, data: Option<serde_json::Value>) {
+    let _ = crate::handler::runtime_log::append_runtime_log(level, "updater", message, data);
+}
+
+struct DownloadProgressWriter {
+    last_pct: f64,
+    last_at: Instant,
+}
+
+impl DownloadProgressWriter {
+    fn new() -> Self {
+        Self {
+            last_pct: -1.0,
+            last_at: Instant::now(),
+        }
+    }
+
+    fn report(&mut self, pct: f64, on_progress: Option<&UpdateProgressCallback>) {
+        let clamped = pct.clamp(0.0, 100.0);
+        let now = Instant::now();
+        if clamped < 100.0
+            && clamped - self.last_pct < 0.5
+            && now.duration_since(self.last_at).as_millis() < 250
+        {
+            return;
+        }
+        self.last_pct = clamped;
+        self.last_at = now;
+        let mut cfg = get_update_config();
+        cfg.download_progress = Some(clamped);
+        let _ = save_update_config(cfg);
+        if let Some(cb) = on_progress {
+            cb(clamped);
+        }
+    }
+}
 
 fn filename_from_download_url(download_url: &str) -> Result<String, String> {
     let parsed = url::Url::parse(download_url).map_err(|e| format!("更新下载地址无效: {}", e))?;
@@ -148,6 +189,11 @@ impl UpdateFetcher {
                 .as_secs() as i64,
         );
         let _ = save_update_config(cfg.clone());
+        log_updater(
+            "info",
+            "开始检查启动器更新",
+            Some(json!({ "currentVersion": current_version })),
+        );
 
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(30))
@@ -166,6 +212,7 @@ impl UpdateFetcher {
             .map_err(|error| {
                 cfg.status = UpdateStatus::Error(error.clone());
                 let _ = save_update_config(cfg.clone());
+                log_updater("error", "拉取 Release 失败", Some(json!({ "error": error })));
                 error
             })?;
 
@@ -190,6 +237,11 @@ impl UpdateFetcher {
             cfg.expected_sha256 = None;
             cfg.status = UpdateStatus::Idle;
             let _ = save_update_config(cfg);
+            log_updater(
+                "info",
+                "启动器已是最新版本",
+                Some(json!({ "targetVersion": target_version })),
+            );
             return Ok(UpdateCheckResult {
                 needs_check: true,
                 update_available: false,
@@ -208,6 +260,15 @@ impl UpdateFetcher {
         cfg.expected_sha256 = Some(bundle.identity.sha256.clone());
         cfg.status = UpdateStatus::Available;
         let _ = save_update_config(cfg);
+        log_updater(
+            "info",
+            "发现启动器新版本",
+            Some(json!({
+                "currentVersion": current_version,
+                "targetVersion": target_version,
+                "fileSize": bundle.windows_exe_size,
+            })),
+        );
 
         Ok(UpdateCheckResult {
             needs_check: true,
@@ -219,7 +280,10 @@ impl UpdateFetcher {
         })
     }
 
-    pub async fn download_update(&self) -> Result<DownloadResult, String> {
+    pub async fn download_update(
+        &self,
+        on_progress: Option<UpdateProgressCallback>,
+    ) -> Result<DownloadResult, String> {
         if self.is_downloading.load(Ordering::SeqCst) {
             return Err("已有更新正在下载中".to_string());
         }
@@ -229,6 +293,8 @@ impl UpdateFetcher {
             Some(url) => url.clone(),
             None => return Err("没有可下载的更新".to_string()),
         };
+        let target_version = cfg_before.target_version.clone();
+        let expected_file_size = cfg_before.file_size;
 
         // 进入下载前再次核对 URL 白名单，防止配置被篡改（此时还没置 is_downloading=true）
         if !is_trusted_release_asset_url(&download_url) {
@@ -251,6 +317,8 @@ impl UpdateFetcher {
         cfg.status = UpdateStatus::Downloading;
         cfg.download_progress = Some(0.0);
         let _ = save_update_config(cfg.clone());
+        let mut progress_writer = DownloadProgressWriter::new();
+        progress_writer.report(0.0, on_progress.as_ref());
 
         // ------ 下面的所有 ? 都会触发 guard drop 做清理 ------
 
@@ -259,6 +327,14 @@ impl UpdateFetcher {
 
         let target_filename = filename_from_download_url(&download_url)?;
         let download_path = download_dir.join(&target_filename);
+        log_updater(
+            "info",
+            "开始下载启动器更新包",
+            Some(json!({
+                "targetVersion": target_version,
+                "fileName": target_filename,
+            })),
+        );
 
         // 拒绝跨目录文件名：下载文件名里只能有正常字符，防止路径穿越
         if target_filename.contains("..")
@@ -312,7 +388,18 @@ impl UpdateFetcher {
             return Err(msg);
         }
 
-        let total_size = response.content_length();
+        let total_size = response
+            .content_length()
+            .or(expected_file_size)
+            .filter(|n| *n > 0);
+        log_updater(
+            "info",
+            "已连接更新下载",
+            Some(json!({
+                "httpStatus": response.status().as_u16(),
+                "totalBytes": total_size,
+            })),
+        );
 
         let mut file =
             fs::File::create(&download_path).map_err(|e| format!("创建临时文件失败: {}", e))?;
@@ -341,9 +428,7 @@ impl UpdateFetcher {
 
             if let Some(total) = total_size {
                 let progress = (downloaded as f64 / total as f64) * 100.0;
-                let mut cfg = get_update_config();
-                cfg.download_progress = Some(progress);
-                let _ = save_update_config(cfg);
+                progress_writer.report(progress, on_progress.as_ref());
             }
         }
 
@@ -387,11 +472,10 @@ impl UpdateFetcher {
                 return Err(msg);
             }
 
-            eprintln!(
-                "[更新器] SHA-256 校验通过: {} (期望={}, 实际={})",
-                download_path.display(),
-                expected,
-                actual
+            log_updater(
+                "info",
+                "更新包 SHA-256 校验通过",
+                Some(json!({ "path": download_path.to_string_lossy() })),
             );
         }
 
@@ -400,6 +484,15 @@ impl UpdateFetcher {
         cfg.download_progress = Some(100.0);
         cfg.download_path = Some(download_path.to_string_lossy().to_string());
         let _ = save_update_config(cfg);
+        progress_writer.report(100.0, on_progress.as_ref());
+        log_updater(
+            "info",
+            "启动器更新包下载完成",
+            Some(json!({
+                "bytes": downloaded,
+                "path": download_path.to_string_lossy(),
+            })),
+        );
 
         // ========== 所有步骤成功，取消 guard 的 on_error 副作用 ==========
         guard.defuse();
@@ -413,6 +506,14 @@ impl UpdateFetcher {
 
     pub async fn install_update(&self) -> Result<InstallResult, String> {
         let cfg = get_update_config();
+        log_updater(
+            "info",
+            "开始安装启动器更新",
+            Some(json!({
+                "targetVersion": cfg.target_version,
+                "downloadPath": cfg.download_path,
+            })),
+        );
         let download_path_str = match &cfg.download_path {
             Some(path) => path.clone(),
             None => return Err("No downloaded update available".to_string()),
@@ -431,7 +532,7 @@ impl UpdateFetcher {
             }
             match Self::sha256_of_file(&download_path) {
                 Ok(ref actual) if actual == expected => {
-                    eprintln!("[更新器-安装前] 再次校验 SHA-256 通过: {}", expected);
+                    log_updater("info", "安装前 SHA-256 复检通过", None);
                 }
                 Ok(actual) => {
                     return Err(format!(

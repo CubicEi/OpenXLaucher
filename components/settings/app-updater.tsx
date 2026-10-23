@@ -13,6 +13,8 @@ import {
 import { invoke } from "@tauri-apps/api/core";
 import { useI18n } from "@/components/i18n/use-i18n";
 import type { AppLanguage } from "@/components/settings/settings-provider";
+import { listenLauncherUpdateProgress } from "@/lib/launcher-update-progress";
+import { LauncherUpdateProgressBar } from "@/components/settings/launcher-update-progress-bar";
 
 /**
  * 自动更新组件 — 提供共享更新状态、主页提示和手动更新操作。
@@ -79,14 +81,24 @@ async function checkInBackground(showError = false, language: AppLanguage = "zh-
 }
 
 // 手动触发下载安装（弹窗模式用）
-async function downloadAndInstall(language: AppLanguage = "zh-CN"): Promise<boolean> {
+async function downloadAndInstall(
+  language: AppLanguage = "zh-CN",
+  onDownloadProgress?: (percent: number) => void,
+): Promise<boolean> {
   try {
     const checkResult = await invoke<UpdateCheckResult>("check_for_updates", { force: true });
     if (!checkResult.update_available) {
       window.alert(updateAlert(language, "没有可用更新", "No updates are available"));
       return false;
     }
-    await invoke("download_update");
+    const unlisten = await listenLauncherUpdateProgress((percent) => {
+      onDownloadProgress?.(percent);
+    });
+    try {
+      await invoke("download_update");
+    } finally {
+      unlisten();
+    }
     await invoke("install_update");
     return true;
   } catch (e) {
@@ -161,10 +173,15 @@ export function AppUpdateButton({
   }
 
   const [installing, setInstalling] = useState(false);
+  const [downloadProgress, setDownloadProgress] = useState<number | null>(null);
   async function handleInstall() {
     setInstalling(true);
-    const ok = await downloadAndInstall(language);
-    if (!ok) setInstalling(false);
+    setDownloadProgress(0);
+    const ok = await downloadAndInstall(language, setDownloadProgress);
+    if (!ok) {
+      setInstalling(false);
+      setDownloadProgress(null);
+    }
   }
 
   return (
@@ -219,9 +236,17 @@ export function AppUpdateButton({
               )}
 
               {installing && (
-                <div className="mt-4 flex items-center gap-3">
-                  <Loader2 className="size-4 animate-spin" />
-                  <span className="text-xs text-muted-foreground">{t("settings.appUpdater.downloadingAndInstalling")}</span>
+                <div className="mt-4 space-y-3">
+                  <div className="flex items-center gap-3">
+                    <Loader2 className="size-4 animate-spin" />
+                    <span className="text-xs text-muted-foreground">
+                      {t("settings.appUpdater.downloadingAndInstalling")}
+                    </span>
+                  </div>
+                  <LauncherUpdateProgressBar
+                    percent={downloadProgress}
+                    label={t("settings.appUpdater.downloadingAndInstalling")}
+                  />
                 </div>
               )}
             </div>
@@ -268,6 +293,7 @@ function AppUpdateDialogTrigger({
 }) {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [installing, setInstalling] = useState(false);
+  const [downloadProgress, setDownloadProgress] = useState<number | null>(null);
   const router = useRouter();
   const { t, language } = useI18n();
 
@@ -281,8 +307,12 @@ function AppUpdateDialogTrigger({
     }
 
     setInstalling(true);
-    const ok = await downloadAndInstall(language);
-    if (!ok) setInstalling(false);
+    setDownloadProgress(0);
+    const ok = await downloadAndInstall(language, setDownloadProgress);
+    if (!ok) {
+      setInstalling(false);
+      setDownloadProgress(null);
+    }
   }
 
   return (
@@ -315,9 +345,17 @@ function AppUpdateDialogTrigger({
             )}
 
             {installing && (
-              <div className="mt-4 flex items-center gap-3">
-                <Loader2 className="size-4 animate-spin" />
-                <span className="text-xs text-muted-foreground">{t("settings.appUpdater.downloadingAndInstalling")}</span>
+              <div className="mt-4 space-y-3">
+                <div className="flex items-center gap-3">
+                  <Loader2 className="size-4 animate-spin" />
+                  <span className="text-xs text-muted-foreground">
+                    {t("settings.appUpdater.downloadingAndInstalling")}
+                  </span>
+                </div>
+                <LauncherUpdateProgressBar
+                  percent={downloadProgress}
+                  label={t("settings.appUpdater.downloadingAndInstalling")}
+                />
               </div>
             )}
 

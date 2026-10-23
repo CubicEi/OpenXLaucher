@@ -214,6 +214,16 @@ pub fn launch_windows_replace(download_path: &Path) -> Result<(), String> {
         msg_fail,
     );
     fs::write(&script_path, script).map_err(|e| format!("写入替换脚本失败: {}", e))?;
+    let _ = crate::handler::runtime_log::append_runtime_log(
+        "info",
+        "updater",
+        "已写入 Windows 替换脚本，即将重启安装",
+        Some(serde_json::json!({
+            "script": script_path.to_string_lossy(),
+            "newExe": new_exe.to_string_lossy(),
+            "installDir": install_dir.to_string_lossy(),
+        })),
+    );
 
     #[cfg(windows)]
     {

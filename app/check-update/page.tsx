@@ -18,6 +18,8 @@ import { Badge } from "@/components/ui/badge";
 import { useI18n, type TranslationKey } from "@/components/i18n/use-i18n";
 import { invoke } from "@tauri-apps/api/core";
 import { getVersion } from "@tauri-apps/api/app";
+import { listenLauncherUpdateProgress } from "@/lib/launcher-update-progress";
+import { LauncherUpdateProgressBar } from "@/components/settings/launcher-update-progress-bar";
 
 type UpdateStatus =
   | "idle"
@@ -145,6 +147,10 @@ export default function CheckUpdatePage() {
 
   useEffect(() => {
     if (info.status !== "downloading") return;
+    let unlisten: (() => void) | undefined;
+    listenLauncherUpdateProgress((percent) => setDownloadProgress(percent)).then((fn) => {
+      unlisten = fn;
+    });
     let timer: ReturnType<typeof setInterval>;
     const poll = async () => {
       try {
@@ -166,7 +172,10 @@ export default function CheckUpdatePage() {
     };
     poll();
     timer = setInterval(poll, 500);
-    return () => clearInterval(timer);
+    return () => {
+      clearInterval(timer);
+      unlisten?.();
+    };
   }, [info.status]);
 
   const loadVersion = async () => {
@@ -432,23 +441,12 @@ export default function CheckUpdatePage() {
                 <div className="rounded-lg border border-sky-500/30 bg-sky-500/5 p-4 space-y-3">
                   <div className="flex items-center gap-2">
                     <Loader2 className="size-4 animate-spin text-sky-500" />
-                    <span className="text-sm font-medium">
-                      {t("checkUpdate.downloadingUpdate")}
-                      {typeof downloadProgress === "number" && (
-                        <span className="ml-2 font-mono text-sky-600">
-                          {downloadProgress.toFixed(1)}%
-                        </span>
-                      )}
-                    </span>
+                    <span className="text-sm font-medium">{t("checkUpdate.downloadingUpdate")}</span>
                   </div>
-                  {typeof downloadProgress === "number" && (
-                    <div className="w-full h-2 rounded-full bg-sky-500/15 overflow-hidden">
-                      <div
-                        className="h-full bg-sky-500 transition-all duration-300"
-                        style={{ width: `${Math.min(100, downloadProgress)}%` }}
-                      />
-                    </div>
-                  )}
+                  <LauncherUpdateProgressBar
+                    percent={downloadProgress}
+                    label={t("checkUpdate.downloadingUpdate")}
+                  />
                 </div>
               )}
 
