@@ -536,6 +536,7 @@ pub(super) fn build_jvm_arguments_inner(
     let _ = app_handle.emit(
         "game-log",
         GameLogEvent {
+            pid: None,
             level: "info".to_string(),
             message: format!("实际分配最大内存: {effective_max_memory_mb}MB"),
         },
@@ -545,6 +546,7 @@ pub(super) fn build_jvm_arguments_inner(
         let _ = app_handle.emit(
             "game-log",
             GameLogEvent {
+                pid: None,
                 level: "warn".to_string(),
                 message: warning.clone(),
             },

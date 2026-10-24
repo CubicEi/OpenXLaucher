@@ -1,6 +1,8 @@
 /**
  * Log4j 日志解析器
  * 通过分析 Minecraft log4j 日志来识别启动阶段和进度
+ *
+ * 启动成功判定：模组加载完成（不再等待加载世界 / 主菜单 / 准备就绪）。
  */
 
 export interface Log4jProgressStage {
@@ -15,7 +17,7 @@ export interface Log4jProgressStage {
 }
 
 /**
- * Minecraft 启动阶段定义
+ * Minecraft 启动阶段定义（最后一项「加载模组」完成即视为启动成功）
  */
 const LAUNCH_STAGES: Log4jProgressStage[] = [
   {
@@ -46,18 +48,6 @@ const LAUNCH_STAGES: Log4jProgressStage[] = [
     id: "loading_mods",
     name: "加载模组",
     description: "正在加载和验证模组",
-    estimatedPercentage: 75,
-  },
-  {
-    id: "loading_world",
-    name: "加载世界",
-    description: "正在加载世界数据",
-    estimatedPercentage: 90,
-  },
-  {
-    id: "ready",
-    name: "准备完成",
-    description: "游戏已准备就绪",
     estimatedPercentage: 100,
   },
 ];
@@ -76,6 +66,12 @@ interface LogPattern {
 
 /**
  * Minecraft log4j 日志模式匹配规则
+ *
+ * 模组加载完成标记（优先于标题画面 / 世界加载）：
+ * - Forge 1.12+: "Forge Mod Loader has successfully loaded N mods"
+ * - Forge/NeoForge: "Mod loading complete" / "Early mod loading complete"
+ * - 通用: "Mods loaded" / "successfully loaded N mods"
+ * - Fabric/Quilt/原版回退（模组列表后、进世界前）: Sound engine / Narrator / Backend LWJGL
  */
 const LOG_PATTERNS: LogPattern[] = [
   // JVM 启动
@@ -177,17 +173,64 @@ const LOG_PATTERNS: LogPattern[] = [
     stageId: "initializing_game",
   },
 
-  // 加载模组 (Forge/Fabric/Quilt)
+  // 加载模组 — 完成标记须排在进入标记之前，避免 "mod loading complete" 被 /Mod loading/ 抢先匹配
+  {
+    pattern: /Mods loaded/i,
+    stageId: "loading_mods",
+    isCompletion: true,
+  },
+  {
+    pattern: /successfully loaded \d+ mods/i,
+    stageId: "loading_mods",
+    isCompletion: true,
+  },
+  {
+    pattern: /Forge Mod Loader has successfully loaded/i,
+    stageId: "loading_mods",
+    isCompletion: true,
+  },
+  {
+    pattern: /(?:Early )?mod loading complete/i,
+    stageId: "loading_mods",
+    isCompletion: true,
+  },
+  // Fabric/Quilt/原版：模组阶段之后、进世界之前的稳定客户端就绪信号
+  {
+    pattern: /Sound engine started/i,
+    stageId: "loading_mods",
+    isCompletion: true,
+  },
+  {
+    pattern: /Narrator library/i,
+    stageId: "loading_mods",
+    isCompletion: true,
+  },
+  {
+    pattern: /Backend library:\s*LWJGL/i,
+    stageId: "loading_mods",
+    isCompletion: true,
+  },
+
+  // 加载模组 (Forge/Fabric/Quilt/NeoForge) — 进入阶段
   {
     pattern: /Loading mods/i,
     stageId: "loading_mods",
   },
   {
-    pattern: /Mod loading/i,
+    pattern: /Loading \d+ mods/i,
+    stageId: "loading_mods",
+  },
+  {
+    // 排除 "mod loading complete"（已由上方完成规则处理）
+    pattern: /Mod loading(?! complete)/i,
     stageId: "loading_mods",
   },
   {
     pattern: /Forge mod loading/i,
+    stageId: "loading_mods",
+  },
+  {
+    pattern: /NeoForge mod loading/i,
     stageId: "loading_mods",
   },
   {
@@ -203,11 +246,6 @@ const LOG_PATTERNS: LogPattern[] = [
     stageId: "loading_mods",
   },
   {
-    pattern: /Mods loaded/i,
-    stageId: "loading_mods",
-    isCompletion: true,
-  },
-  {
     pattern: /Processing mods/i,
     stageId: "loading_mods",
   },
@@ -219,70 +257,13 @@ const LOG_PATTERNS: LogPattern[] = [
     pattern: /Applying mod/i,
     stageId: "loading_mods",
   },
-
-  // 加载世界
   {
-    pattern: /Loading world/i,
-    stageId: "loading_world",
+    pattern: /Constructing mods/i,
+    stageId: "loading_mods",
   },
   {
-    pattern: /Preparing start region/i,
-    stageId: "loading_world",
-  },
-  {
-    pattern: /Preparing spawn area/i,
-    stageId: "loading_world",
-  },
-  {
-    pattern: /Time elapsed/i,
-    stageId: "loading_world",
-  },
-  {
-    pattern: /World loaded/i,
-    stageId: "loading_world",
-    isCompletion: true,
-  },
-  {
-    pattern: /Loading level/i,
-    stageId: "loading_world",
-  },
-  {
-    pattern: /Reading.*level data/i,
-    stageId: "loading_world",
-  },
-  {
-    pattern: /Building chunk/i,
-    stageId: "loading_world",
-  },
-
-  // 准备完成
-  {
-    pattern: /Game started/i,
-    stageId: "ready",
-  },
-  {
-    pattern: /Displaying screen/i,
-    stageId: "ready",
-  },
-  {
-    pattern: /Main menu/i,
-    stageId: "ready",
-  },
-  {
-    pattern: /Rendering screen/i,
-    stageId: "ready",
-  },
-  {
-    pattern: /Opening screen/i,
-    stageId: "ready",
-  },
-  {
-    pattern: /Started serving/i,
-    stageId: "ready",
-  },
-  {
-    pattern: /Done.*help/i,
-    stageId: "ready",
+    pattern: /Configuring mods/i,
+    stageId: "loading_mods",
   },
 ];
 
@@ -294,6 +275,8 @@ export class Log4jProgressParser {
   private stageStartTime = 0;
   private stageLogCounts: Map<string, number> = new Map();
   private totalLogCount = 0;
+  /** 模组加载完成 → 启动成功 */
+  private launchComplete = false;
 
   /**
    * 解析单条日志，返回当前进度信息
@@ -310,12 +293,17 @@ export class Log4jProgressParser {
       if (pattern.pattern.test(message)) {
         const stageIndex = LAUNCH_STAGES.findIndex(s => s.id === pattern.stageId);
         if (stageIndex !== -1) {
-          // 如果是完成标记，移动到下一阶段
-          if (pattern.isCompletion && stageIndex < LAUNCH_STAGES.length - 1) {
-            this.currentStageIndex = stageIndex + 1;
+          if (pattern.isCompletion) {
+            if (stageIndex < LAUNCH_STAGES.length - 1) {
+              // 非最后阶段的完成标记：推进到下一阶段
+              this.currentStageIndex = stageIndex + 1;
+            } else {
+              // 最后阶段（加载模组）完成 = 启动成功
+              this.currentStageIndex = stageIndex;
+              this.launchComplete = true;
+            }
             this.stageStartTime = Date.now();
           } else if (stageIndex >= this.currentStageIndex) {
-            // 否则更新当前阶段
             this.currentStageIndex = stageIndex;
             this.stageStartTime = Date.now();
           }
@@ -327,12 +315,14 @@ export class Log4jProgressParser {
             (this.stageLogCounts.get(currentStage.id) || 0) + 1
           );
 
-          const progress = this.calculateProgress(currentStage);
+          const progress = this.launchComplete
+            ? 100
+            : this.calculateProgress(currentStage);
 
           return {
             stage: currentStage,
             progress,
-            isComplete: currentStage.id === "ready",
+            isComplete: this.launchComplete,
           };
         }
       }
@@ -345,12 +335,14 @@ export class Log4jProgressParser {
       (this.stageLogCounts.get(currentStage.id) || 0) + 1
     );
 
-    const progress = this.calculateProgress(currentStage);
+    const progress = this.launchComplete
+      ? 100
+      : this.calculateProgress(currentStage);
 
     return {
       stage: currentStage,
       progress,
-      isComplete: currentStage.id === "ready",
+      isComplete: this.launchComplete,
     };
   }
 
@@ -391,8 +383,6 @@ export class Log4jProgressParser {
       "loading_assets": 15,
       "initializing_game": 10,
       "loading_mods": 25,
-      "loading_world": 15,
-      "ready": 5,
     };
     return expectedLogs[stageId] || 10;
   }
@@ -405,6 +395,7 @@ export class Log4jProgressParser {
     this.stageStartTime = 0;
     this.stageLogCounts.clear();
     this.totalLogCount = 0;
+    this.launchComplete = false;
   }
 
   /**
@@ -426,3 +417,4 @@ export class Log4jProgressParser {
  * 创建全局解析器实例
  */
 export const log4jParser = new Log4jProgressParser();
+

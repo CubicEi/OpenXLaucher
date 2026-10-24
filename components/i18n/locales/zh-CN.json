@@ -223,6 +223,8 @@
       "copySelected": "复制所选",
       "deselectAll": "取消全选",
       "terminate": "终止进程",
+      "noRunningInstances": "暂无运行中的实例",
+      "selectInstance": "选择运行实例",
       "level": {
         "fatal": "致命",
         "error": "错误",
@@ -230,26 +232,6 @@
         "info": "信息",
         "debug": "调试"
       }
-    },
-    "modDeps": {
-      "title": "模组依赖解析",
-      "issues": "个问题",
-      "allOk": "全部正常",
-      "apiMode": "API 深度分析",
-      "deepAnalyzing": "深度分析中...",
-      "deepAnalysis": "深度分析",
-      "analyzing": "正在分析模组依赖...",
-      "noInstance": "未选择实例",
-      "mods": "个模组",
-      "allResolved": "已全部解析",
-      "batchFix": "一键修复",
-      "missingRequired": "缺失的必需依赖",
-      "requiredBy": "被以下模组需要",
-      "single": "单独下载",
-      "versionMismatch": "版本不匹配",
-      "loaderErrors": "加载器报错",
-      "scanNote": "提示：首次分析需要索引模组元数据，可能需要几秒。深度分析会调用 Modrinth/CurseForge API 验证版本兼容性。",
-      "allSatisfied": "所有模组依赖已满足，无冲突"
     }
   },
   "panel": {

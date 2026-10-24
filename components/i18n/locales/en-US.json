@@ -223,6 +223,8 @@
       "copySelected": "Copy Selected",
       "deselectAll": "Deselect All",
       "terminate": "Terminate",
+      "noRunningInstances": "No running instances",
+      "selectInstance": "Select instance",
       "level": {
         "fatal": "FATAL",
         "error": "ERROR",
@@ -230,26 +232,6 @@
         "info": "INFO",
         "debug": "DEBUG"
       }
-    },
-    "modDeps": {
-      "title": "Mod Dependency Resolution",
-      "issues": "issues",
-      "allOk": "All OK",
-      "apiMode": "API Analysis",
-      "deepAnalyzing": "Analyzing deeply...",
-      "deepAnalysis": "Deep Analysis",
-      "analyzing": "Analyzing mod dependencies...",
-      "noInstance": "No instance selected",
-      "mods": "mods",
-      "allResolved": "All resolved",
-      "batchFix": "Fix All",
-      "missingRequired": "Missing Required Dependencies",
-      "requiredBy": "Required by",
-      "single": "Single",
-      "versionMismatch": "Version Mismatch",
-      "loaderErrors": "Loader Errors",
-      "scanNote": "Note: First analysis indexes mod metadata and may take a few seconds. Deep analysis calls Modrinth/CurseForge APIs to verify version compatibility.",
-      "allSatisfied": "All mod dependencies satisfied, no conflicts"
     }
   },
   "panel": {

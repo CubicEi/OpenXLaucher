@@ -47,7 +47,14 @@ interface MemoryOptimizationReport {
 export function LaunchPanel() {
   const { slots, snapshot, reportThemeError } = useThemeRuntime();
   const { t } = useI18n();
-  const { config, status, errorMessage, launchGame, cancelLaunch } = useLaunchContext();
+  const {
+    config,
+    status,
+    errorMessage,
+    launchGame,
+    cancelLaunch,
+    runningInstances,
+  } = useLaunchContext();
   const { selectedProfile } = useAccountContext();
   const [javaInstallations, setJavaInstallations] = useState<LauncherPathsConfig["java_installations"]>({});
 
@@ -72,8 +79,11 @@ export function LaunchPanel() {
   }, []);
 
   const isLaunching = status === "preparing" || status === "launching";
-  const isRunning = status === "running";
-  const canLaunch = !isLaunching && !isRunning;
+  const hasRunningInstances = runningInstances.length > 0;
+  const isRunning = status === "running" || hasRunningInstances;
+  // 无实例时不可在 launching 中重复点主流程；有实例时圆形钮可追加（后端校验更新锁）
+  const canLaunch = !isLaunching && !hasRunningInstances;
+  const canAppendLaunch = hasRunningInstances && !isLaunching;
 
   async function handleOptimizeMemory() {
     if (optimizing) return;
@@ -165,63 +175,92 @@ export function LaunchPanel() {
         {/* 详细启动阶段 */}
         <LaunchProgressStages />
 
-        {/* 启动按钮 */}
-        <ThemeSlot
-          registry={slots}
-          owner={snapshot.activeOwner}
-          slotId="launch.primary-action"
-          onError={reportThemeError}
-        >
-          <Button
-            size="lg"
-            className="w-full gap-2 text-sm font-semibold"
-            onClick={isLaunching || isRunning ? () => cancelLaunch() : () => launchGame()}
-            disabled={!canLaunch && !isLaunching && !isRunning}
+        {/* 启动 + 内存清理：同一列间距，避免 ThemeSlot display:contents 打乱 space-y */}
+        <div className="flex flex-col gap-4">
+          <ThemeSlot
+            registry={slots}
+            owner={snapshot.activeOwner}
+            slotId="launch.primary-action"
+            onError={reportThemeError}
           >
-            {isLaunching ? (
+            <div className={cn("flex items-center gap-2", !hasRunningInstances && "w-full")}>
+              <Button
+                size="lg"
+                className={cn(
+                  "gap-2 text-sm font-semibold",
+                  hasRunningInstances ? "flex-1" : "w-full",
+                )}
+                onClick={
+                  isLaunching || hasRunningInstances
+                    ? () => cancelLaunch()
+                    : () => launchGame()
+                }
+                disabled={!canLaunch && !isLaunching && !hasRunningInstances}
+              >
+                {isLaunching && !hasRunningInstances ? (
+                  <>
+                    <Loader2 className="size-4 animate-spin" />
+                    {status === "preparing" ? t("launch.panel.stopPreparing") : "Launching"}
+                  </>
+                ) : hasRunningInstances || isRunning ? (
+                  <>
+                    <Square className="size-4" />
+                    {t("launch.stopGame")}
+                  </>
+                ) : (
+                  <>
+                    <Play className="size-4" />
+                    {t("launch.launchGame")}
+                  </>
+                )}
+              </Button>
+              {hasRunningInstances && (
+                <Button
+                  size="lg"
+                  variant="default"
+                  className="h-10 w-10 shrink-0 rounded-full p-0"
+                  onClick={() => void launchGame()}
+                  disabled={!canAppendLaunch}
+                  title={t("launch.launchGame")}
+                  aria-label={t("launch.launchGame")}
+                >
+                  {isLaunching ? (
+                    <Loader2 className="size-4 animate-spin" />
+                  ) : (
+                    <Play className="size-4" />
+                  )}
+                </Button>
+              )}
+            </div>
+          </ThemeSlot>
+
+          <Button
+            size="sm"
+            variant="outline"
+            className="w-full gap-2 text-xs"
+            onClick={handleOptimizeMemory}
+            disabled={optimizing}
+          >
+            {optimizing ? (
               <>
-                <Loader2 className="size-4 animate-spin" />
-                {status === "preparing" ? t("launch.panel.stopPreparing") : "Launching"}
+                <Loader2 className="size-3.5 animate-spin" />
+                {t("launch.panel.freeingSystemMemory")}
               </>
-            ) : isRunning ? (
+            ) : lastReport ? (
               <>
-                <Square className="size-4" />
-                {t("launch.stopGame")}
+                <Sparkles className="size-3.5" />
+                {t("launch.panel.freedAboutValueMbCleanAgain", {
+                  value: lastReport.freed_mb >= 0 ? lastReport.freed_mb : 0,
+                })}
               </>
             ) : (
               <>
-                <Play className="size-4" />
-                {t("launch.launchGame")}
+                <HardDrive className="size-3.5" />
+                {t("launch.panel.freeMemoryClearSystemCache")}
               </>
             )}
           </Button>
-        </ThemeSlot>
-
-        {/* 内存清理按钮 */}
-        <Button
-          size="sm"
-          variant="outline"
-          className="w-full gap-2 text-xs"
-          onClick={handleOptimizeMemory}
-          disabled={optimizing}
-        >
-          {optimizing ? (
-            <>
-              <Loader2 className="size-3.5 animate-spin" />
-              {t("launch.panel.freeingSystemMemory")}
-            </>
-          ) : lastReport ? (
-            <>
-              <Sparkles className="size-3.5" />
-              {t("launch.panel.freedAboutValueMbCleanAgain", { value: lastReport.freed_mb >= 0 ? lastReport.freed_mb : 0 })}
-            </>
-          ) : (
-            <>
-              <HardDrive className="size-3.5" />
-              {t("launch.panel.freeMemoryClearSystemCache")}
-            </>
-          )}
-        </Button>
+        </div>
 
         {/* 启动分析报告 */}
         <LaunchReportButton />

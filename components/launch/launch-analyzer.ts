@@ -7,14 +7,13 @@ import type {
 import type { AppLanguage } from "@/components/settings/settings-provider";
 import type { AuthType } from "@/types";
 
+/** 最后一项「加载模组」完成即视为启动成功（不再包含加载世界 / 准备就绪） */
 const STAGE_ORDER = [
   "jvm_start",
   "loading_libraries",
   "loading_assets",
   "initializing_game",
   "loading_mods",
-  "loading_world",
-  "ready",
 ] as const;
 
 const STAGE_NAMES: Record<(typeof STAGE_ORDER)[number], { zh: string; en: string }> = {
@@ -23,8 +22,6 @@ const STAGE_NAMES: Record<(typeof STAGE_ORDER)[number], { zh: string; en: string
   loading_assets: { zh: "加载资源", en: "Loading Assets" },
   initializing_game: { zh: "初始化游戏", en: "Initializing Game" },
   loading_mods: { zh: "加载模组", en: "Loading Mods" },
-  loading_world: { zh: "加载世界", en: "Loading World" },
-  ready: { zh: "游戏就绪", en: "Game Ready" },
 };
 
 const STAGE_ENTRY_PATTERNS: Array<{ id: (typeof STAGE_ORDER)[number]; re: RegExp }> = [
@@ -32,18 +29,16 @@ const STAGE_ENTRY_PATTERNS: Array<{ id: (typeof STAGE_ORDER)[number]; re: RegExp
   { id: "loading_libraries", re: /Loading libraries|Downloading library|Considering library|Library .* does not exist|Loaded \d+ libraries|Applying library|Tweaking classpath|ClassPath|Class path/i },
   { id: "loading_assets", re: /Loading assets|Reloading resources|Resource pack loading|Reloading ResourceManager|Applied.*resource pack|Assets loaded|Asset download|Loading locales|LanguageManager|texture atlas|Texture stitch|Loading model|Resource reload|Reloading.*resource|Preparing resource pack/i },
   { id: "initializing_game", re: /Initializing game|Starting game|Game instance created|Setting up game|Created.*dimensions|Game initialized|Starting integrated|Bootstrap|Minecraft .*starting|Minecraft main|Setting .*window|Creating window|Initializing NoFog|Launching Minecraft|Minecraft .* is starting|Loading mappings|Mapping set|MinecraftClient/i },
-  { id: "loading_mods", re: /Loading mods|Mod loading|Forge mod loading|Fabric mod loading|Quilt mod loading|NeoForge mod loading|FML.*loading|FML:|ModLauncher|Found \d+ mods|Processing mods|Mod.*found|Applying mod|Mods loaded|Scanning.*mod|Mod list|Mod files|Mod containers|Constructing mods|Configuring mods|Loading plugin|Tweaker|Mod tweaker|Initialising mod|ModInitializer|onInitialize|ForgeModLoader|FMLAppLoader|PluginLoader|LiteLoader.*mod|tweaker class|ModValidator/i },
-  { id: "loading_world", re: /Loading world|Preparing start region|Preparing spawn area|Time elapsed|Loading level|Reading.*level data|Building chunk|World loaded|Connecting to server|Integrated server|Starting integrated|Joining world|Spawn area|Chunk cache|Loading level.*level\.dat|Reading level\.dat|Level load|World init|Loading properties|Generated key for/i },
-  { id: "ready", re: /Game started|Displaying screen|Main menu|Rendering screen|Opening screen|Started serving|Done .* for .*help|Help: |Title screen|GuiMainMenu|Init done|Initialization done|Minecraft initialized|Finished loading|Server started|Tick loop|MinecraftClient.*tick/i },
+  { id: "loading_mods", re: /Loading mods|Loading \d+ mods|Mod loading|Forge mod loading|Fabric mod loading|Quilt mod loading|NeoForge mod loading|FML.*loading|FML:|ModLauncher|Found \d+ mods|Processing mods|Mod.*found|Applying mod|Mods loaded|Scanning.*mod|Mod list|Mod files|Mod containers|Constructing mods|Configuring mods|Loading plugin|Tweaker|Mod tweaker|Initialising mod|ModInitializer|onInitialize|ForgeModLoader|FMLAppLoader|PluginLoader|LiteLoader.*mod|tweaker class|ModValidator|Sound engine started|Narrator library|Backend library:\s*LWJGL/i },
 ];
 
 const STAGE_COMPLETION_PATTERNS: Array<{ id: (typeof STAGE_ORDER)[number]; re: RegExp }> = [
   { id: "jvm_start", re: /Loading libraries|Downloading library|Considering library|Tweaker|Applying tweak class|ModLauncher|Starting minecraft|Bootstrap/i },
   { id: "loading_libraries", re: /Loading assets|Reloading resources|Initializing game|Starting game|Reloading ResourceManager|Initializing NoFog|Loading mappings|Creating window|Asset|texture atlas/i },
   { id: "loading_assets", re: /Initializing game|Starting game|Game instance created|Loading mods|FML|ModLauncher|Initializing.*(mod|loader)|Loading mappings|MinecraftClient|Starting integrated/i },
-  { id: "initializing_game", re: /Loading mods|Mod loading|Forge mod loading|Fabric mod loading|Quilt mod loading|NeoForge mod loading|FML.*loading|Loading world|Preparing start region|Constructing mods|Configuring mods|Mod.*found|Found \d+ mods|Processing.*mods|Mod list|Scanning.*mod|ModInitializer|onInitialize/i },
-  { id: "loading_mods", re: /Loading world|Preparing start region|Preparing spawn area|Loading level|Reading.*level data|Game started|Displaying screen|Title screen|Main menu|GuiMainMenu|Mods loaded|Finished loading|Initialization done|MinecraftClient.*tick/i },
-  { id: "loading_world", re: /Game started|Displaying screen|Main menu|Rendering screen|Opening screen|Started serving|Done .* for .*help|Help: /i },
+  { id: "initializing_game", re: /Loading mods|Loading \d+ mods|Mod loading|Forge mod loading|Fabric mod loading|Quilt mod loading|NeoForge mod loading|FML.*loading|Constructing mods|Configuring mods|Mod.*found|Found \d+ mods|Processing.*mods|Mod list|Scanning.*mod|ModInitializer|onInitialize/i },
+  // 模组加载完成标记（启动成功）；Fabric/原版用 Sound/Narrator/LWJGL 作为进世界前的回退
+  { id: "loading_mods", re: /Mods loaded|successfully loaded \d+ mods|Forge Mod Loader has successfully loaded|(?:Early )?mod loading complete|Sound engine started|Narrator library|Backend library:\s*LWJGL|Minecraft initialized|Minecraft client (?:has )?started/i },
 ];
 
 const MOD_COUNT_RE = /Found[^\d]{0,60}(\d+)[^\d]{0,60}mods?|(\d+)[^\d]{0,20}of[^\d]{0,20}mods?|(?:loaded|loading|processing|listed|validated|scanned|constructed|configured)[^\d]{0,20}(\d+)[^\d]{0,20}mods?/i;
@@ -339,7 +334,7 @@ export function analyzeLaunchLogs(
     if (s && !s.completed && s.enteredAt != null) {
       s.completedAt = endTs;
       s.durationMs = s.completedAt - s.enteredAt;
-      // 只有 ready 且有明确的结束标记才视为 completed，否则保留为 false 以示中断
+      // 只有最后阶段（加载模组）且有明确完成标记 / running 才视为 completed，否则保留为 false 以示中断
       s.completed = j === stages.length - 1 ? currentStageIdx === stages.length - 1 && finalStatus === "running" : false;
     }
   }
@@ -409,10 +404,15 @@ export function analyzeLaunchLogs(
   const totalDurationMs =
     startedAt && endedAt ? endedAt - startedAt : stages.reduce<number>((acc, s) => acc + (s.durationMs ?? 0), 0) || null;
 
-  // 若所有阶段都完成且 ready 日志出现，则判定 running
+  // 若已进入并完成「加载模组」阶段，则判定 running
   let reportStatus: LaunchAnalysisReport["finalStatus"] = finalStatus ?? "in_progress";
   if (!reportStatus || reportStatus === "in_progress") {
-    if (currentStageIdx === stages.length - 1) reportStatus = "running";
+    if (currentStageIdx === stages.length - 1 && stages[currentStageIdx]?.completed) {
+      reportStatus = "running";
+    } else if (currentStageIdx === stages.length - 1) {
+      // 已进入最后阶段（即便尚未 close），也视为客户端已拉起
+      reportStatus = "running";
+    }
     if (errorCount > 0 && failureHints.length > 0) reportStatus = "error";
   }
 

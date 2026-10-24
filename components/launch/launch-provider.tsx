@@ -5,6 +5,7 @@ import React, {
   useCallback,
   useContext,
   useEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
@@ -24,6 +25,7 @@ import type {
   LaunchLogEntry,
   LaunchProgress,
   LaunchStatus,
+  RunningLaunchInstance,
 } from "@/types";
 
 /** 默认启动配置 */
@@ -60,11 +62,17 @@ const DEFAULT_LAUNCH_CONFIG: LaunchConfig = {
   customJvmArgs: DEFAULT_INITIAL_JVM_ARGS,
 };
 
+const MAX_LOG_ENTRIES = 500;
+
 interface LaunchContextValue {
   config: LaunchConfig;
   updateConfig: (patch: Partial<LaunchConfig>) => void;
   status: LaunchStatus;
   logs: LaunchLogEntry[];
+  logsByPid: Record<number, LaunchLogEntry[]>;
+  selectedLogPid: number | null;
+  setSelectedLogPid: (pid: number | null) => void;
+  runningInstances: RunningLaunchInstance[];
   errorMessage: string | null;
   launchGame: (overrides?: Partial<LaunchConfig>) => Promise<void>;
   cancelLaunch: () => Promise<void>;
@@ -90,12 +98,44 @@ export function useLaunchContext() {
   return ctx;
 }
 
+function appendLogEntry(
+  prev: LaunchLogEntry[],
+  entry: LaunchLogEntry,
+): LaunchLogEntry[] {
+  const next = [...prev, entry];
+  return next.length > MAX_LOG_ENTRIES ? next.slice(-MAX_LOG_ENTRIES) : next;
+}
+
+function deriveStatus(options: {
+  launchInFlight: boolean;
+  instances: RunningLaunchInstance[];
+  lastStatusHint: LaunchStatus | null;
+}): LaunchStatus {
+  const { launchInFlight, instances, lastStatusHint } = options;
+  if (launchInFlight) {
+    return lastStatusHint === "launching" ? "launching" : "preparing";
+  }
+  if (instances.length === 0) {
+    return lastStatusHint === "error"
+      ? "error"
+      : lastStatusHint === "stopped"
+        ? "stopped"
+        : "idle";
+  }
+  if (instances.some((i) => !i.fullyStarted)) {
+    return "launching";
+  }
+  return "running";
+}
+
 export function LaunchProvider({ children }: { children: React.ReactNode }) {
   const { t, language } = useI18n();
   const [config, setConfig] = useState<LaunchConfig>(DEFAULT_LAUNCH_CONFIG);
   const [configLoaded, setConfigLoaded] = useState(false);
   const [status, setStatus] = useState<LaunchStatus>("idle");
-  const [logs, setLogs] = useState<LaunchLogEntry[]>([]);
+  const [logsByPid, setLogsByPid] = useState<Record<number, LaunchLogEntry[]>>({});
+  const [selectedLogPid, setSelectedLogPid] = useState<number | null>(null);
+  const [runningInstances, setRunningInstances] = useState<RunningLaunchInstance[]>([]);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [lastCommandArgs, setLastCommandArgs] = useState<string | null>(null);
   const [lastLaunchTime, setLastLaunchTime] = useState<string | null>(null);
@@ -104,8 +144,23 @@ export function LaunchProvider({ children }: { children: React.ReactNode }) {
   const [launchEndedAt, setLaunchEndedAt] = useState<number | null>(null);
   const [lastExitCode, setLastExitCode] = useState<number | null>(null);
   const logIdRef = useRef(0);
-  const gameFullyStartedRef = useRef(false);
+  const pendingLogsRef = useRef<LaunchLogEntry[]>([]);
+  const launchInFlightRef = useRef(false);
+  const statusHintRef = useRef<LaunchStatus | null>(null);
+  const fullyStartedPidsRef = useRef<Set<number>>(new Set());
+  const instancesRef = useRef<RunningLaunchInstance[]>([]);
+  const selectedLogPidRef = useRef<number | null>(null);
 
+  const syncStatus = useCallback((instances: RunningLaunchInstance[]) => {
+    instancesRef.current = instances;
+    setStatus(
+      deriveStatus({
+        launchInFlight: launchInFlightRef.current,
+        instances,
+        lastStatusHint: statusHintRef.current,
+      }),
+    );
+  }, []);
 
   // 本地配置先恢复，使首屏不必等待原生 I/O；原生路径查询完成后再无缝合并。
   useEffect(() => {
@@ -122,9 +177,6 @@ export function LaunchProvider({ children }: { children: React.ReactNode }) {
     let localConfigApplied = false;
 
     const tryMarkLoaded = () => {
-      // 两个阶段都完成后才标记 configLoaded=true：
-      // 1) localStorage 配置应用
-      // 2) Tauri 原生返回的路径配置应用（或失败也视为完成）
       if (!cancelled && localConfigApplied && nativePathsResolved) {
         appLog.info("launch", "config loaded", {
           localConfigApplied,
@@ -162,7 +214,6 @@ export function LaunchProvider({ children }: { children: React.ReactNode }) {
 
         if (cancelled) return;
 
-        // 旧配置无 autoMemory 字段时默认 true；若用户曾手动改过 maxMemory 则视为关闭自动。
         const autoMemory =
           typeof savedConfig.autoMemory === "boolean"
             ? savedConfig.autoMemory
@@ -193,11 +244,47 @@ export function LaunchProvider({ children }: { children: React.ReactNode }) {
     return () => { cancelled = true; };
   }, []);
 
+  // 恢复已在跑的进程（热重载 / 重启前端）
+  useEffect(() => {
+    if (!isTauriRuntime()) return;
+    let cancelled = false;
+    void invoke<{
+      running: boolean;
+      instances?: RunningLaunchInstance[];
+    }>("get_running_game_state")
+      .then((state) => {
+        if (cancelled) return;
+        const instances = state.instances ?? [];
+        setRunningInstances(instances);
+        instancesRef.current = instances;
+        for (const inst of instances) {
+          if (inst.fullyStarted) fullyStartedPidsRef.current.add(inst.pid);
+        }
+        if (instances.length > 0) {
+          setSelectedLogPid((prev) => prev ?? instances[instances.length - 1]!.pid);
+          syncStatus(instances);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [syncStatus]);
+
   const { selectedProfile } = useAccountContext();
 
-  const MAX_LOG_ENTRIES = 500;
+  useEffect(() => {
+    selectedLogPidRef.current = selectedLogPid;
+  }, [selectedLogPid]);
 
-  const addLog = useCallback(
+  const pushLogToPid = useCallback((pid: number, entry: LaunchLogEntry) => {
+    setLogsByPid((prev) => ({
+      ...prev,
+      [pid]: appendLogEntry(prev[pid] ?? [], entry),
+    }));
+  }, []);
+
+  const addPendingOrSelectedLog = useCallback(
     (level: LaunchLogEntry["level"], message: string) => {
       const entry: LaunchLogEntry = {
         id: ++logIdRef.current,
@@ -205,18 +292,28 @@ export function LaunchProvider({ children }: { children: React.ReactNode }) {
         level,
         message,
       };
-      setLogs((prev) => {
-        const next = [...prev, entry];
-        return next.length > MAX_LOG_ENTRIES ? next.slice(-MAX_LOG_ENTRIES) : next;
-      });
+      const targetPid = selectedLogPidRef.current;
+      if (targetPid != null && instancesRef.current.some((i) => i.pid === targetPid)) {
+        pushLogToPid(targetPid, entry);
+        return;
+      }
+      pendingLogsRef.current = appendLogEntry(pendingLogsRef.current, entry);
+      // 尚无 pid 时也刷新到「未绑定」视图
+      setLogsByPid((prev) => ({ ...prev }));
     },
-    []
+    [pushLogToPid],
   );
+
+  const logs = useMemo(() => {
+    if (selectedLogPid != null) {
+      return logsByPid[selectedLogPid] ?? [];
+    }
+    return pendingLogsRef.current;
+  }, [logsByPid, selectedLogPid]);
 
   const updateConfig = useCallback((patch: Partial<LaunchConfig>) => {
     setConfig((prev) => {
       const next = { ...prev, ...patch };
-      // 持久化到 localStorage
       try {
         localStorage.setItem("openx-launch-config", JSON.stringify(next));
       } catch {
@@ -227,26 +324,29 @@ export function LaunchProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const clearLogs = useCallback(() => {
-    setLogs([]);
-    logIdRef.current = 0;
-  }, []);
+    if (selectedLogPid != null) {
+      setLogsByPid((prev) => ({ ...prev, [selectedLogPid]: [] }));
+    } else {
+      pendingLogsRef.current = [];
+      setLogsByPid((prev) => ({ ...prev }));
+    }
+  }, [selectedLogPid]);
 
   // 监听游戏日志事件（来自 Minecraft log4j stdout/stderr）
   useEffect(() => {
     if (!isTauriRuntime()) return;
 
     let unlisten: (() => void) | null = null;
-    listen<{ level: string; message: string }>("game-log", (event) => {
-      const { level, message } = event.payload;
+    listen<{ pid?: number | null; level: string; message: string }>("game-log", (event) => {
+      const { pid, level, message } = event.payload;
       const logLevel: "error" | "info" | "warn" =
         level === "error" || level === "warn" ? level : "info";
 
-      // 使用 log4j 解析器分析日志并更新进度
-      if (status === "launching" || status === "preparing") {
+      if (launchInFlightRef.current || status === "launching" || status === "preparing") {
         const parsedProgress = log4jParser.parseLog(message);
         if (parsedProgress.stage) {
           const allStages = log4jParser.getAllStages();
-          const currentStageIndex = allStages.findIndex(s => s.id === parsedProgress.stage?.id);
+          const currentStageIndex = allStages.findIndex((s) => s.id === parsedProgress.stage?.id);
           setProgress({
             currentStep: currentStageIndex + 1,
             totalSteps: allStages.length,
@@ -256,77 +356,150 @@ export function LaunchProvider({ children }: { children: React.ReactNode }) {
         }
       }
 
-      setLogs((prev) => {
-        const next = [
+      const entry: LaunchLogEntry = {
+        id: ++logIdRef.current,
+        timestamp: new Date().toLocaleTimeString(),
+        level: logLevel,
+        message,
+      };
+
+      if (typeof pid === "number") {
+        setLogsByPid((prev) => ({
           ...prev,
-          {
-            id: ++logIdRef.current,
-            timestamp: new Date().toLocaleTimeString(),
-            level: logLevel,
-            message,
-          },
-        ];
-        return next.length > MAX_LOG_ENTRIES ? next.slice(-MAX_LOG_ENTRIES) : next;
-      });
+          [pid]: appendLogEntry(prev[pid] ?? [], entry),
+        }));
+      } else {
+        pendingLogsRef.current = appendLogEntry(pendingLogsRef.current, entry);
+        setLogsByPid((prev) => ({ ...prev }));
+      }
     }).then((fn) => { unlisten = fn; });
     return () => { unlisten?.(); };
   }, [status]);
+
+  // 新进程登记
+  useEffect(() => {
+    if (!isTauriRuntime()) return;
+
+    let unlisten: (() => void) | null = null;
+    listen<{ pid: number; gameDir: string; displayName: string }>(
+      "game-process-started",
+      (event) => {
+        const { pid, gameDir, displayName } = event.payload;
+        const pending = pendingLogsRef.current;
+        pendingLogsRef.current = [];
+        if (pending.length > 0) {
+          setLogsByPid((prev) => {
+            const merged = [...pending, ...(prev[pid] ?? [])];
+            return {
+              ...prev,
+              [pid]:
+                merged.length > MAX_LOG_ENTRIES
+                  ? merged.slice(-MAX_LOG_ENTRIES)
+                  : merged,
+            };
+          });
+        }
+
+        setRunningInstances((prev) => {
+          if (prev.some((i) => i.pid === pid)) return prev;
+          const next = [
+            ...prev,
+            { pid, gameDir, displayName, fullyStarted: false },
+          ];
+          syncStatus(next);
+          return next;
+        });
+        setSelectedLogPid(pid);
+        launchInFlightRef.current = false;
+        statusHintRef.current = "launching";
+      },
+    ).then((fn) => { unlisten = fn; });
+    return () => { unlisten?.(); };
+  }, [syncStatus]);
 
   // 监听游戏进程退出事件
   useEffect(() => {
     if (!isTauriRuntime()) return;
 
     let unlisten: (() => void) | null = null;
-    listen<number>("game-exited", (event) => {
-      const exitCode = event.payload;
-      // 退出码不为 0 并不必然表示“无法启动”：如果已收到运行完成事件，
-      // 代表游戏至少已打开。关闭时某些模组（如地图模组）可能触发看门狗，
-      // 仍会返回非零状态；保留日志供诊断，但不再误报为启动失败。
-      const hadFullyStarted = gameFullyStartedRef.current;
+    listen<{ pid: number; exitCode: number } | number>("game-exited", (event) => {
+      const payload = event.payload;
+      const exitCode = typeof payload === "number" ? payload : payload.exitCode;
+      const pid = typeof payload === "number" ? null : payload.pid;
+      const hadFullyStarted =
+        pid != null
+          ? fullyStartedPidsRef.current.has(pid)
+          : fullyStartedPidsRef.current.size > 0;
+      if (pid != null) fullyStartedPidsRef.current.delete(pid);
+
       const now = Date.now();
       const timeStr = new Date(now).toLocaleString();
       setLastLaunchTime(timeStr);
       setLaunchEndedAt(now);
       setLastExitCode(exitCode);
       try { localStorage.setItem("openx-last-launch-time", timeStr); } catch { /* ignore */ }
-      setStatus(exitCode === 0 || hadFullyStarted ? "stopped" : "error");
-      setProgress(null); // 清理进度状态
-      log4jParser.reset(); // 重置日志解析器
-      setLogs((prev) => [
-        ...prev,
-        {
-          id: ++logIdRef.current,
-          timestamp: new Date(now).toLocaleTimeString(),
-          level: exitCode === 0 || hadFullyStarted ? "info" : "warn",
-          message: t("launch.provider.gameExitedWithCodeExitCode", { exitCode: exitCode }),
-        },
-      ]);
+
+      const exitEntry: LaunchLogEntry = {
+        id: ++logIdRef.current,
+        timestamp: new Date(now).toLocaleTimeString(),
+        level: exitCode === 0 || hadFullyStarted ? "info" : "warn",
+        message: t("launch.provider.gameExitedWithCodeExitCode", { exitCode }),
+      };
+      if (pid != null) {
+        pushLogToPid(pid, exitEntry);
+      } else {
+        pendingLogsRef.current = appendLogEntry(pendingLogsRef.current, exitEntry);
+      }
+
+      setRunningInstances((prev) => {
+        const next = pid != null ? prev.filter((i) => i.pid !== pid) : [];
+        if (next.length === 0) {
+          setProgress(null);
+          log4jParser.reset();
+          statusHintRef.current =
+            exitCode === 0 || hadFullyStarted ? "stopped" : "error";
+        }
+        syncStatus(next);
+        setSelectedLogPid((current) => {
+          if (pid != null && current === pid) {
+            return next.length > 0 ? next[next.length - 1]!.pid : null;
+          }
+          return current;
+        });
+        return next;
+      });
     }).then((fn) => { unlisten = fn; });
     return () => { unlisten?.(); };
-  }, [t]);
+  }, [t, pushLogToPid, syncStatus]);
 
   // 监听游戏完全启动事件（JVM 启动完成、资源加载完成）
   useEffect(() => {
     if (!isTauriRuntime()) return;
 
     let unlisten: (() => void) | null = null;
-    listen<number>("game-fully-started", (event) => {
-      const pid = event.payload;
-      gameFullyStartedRef.current = true;
-      setStatus("running");
+    listen<{ pid: number } | number>("game-fully-started", (event) => {
+      const payload = event.payload;
+      const pid = typeof payload === "number" ? payload : payload.pid;
+      fullyStartedPidsRef.current.add(pid);
       setProgress(null);
-      setLogs((prev) => [
-        ...prev,
-        {
-          id: ++logIdRef.current,
-          timestamp: new Date().toLocaleTimeString(),
-          level: "info",
-          message: t("launch.provider.gameFullyStartedPidPidStoppedJvmTracking", { pid: pid }),
-        },
-      ]);
+
+      setRunningInstances((prev) => {
+        const next = prev.map((i) =>
+          i.pid === pid ? { ...i, fullyStarted: true } : i,
+        );
+        syncStatus(next);
+        return next;
+      });
+
+      pushLogToPid(pid, {
+        id: ++logIdRef.current,
+        timestamp: new Date().toLocaleTimeString(),
+        level: "info",
+        message: t("launch.provider.gameFullyStartedPidPidStoppedJvmTracking", { pid }),
+      });
     }).then((fn) => { unlisten = fn; });
     return () => { unlisten?.(); };
-  }, [t]);
+  }, [t, pushLogToPid, syncStatus]);
 
   // 监听启动进度事件
   useEffect(() => {
@@ -347,41 +520,61 @@ export function LaunchProvider({ children }: { children: React.ReactNode }) {
 
   const cancelLaunch = useCallback(
     async () => {
-      if (status !== "preparing" && status !== "launching" && status !== "running") {
+      const instances = instancesRef.current;
+      if (
+        !launchInFlightRef.current &&
+        instances.length === 0 &&
+        status !== "preparing" &&
+        status !== "launching" &&
+        status !== "running"
+      ) {
         return;
       }
+      const targetPid =
+        selectedLogPid != null && instances.some((i) => i.pid === selectedLogPid)
+          ? selectedLogPid
+          : instances.length > 0
+            ? instances[instances.length - 1]!.pid
+            : null;
       try {
-        const result = await invoke<string>("kill_game_process");
+        const result = await invoke<string>("kill_game_process", {
+          pid: targetPid,
+        });
         const now = Date.now();
-        setLogs((prev) => [
-          ...prev,
-          {
-            id: ++logIdRef.current,
-            timestamp: new Date(now).toLocaleTimeString(),
-            level: "warn",
-            message: result,
-          },
-        ]);
-        // 立即更新状态为idle
-        setStatus("idle");
-        setProgress(null);
-        setLaunchEndedAt(now);
-        setLastExitCode(0);
+        const entry: LaunchLogEntry = {
+          id: ++logIdRef.current,
+          timestamp: new Date(now).toLocaleTimeString(),
+          level: "warn",
+          message: result,
+        };
+        if (targetPid != null) {
+          pushLogToPid(targetPid, entry);
+        } else {
+          pendingLogsRef.current = appendLogEntry(pendingLogsRef.current, entry);
+        }
+        // 进程真正移除由 game-exited 驱动；若尚无登记则立即清 in-flight
+        if (targetPid == null) {
+          launchInFlightRef.current = false;
+          statusHintRef.current = "idle";
+          setProgress(null);
+          setLaunchEndedAt(now);
+          setLastExitCode(0);
+          syncStatus(instancesRef.current);
+        }
       } catch (e) {
         setErrorMessage(e instanceof Error ? e.message : String(e));
-        // 即使失败也要重置状态
-        setStatus("idle");
+        launchInFlightRef.current = false;
         setProgress(null);
+        syncStatus(instancesRef.current);
       }
     },
-    [status]
+    [status, selectedLogPid, pushLogToPid, syncStatus],
   );
 
   const launchGame = useCallback(
     async (overrides?: Partial<LaunchConfig>) => {
       const merged = { ...config, ...overrides };
 
-      // 校验必要参数
       if (!merged.minecraftPath) {
         setErrorMessage(t("launch.provider.setTheMinecraftGameDirectory"));
         return;
@@ -401,17 +594,17 @@ export function LaunchProvider({ children }: { children: React.ReactNode }) {
 
       setErrorMessage(null);
       setProgress(null);
-      log4jParser.reset(); // 重置日志解析器
+      log4jParser.reset();
       const now = Date.now();
-      gameFullyStartedRef.current = false;
       setLaunchStartedAt(now);
       setLaunchEndedAt(null);
       setLastExitCode(null);
-      setStatus("preparing");
-      addLog("info", t("launch.provider.preparingLaunchArguments"));
+      launchInFlightRef.current = true;
+      statusHintRef.current = "preparing";
+      syncStatus(instancesRef.current);
+      addPendingOrSelectedLog("info", t("launch.provider.preparingLaunchArguments"));
 
       try {
-        // autoMemory：启动前按当前系统可用内存 / auto_allocate 刷新 -Xmx
         let launchMaxMemory = merged.maxMemory;
         if (merged.autoMemory !== false && isTauriRuntime()) {
           try {
@@ -425,22 +618,29 @@ export function LaunchProvider({ children }: { children: React.ReactNode }) {
           }
         }
 
-        setStatus("launching");
-        addLog("info", t("launch.provider.launchVersionVersionName", { versionName: merged.versionName }));
-        addLog("info", t("launch.provider.playerName", { name: selectedProfile.name }));
-        addLog(
+        statusHintRef.current = "launching";
+        syncStatus(instancesRef.current);
+        addPendingOrSelectedLog(
+          "info",
+          t("launch.provider.launchVersionVersionName", { versionName: merged.versionName }),
+        );
+        addPendingOrSelectedLog(
+          "info",
+          t("launch.provider.playerName", { name: selectedProfile.name }),
+        );
+        addPendingOrSelectedLog(
           "info",
           t("launch.provider.maximumMemoryMaxMemoryMb", { maxMemory: launchMaxMemory }) +
             (merged.autoMemory !== false ? ` (${t("launch.config.autoLabel")})` : ""),
         );
 
         if (merged.loadType !== "0") {
-          addLog("info", t("launch.provider.loaderLoadName", { loadName: merged.loadName }));
+          addPendingOrSelectedLog(
+            "info",
+            t("launch.provider.loaderLoadName", { loadName: merged.loadName }),
+          );
         }
 
-        // 账户令牌和认证服务器必须与当前选中的账户绑定。此前这里优先使用
-        // localStorage 中的全局配置，切换账户后会把旧的第三方 token /
-        // Yggdrasil 地址带给新账户，最终在游戏内触发 401。
         const isYggdrasilAccount =
           selectedProfile.authType === "littleskin" ||
           selectedProfile.authType === "third_party";
@@ -473,8 +673,10 @@ export function LaunchProvider({ children }: { children: React.ReactNode }) {
         });
 
         setLastCommandArgs(result);
-        setStatus("running");
-        addLog("info", t("launch.provider.gameLaunched"));
+        launchInFlightRef.current = false;
+        statusHintRef.current = "launching";
+        syncStatus(instancesRef.current);
+        addPendingOrSelectedLog("info", t("launch.provider.gameLaunched"));
       } catch (err) {
         const raw = err instanceof Error ? err.message : String(err);
         const msg = raw.includes("模组正在更新")
@@ -482,12 +684,19 @@ export function LaunchProvider({ children }: { children: React.ReactNode }) {
           : raw;
         const endedAt = Date.now();
         setLaunchEndedAt(endedAt);
-        setStatus("error");
+        launchInFlightRef.current = false;
+        statusHintRef.current =
+          instancesRef.current.length > 0 ? null : "error";
+        if (instancesRef.current.length === 0) {
+          setStatus("error");
+        } else {
+          syncStatus(instancesRef.current);
+        }
         setErrorMessage(msg);
-        addLog("error", `${t("launch.provider.launchFailed")}: ${msg}`);
+        addPendingOrSelectedLog("error", `${t("launch.provider.launchFailed")}: ${msg}`);
       }
     },
-    [config, selectedProfile, addLog, t, updateConfig]
+    [config, selectedProfile, addPendingOrSelectedLog, t, updateConfig, syncStatus],
   );
 
   const generateReport = useCallback<() => LaunchAnalysisReport>(
@@ -546,6 +755,10 @@ export function LaunchProvider({ children }: { children: React.ReactNode }) {
         updateConfig,
         status,
         logs,
+        logsByPid,
+        selectedLogPid,
+        setSelectedLogPid,
+        runningInstances,
         errorMessage,
         launchGame,
         cancelLaunch,

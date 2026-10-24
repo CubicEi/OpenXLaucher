@@ -6,7 +6,7 @@
 import { log4jParser } from "./log4j-progress-parser";
 import { beforeEach, describe, expect, it } from "vitest";
 
-// 测试日志样本
+// 测试日志样本（到「加载模组」完成即成功，不再包含世界/主菜单）
 const testLogs = [
   "Running with arguments: [--gameDir, ...]",
   "Java HotSpot(TM) 64-Bit Server VM warning",
@@ -23,12 +23,25 @@ const testLogs = [
   "Found 15 mods to load",
   "Fabric mod loading",
   "Mods loaded successfully",
-  "Loading world new_world",
-  "Preparing start region for dimension minecraft:overworld",
-  "Time elapsed: 2340 ms",
-  "World loaded",
-  "Game started",
-  "Displaying screen net.minecraft.client.gui.screen.MainMenuScreen",
+];
+
+const forgeCompletionLogs = [
+  "Running with arguments: [--gameDir, ...]",
+  "Loading libraries, please wait...",
+  "Loaded 10 libraries",
+  "Initializing game",
+  "Game initialized",
+  "Forge mod loading, version 47.2.0",
+  "Forge Mod Loader has successfully loaded 42 mods",
+];
+
+const neoforgeCompletionLogs = [
+  "Running with arguments: [--gameDir, ...]",
+  "Loading libraries, please wait...",
+  "Loaded 10 libraries",
+  "Initializing game",
+  "NeoForge mod loading, version 21.1.0",
+  "Early mod loading complete",
 ];
 
 /**
@@ -65,14 +78,49 @@ describe("log4jParser", () => {
     log4jParser.reset();
   });
 
-  it("advances through the sample launch logs and reaches ready", () => {
+  it("treats mods-loaded as launch success (no world/ready stages)", () => {
     let result = log4jParser.parseLog("");
     for (const log of testLogs) {
       result = log4jParser.parseLog(log);
     }
 
-    expect(result.stage?.id).toBe("ready");
+    expect(result.stage?.id).toBe("loading_mods");
+    expect(result.isComplete).toBe(true);
+    expect(result.progress).toBe(100);
+    expect(log4jParser.getAllStages().map((s) => s.id)).toEqual([
+      "jvm_start",
+      "loading_libraries",
+      "loading_assets",
+      "initializing_game",
+      "loading_mods",
+    ]);
+  });
+
+  it("completes on Forge successfully-loaded mods marker", () => {
+    let result = log4jParser.parseLog("");
+    for (const log of forgeCompletionLogs) {
+      result = log4jParser.parseLog(log);
+    }
+    expect(result.stage?.id).toBe("loading_mods");
     expect(result.isComplete).toBe(true);
     expect(result.progress).toBe(100);
   });
+
+  it("completes on NeoForge early mod loading complete", () => {
+    let result = log4jParser.parseLog("");
+    for (const log of neoforgeCompletionLogs) {
+      result = log4jParser.parseLog(log);
+    }
+    expect(result.stage?.id).toBe("loading_mods");
+    expect(result.isComplete).toBe(true);
+  });
+
+  it("completes on Sound engine started as Fabric/vanilla fallback", () => {
+    log4jParser.parseLog("Initializing game");
+    log4jParser.parseLog("Loading 12 mods:");
+    const result = log4jParser.parseLog("Sound engine started");
+    expect(result.stage?.id).toBe("loading_mods");
+    expect(result.isComplete).toBe(true);
+  });
 });
+

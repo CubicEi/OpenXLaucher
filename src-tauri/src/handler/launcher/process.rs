@@ -1,7 +1,7 @@
 use crate::handler::game_dir::canonical_game_dir;
 use crate::handler::launcher::game_process_state::{
-    claim_termination_request, clear_process_if_pid, game_process_store, insert_process_if_empty,
-    reset_termination_request_if_pid, GameProcess,
+    claim_termination_request, clear_process_if_pid, game_process_store, insert_process,
+    mark_fully_started_if_pid, reset_termination_request_if_pid, GameProcess,
 };
 use crate::handler::mod_update_locks::is_game_dir_mod_update_locked;
 use serde::Serialize;
@@ -13,25 +13,26 @@ use std::{
 };
 use tauri::Emitter;
 
-/// 检测游戏是否完全启动（JVM 启动、加载完资源、主窗口就绪）
+/// 检测游戏是否完全启动（模组加载完成即视为成功，不等待世界/主菜单）
 /// 通过 Minecraft 日志中的标志性字符串判断
 fn is_game_fully_started(line: &str) -> bool {
-    // 原版 Minecraft: "Minecraft client started" / "Preparing spawn area" / "Minecraft initialized"
-    // 常见 Mod 加载器: "mod loading complete" / "Minecraft is ready to start" / "Launching game"
+    // Forge 1.12+: "Forge Mod Loader has successfully loaded N mods"
+    // Forge/NeoForge: "Mod loading complete" / "Early mod loading complete"
+    // 通用: "Mods loaded" / "successfully loaded N mods"
+    // Fabric/Quilt/原版回退（进世界前）: Sound engine / Narrator / Backend LWJGL
     let lower = line.to_lowercase();
-    lower.contains("minecraft client started")
-        || lower.contains("minecraft is ready to start")
-        || lower.contains("preparing spawn area")
-        || lower.contains("minecraft initialized")
-        || lower.contains("launching game")
-        || lower.contains("loading complete") && lower.contains("mod")
+    lower.contains("forge mod loader has successfully loaded")
+        || lower.contains("successfully loaded") && lower.contains("mods")
+        || lower.contains("mods loaded")
+        || (lower.contains("loading complete") && lower.contains("mod"))
+        || lower.contains("mod loading complete")
+        || lower.contains("early mod loading complete")
+        || lower.contains("sound engine started")
+        || lower.contains("narrator library")
+        || lower.contains("backend library:") && lower.contains("lwjgl")
+        || lower.contains("minecraft client started")
         || lower.contains("minecraft client has started")
-        // 对于新版 Fabric/原版，未必输出上述固定文案；一旦已经进入世界、
-        // 显示主菜单或开始连接服务器，就说明客户端已经成功运行。
-        || lower.contains("title screen")
-        || lower.contains("connecting to ")
-        || lower.contains("joined the game")
-        || lower.contains("joined ") && lower.contains("server")
+        || lower.contains("minecraft initialized")
 }
 
 /// 将进程结束状态转换为可展示的退出码。
@@ -55,9 +56,33 @@ pub(super) fn display_exit_code(status: std::process::ExitStatus) -> i32 {
 
 /// 游戏日志事件，发送给前端的结构体
 #[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub(super) struct GameLogEvent {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) pid: Option<u32>,
     pub(super) level: String,
     pub(super) message: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct GameProcessStartedEvent {
+    pid: u32,
+    game_dir: String,
+    display_name: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct GamePidEvent {
+    pid: u32,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct GameExitedEvent {
+    pid: u32,
+    exit_code: i32,
 }
 
 /// 解析 Minecraft log4j 日志行，提取日志级别
@@ -135,6 +160,7 @@ pub fn run_command(
     app_handle: tauri::AppHandle,
     minecraft_version: String,
     game_directory: String,
+    display_name: String,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // 检查 Java 路径是否存在
     if !javaPath.exists() {
@@ -186,13 +212,10 @@ pub fn run_command(
         return Err("该实例模组正在更新，请稍后再启动".into());
     }
 
-    // 持有同一个锁完成“检查 + 启动 + 登记”。这样两个并发请求不能覆盖彼此。
+    // 持有同一个锁完成“启动 + 登记”，避免并发 spawn 互相覆盖登记。
     let mut store = game_process_store()
         .lock()
         .map_err(|e| format!("无法读取游戏进程状态: {}", e))?;
-    if let Some(current) = store.as_ref() {
-        return Err(format!("已有游戏进程正在运行 (PID {})", current.pid).into());
-    }
 
     match command.spawn() {
         Ok(mut child) => {
@@ -203,8 +226,14 @@ pub fn run_command(
             let stdout = child.stdout.take();
             let stderr = child.stderr.take();
 
-            // 存储到全局进程表（启动中，尚未完成初始化）。
-            insert_process_if_empty(
+            let label = if display_name.trim().is_empty() {
+                game_dir_key.clone()
+            } else {
+                display_name.clone()
+            };
+
+            // 追加到全局多进程登记表（启动中，尚未完成初始化）。
+            insert_process(
                 &mut store,
                 GameProcess {
                     pid,
@@ -212,9 +241,20 @@ pub fn run_command(
                     termination_requested: false,
                     minecraft_version: minecraft_version.clone(),
                     game_dir: game_dir_key.clone(),
+                    display_name: label.clone(),
+                    started_seq: 0,
                 },
             )?;
             drop(store);
+
+            let _ = app_handle.emit(
+                "game-process-started",
+                GameProcessStartedEvent {
+                    pid,
+                    game_dir: game_dir_key.clone(),
+                    display_name: label,
+                },
+            );
 
             // 用于检测"完全启动"的共享 flag
             let fully_started_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -232,6 +272,7 @@ pub fn run_command(
                             let _ = handle.emit(
                                 "game-log",
                                 GameLogEvent {
+                                    pid: Some(pid),
                                     level: level.clone(),
                                     message: line.clone(),
                                 },
@@ -240,15 +281,10 @@ pub fn run_command(
                             if is_game_fully_started(&line) && claim_startup_transition(&flag) {
                                 let is_current_process = {
                                     let mut store = game_process_store().lock().unwrap();
-                                    if let Some(gp) = store.as_mut().filter(|gp| gp.pid == pid) {
-                                        gp.fully_started = true;
-                                        true
-                                    } else {
-                                        false
-                                    }
+                                    mark_fully_started_if_pid(&mut store, pid)
                                 };
                                 if is_current_process {
-                                    let _ = handle.emit("game-fully-started", pid);
+                                    let _ = handle.emit("game-fully-started", GamePidEvent { pid });
                                 }
                             }
                         }
@@ -269,6 +305,7 @@ pub fn run_command(
                             let _ = handle.emit(
                                 "game-log",
                                 GameLogEvent {
+                                    pid: Some(pid),
                                     level: level.clone(),
                                     message: line.clone(),
                                 },
@@ -277,15 +314,10 @@ pub fn run_command(
                             if is_game_fully_started(&line) && claim_startup_transition(&flag) {
                                 let is_current_process = {
                                     let mut store = game_process_store().lock().unwrap();
-                                    if let Some(gp) = store.as_mut().filter(|gp| gp.pid == pid) {
-                                        gp.fully_started = true;
-                                        true
-                                    } else {
-                                        false
-                                    }
+                                    mark_fully_started_if_pid(&mut store, pid)
                                 };
                                 if is_current_process {
-                                    let _ = handle.emit("game-fully-started", pid);
+                                    let _ = handle.emit("game-fully-started", GamePidEvent { pid });
                                 }
                             }
                         }
@@ -310,8 +342,7 @@ pub fn run_command(
                     .lock()
                     .map(|mut store| {
                         let snapshot = store
-                            .as_ref()
-                            .filter(|gp| gp.pid == pid)
+                            .get(&pid)
                             .map(|gp| (gp.minecraft_version.clone(), gp.game_dir.clone()));
                         let mc = snapshot.as_ref().map(|s| s.0.clone()).unwrap_or_default();
                         let gd = snapshot.as_ref().map(|s| s.1.clone()).unwrap_or_default();
@@ -325,7 +356,10 @@ pub fn run_command(
                             &launched_game_dir,
                         );
                     }
-                    let _ = app_handle.emit("game-exited", exit_code);
+                    let _ = app_handle.emit(
+                        "game-exited",
+                        GameExitedEvent { pid, exit_code },
+                    );
                 }
             });
             Ok(())
@@ -370,26 +404,26 @@ fn terminate_process(pid: u32) -> Result<(), String> {
     }
 }
 
-/// 终止当前游戏进程（在游戏未完全启动前可调用）
+/// 终止指定（或最近一个）游戏进程（在游戏未完全启动前可调用）
 #[tauri::command]
-pub fn kill_game_process() -> Result<String, String> {
+pub fn kill_game_process(pid: Option<u32>) -> Result<String, String> {
     // 先在锁内登记终止请求，再释放锁运行外部命令。
-    let (pid, started) = {
+    let (target_pid, started) = {
         let mut store = game_process_store().lock().map_err(|e| e.to_string())?;
-        claim_termination_request(&mut store)?
+        claim_termination_request(&mut store, pid)?
     };
 
-    if let Err(error) = terminate_process(pid) {
+    if let Err(error) = terminate_process(target_pid) {
         if let Ok(mut store) = game_process_store().lock() {
-            reset_termination_request_if_pid(&mut store, pid);
+            reset_termination_request_if_pid(&mut store, target_pid);
         }
         return Err(error);
     }
 
     if started {
-        Ok(format!("游戏进程 (PID {}) 已终止", pid))
+        Ok(format!("游戏进程 (PID {}) 已终止", target_pid))
     } else {
-        Ok(format!("启动中的游戏进程 (PID {}) 已取消", pid))
+        Ok(format!("启动中的游戏进程 (PID {}) 已取消", target_pid))
     }
 }
 
@@ -397,10 +431,22 @@ pub fn kill_game_process() -> Result<String, String> {
 mod tests {
     use super::{claim_startup_transition, parse_log_level};
     use crate::handler::launcher::game_process_state::{
-        claim_termination_request, clear_process_if_pid, insert_process_if_empty,
-        reset_termination_request_if_pid, GameProcess,
+        claim_termination_request, clear_process_if_pid, insert_process,
+        reset_termination_request_if_pid, GameProcess, GameProcessMap,
     };
     use std::sync::atomic::{AtomicBool, Ordering};
+
+    fn sample_process(pid: u32) -> GameProcess {
+        GameProcess {
+            pid,
+            fully_started: false,
+            termination_requested: false,
+            minecraft_version: "1.20.1".to_string(),
+            game_dir: "C:\\game".to_string(),
+            display_name: "1.20.1".to_string(),
+            started_seq: 0,
+        }
+    }
 
     #[test]
     fn reads_the_level_from_the_thread_tag_after_a_timestamp() {
@@ -422,6 +468,31 @@ mod tests {
         assert!(claim_startup_transition(&started));
         assert!(!claim_startup_transition(&started));
         assert!(started.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn detects_mods_loaded_as_fully_started_not_world_or_title() {
+        use super::is_game_fully_started;
+
+        assert!(is_game_fully_started(
+            "[Client thread/INFO] [FML]: Forge Mod Loader has successfully loaded 42 mods"
+        ));
+        assert!(is_game_fully_started(
+            "[main/INFO]: Early mod loading complete"
+        ));
+        assert!(is_game_fully_started(
+            "[Render thread/INFO]: Sound engine started"
+        ));
+        assert!(is_game_fully_started(
+            "[Render thread/INFO]: Backend library: LWJGL version 3.3.3"
+        ));
+        // 不再把进世界 / 主菜单当作启动成功
+        assert!(!is_game_fully_started(
+            "[Server thread/INFO]: Preparing spawn area: 0%"
+        ));
+        assert!(!is_game_fully_started(
+            "[Render thread/INFO]: Displaying screen TitleScreen"
+        ));
     }
 
     #[cfg(unix)]
@@ -454,70 +525,59 @@ mod tests {
     }
 
     #[test]
-    fn keeps_the_current_process_until_its_waiter_clears_it() {
-        let mut store = None;
+    fn allows_multiple_processes_and_clears_only_matching_pid() {
+        let mut store = GameProcessMap::new();
 
-        insert_process_if_empty(
-            &mut store,
-            GameProcess {
-                pid: 100,
-                fully_started: false,
-                termination_requested: false,
-                minecraft_version: "1.20.1".to_string(),
-                game_dir: "C:\\game".to_string(),
-            },
-        )
-        .expect("insert the first process");
+        insert_process(&mut store, sample_process(100)).expect("insert the first process");
+        insert_process(&mut store, sample_process(200)).expect("insert a second process");
+        assert_eq!(store.len(), 2);
 
-        let second = insert_process_if_empty(
-            &mut store,
-            GameProcess {
-                pid: 200,
-                fully_started: false,
-                termination_requested: false,
-                minecraft_version: "1.20.1".to_string(),
-                game_dir: "C:\\game".to_string(),
-            },
-        );
-        assert!(second.is_err());
-        assert_eq!(store.as_ref().map(|process| process.pid), Some(100));
-
-        assert!(!clear_process_if_pid(&mut store, 200));
-        assert_eq!(store.as_ref().map(|process| process.pid), Some(100));
+        assert!(!clear_process_if_pid(&mut store, 999));
+        assert_eq!(store.len(), 2);
 
         assert!(clear_process_if_pid(&mut store, 100));
-        assert!(store.is_none());
+        assert!(!store.contains_key(&100));
+        assert!(store.contains_key(&200));
     }
 
     #[test]
     fn rejects_a_repeated_termination_request() {
-        let mut store = Some(GameProcess {
-            pid: 100,
-            fully_started: false,
-            termination_requested: false,
-            minecraft_version: "1.20.1".to_string(),
-            game_dir: "C:\\game".to_string(),
-        });
+        let mut store = GameProcessMap::new();
+        insert_process(&mut store, sample_process(100)).expect("insert");
 
-        assert_eq!(claim_termination_request(&mut store), Ok((100, false)));
-        assert!(claim_termination_request(&mut store).is_err());
+        assert_eq!(
+            claim_termination_request(&mut store, Some(100)),
+            Ok((100, false))
+        );
+        assert!(claim_termination_request(&mut store, Some(100)).is_err());
     }
 
     #[test]
     fn resets_a_failed_termination_request_only_for_the_same_pid() {
-        let mut store = Some(GameProcess {
-            pid: 100,
-            fully_started: false,
-            termination_requested: false,
-            minecraft_version: "1.20.1".to_string(),
-            game_dir: "C:\\game".to_string(),
-        });
-        claim_termination_request(&mut store).expect("claim the first termination request");
+        let mut store = GameProcessMap::new();
+        insert_process(&mut store, sample_process(100)).expect("insert");
+        claim_termination_request(&mut store, Some(100))
+            .expect("claim the first termination request");
 
         reset_termination_request_if_pid(&mut store, 200);
-        assert!(claim_termination_request(&mut store).is_err());
+        assert!(claim_termination_request(&mut store, Some(100)).is_err());
 
         reset_termination_request_if_pid(&mut store, 100);
-        assert_eq!(claim_termination_request(&mut store), Ok((100, false)));
+        assert_eq!(
+            claim_termination_request(&mut store, Some(100)),
+            Ok((100, false))
+        );
+    }
+
+    #[test]
+    fn kills_most_recent_when_pid_omitted() {
+        let mut store = GameProcessMap::new();
+        insert_process(&mut store, sample_process(100)).expect("insert first");
+        insert_process(&mut store, sample_process(200)).expect("insert second");
+
+        assert_eq!(
+            claim_termination_request(&mut store, None),
+            Ok((200, false))
+        );
     }
 }

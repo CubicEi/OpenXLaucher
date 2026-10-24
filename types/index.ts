@@ -230,6 +230,16 @@ export type LaunchLogEntry = {
 };
 
 /**
+ * 当前运行中的游戏实例（多进程）
+ */
+export type RunningLaunchInstance = {
+  pid: number;
+  gameDir: string;
+  displayName: string;
+  fullyStarted: boolean;
+};
+
+/**
  * 启动进度信息
  */
 export type LaunchProgress = {

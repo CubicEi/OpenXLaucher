@@ -13,8 +13,6 @@ const STAGE_KEYS: Record<string, TranslationKey> = {
   "加载资源": "launch.loadingAssets",
   "初始化游戏": "launch.initializingGame",
   "加载模组": "launch.loadingMods",
-  "加载世界": "launch.loadingWorld",
-  "准备完成": "launch.ready",
 };
 
 /**

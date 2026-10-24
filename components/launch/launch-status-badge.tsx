@@ -34,7 +34,7 @@ const statusConfig: Record<
     color: "text-amber-500",
   },
   running: {
-    label: "launch.status.running",
+    label: "launch.status.ready",
     icon: <Play className="size-3" />,
     color: "text-green-500",
   },

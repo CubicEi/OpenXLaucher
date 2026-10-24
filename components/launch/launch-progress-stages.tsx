@@ -16,14 +16,13 @@ export function LaunchProgressStages() {
   const { progress, status } = useLaunchContext();
   const isLaunching = status === "preparing" || status === "launching";
 
+  // 最后一项「加载模组」完成即视为启动成功（不再显示加载世界 / 准备就绪）
   const stages = [
     { id: "jvm_start", name: t("launch.startingJvm"), icon: Loader2 },
     { id: "loading_libraries", name: t("launch.loadingLibraries"), icon: Circle },
     { id: "loading_assets", name: t("launch.loadingAssets"), icon: Circle },
     { id: "initializing_game", name: t("launch.initializingGame"), icon: Circle },
     { id: "loading_mods", name: t("launch.loadingMods"), icon: Circle },
-    { id: "loading_world", name: t("launch.loadingWorld"), icon: Circle },
-    { id: "ready", name: t("launch.ready"), icon: Check },
   ];
 
   // 根据当前进度确定各阶段状态

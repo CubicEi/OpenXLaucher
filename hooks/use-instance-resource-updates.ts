@@ -77,12 +77,18 @@ export function useInstanceResourceUpdates(options: {
       const state = await invoke<{
         running: boolean;
         gameDir?: string | null;
+        instances?: Array<{ pid: number; gameDir: string; displayName: string; fullyStarted: boolean }>;
       }>("get_running_game_state");
-      if (
-        state.running &&
-        state.gameDir &&
-        normalizeGameDir(state.gameDir) === normalizeGameDir(dir)
-      ) {
+      const target = normalizeGameDir(dir);
+      const blockedByInstances =
+        Array.isArray(state.instances) &&
+        state.instances.some((inst) => normalizeGameDir(inst.gameDir) === target);
+      const blockedByLegacy =
+        !Array.isArray(state.instances) &&
+        !!state.running &&
+        !!state.gameDir &&
+        normalizeGameDir(state.gameDir) === target;
+      if (blockedByInstances || blockedByLegacy) {
         setCheckMessage(t("panel.closeGameBeforeUpdate"));
         return false;
       }

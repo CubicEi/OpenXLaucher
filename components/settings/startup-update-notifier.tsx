@@ -45,7 +45,6 @@ export function StartupUpdateNotifier({ delayMs = 1500 }: { delayMs?: number }) 
   const { t } = useI18n();
   const [availableUpdate, setAvailableUpdate] = useState<AvailableUpdate | null>(null);
   const [updateOpen, setUpdateOpen] = useState(false);
-  const [upToDateOpen, setUpToDateOpen] = useState(false);
   const [updateSuccessOpen, setUpdateSuccessOpen] = useState(false);
   const [updateFailedOpen, setUpdateFailedOpen] = useState(false);
   const [installedVersion, setInstalledVersion] = useState<string>("");
@@ -110,7 +109,6 @@ export function StartupUpdateNotifier({ delayMs = 1500 }: { delayMs?: number }) 
 
           setAppUpdateState({ kind: "up-to-date" });
           markUpToDateAndSuppressAutoCheck();
-          setUpToDateOpen(true);
         } catch (error) {
           if (!active) return;
           const message = error instanceof Error ? error.message : String(error);
@@ -206,13 +204,6 @@ export function StartupUpdateNotifier({ delayMs = 1500 }: { delayMs?: number }) 
         onOpenChange={setUpdateFailedOpen}
         title={t("checkUpdate.updateFailedTitle")}
         description={updateFailureMessage}
-      />
-
-      <LauncherUpdateNoticeAlert
-        open={upToDateOpen}
-        onOpenChange={setUpToDateOpen}
-        title={t("checkUpdate.upToDate")}
-        description={t("checkUpdate.upToDateMessage")}
       />
     </>
   );

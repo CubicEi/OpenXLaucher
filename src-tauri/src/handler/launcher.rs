@@ -191,6 +191,7 @@ pub fn launch_game(
         app,
         minecraft_version.to_string(),
         game_directory.to_string_lossy().to_string(),
+        version_name.to_string(),
     )
     .map_err(|e| e.to_string())?;
 

@@ -9,9 +9,15 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { AnimatePresence, motion } from "framer-motion";
 import { useLaunchContext } from "@/components/launch/launch-provider";
-import { ModDependencyPanel } from "@/components/launch/mod-dependency-panel";
 import {
   Terminal,
   Trash2,
@@ -19,14 +25,10 @@ import {
   Download,
   Copy,
   Search,
-  Pencil,
   Square,
-  Puzzle,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useI18n } from "@/components/i18n/use-i18n";
-
-type ConsoleTab = "logs" | "analysis";
 
 const LOG_LEVELS = ["fatal", "error", "warn", "info", "debug"] as const;
 type LogLevel = (typeof LOG_LEVELS)[number];
@@ -109,6 +111,7 @@ function LogLevelButton({ level, count, visible, onToggle, label }: LogLevelButt
 
 interface LogViewerProps {
   logs: LogLine[];
+  emptyHint: string;
   visibleLevels: Record<LogLevel, boolean>;
   autoScroll: boolean;
   wrapText: boolean;
@@ -123,6 +126,7 @@ interface LogViewerProps {
 
 function LogViewer({
   logs,
+  emptyHint,
   visibleLevels,
   autoScroll,
   wrapText,
@@ -179,7 +183,7 @@ function LogViewer({
     >
       {filteredLogs.length === 0 ? (
         <p className="text-muted-foreground/50 select-none text-center py-4">
-          {logs.length === 0 ? "等待启动..." : "无匹配日志"}
+          {logs.length === 0 ? emptyHint : "无匹配日志"}
         </p>
       ) : (
         filteredLogs.map((log) => (
@@ -216,12 +220,51 @@ function LogViewer({
   );
 }
 
+function InstanceLogSelect({
+  className,
+}: {
+  className?: string;
+}) {
+  const { t } = useI18n();
+  const { runningInstances, selectedLogPid, setSelectedLogPid } = useLaunchContext();
+
+  if (runningInstances.length === 0) {
+    return (
+      <span className={cn("text-[11px] text-muted-foreground px-1", className)}>
+        {t("launch.log.noRunningInstances")}
+      </span>
+    );
+  }
+
+  return (
+    <Select
+      value={selectedLogPid != null ? String(selectedLogPid) : undefined}
+      onValueChange={(value) => setSelectedLogPid(Number(value))}
+    >
+      <SelectTrigger size="sm" className={cn("h-6 min-w-[140px] max-w-[220px] text-[11px]", className)}>
+        <SelectValue placeholder={t("launch.log.selectInstance")} />
+      </SelectTrigger>
+      <SelectContent>
+        {runningInstances.map((inst) => (
+          <SelectItem key={inst.pid} value={String(inst.pid)} className="text-xs">
+            {inst.displayName} · PID {inst.pid}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  );
+}
+
 export function LaunchConsole() {
   const { t } = useI18n();
-  const { logs: rawLogs, clearLogs, status, cancelLaunch } = useLaunchContext();
-  const scrollRef = useRef<HTMLDivElement>(null);
+  const {
+    logs: rawLogs,
+    clearLogs,
+    status,
+    cancelLaunch,
+    runningInstances,
+  } = useLaunchContext();
   const [open, setOpen] = useState(false);
-  const [activeTab, setActiveTab] = useState<ConsoleTab>("logs");
 
   const [visibleLevels, setVisibleLevels] = useState<Record<LogLevel, boolean>>({
     fatal: true,
@@ -245,6 +288,11 @@ export function LaunchConsole() {
   }, [rawLogs]);
 
   const levelCounts = useMemo(() => countLevels(logs), [logs]);
+
+  const emptyHint =
+    runningInstances.length === 0
+      ? t("launch.log.noRunningInstances")
+      : "等待启动...";
 
   const toggleLevel = useCallback((level: LogLevel) => {
     setVisibleLevels((prev) => ({ ...prev, [level]: !prev[level] }));
@@ -312,9 +360,142 @@ export function LaunchConsole() {
     [logs, visibleLevels, selectedIds, handleCopySelected]
   );
 
-  const isRunning = status === "running" || status === "launching" || status === "preparing";
+  const isRunning = status === "running" || status === "launching" || status === "preparing" || runningInstances.length > 0;
 
-  const switchTab = (t: ConsoleTab) => setActiveTab(t);
+  const toolbar = (compact: boolean) => (
+    <div className="flex items-center gap-1">
+      <InstanceLogSelect className="mr-1" />
+      <AnimatePresence>
+        {logs.length > 0 && (
+          <motion.div
+            initial={{ opacity: 0, scale: 0.8 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, scale: 0.8 }}
+            transition={{ duration: 0.15 }}
+            className="flex items-center gap-1"
+          >
+            <Button
+              variant="ghost"
+              size="sm"
+              className={compact ? "h-6 w-6 p-0" : "h-7 text-xs"}
+              onClick={handleCopyAll}
+              title={t("launch.log.copyAll")}
+            >
+              <Copy className={cn("size-3", !compact && "mr-1")} />
+              {!compact && t("launch.log.copyAll")}
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              className={compact ? "h-6 w-6 p-0" : "h-7 text-xs"}
+              onClick={handleExport}
+              title={t("launch.log.export")}
+            >
+              <Download className={cn("size-3", !compact && "mr-1")} />
+              {!compact && t("launch.log.export")}
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              className={compact ? "h-6 w-6 p-0" : "h-7 text-xs"}
+              onClick={handleClear}
+              title={t("common.clear")}
+            >
+              <Trash2 className={cn("size-3", !compact && "mr-1")} />
+              {!compact && t("common.clear")}
+            </Button>
+          </motion.div>
+        )}
+      </AnimatePresence>
+      {compact && (
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-6 w-6 p-0"
+          onClick={() => setOpen(true)}
+          title={t("launch.log.expand")}
+        >
+          <Maximize2 className="size-3.5" />
+        </Button>
+      )}
+    </div>
+  );
+
+  const filters = (
+    <div className="shrink-0 border-t border-border px-3 py-2 space-y-2">
+      <div className="flex items-center gap-1 flex-wrap">
+        {LOG_LEVELS.map((level) => (
+          <LogLevelButton
+            key={level}
+            level={level}
+            count={levelCounts[level]}
+            visible={visibleLevels[level]}
+            onToggle={() => toggleLevel(level)}
+            label={t(`launch.log.level.${level}` as "launch.log.level.info")}
+          />
+        ))}
+      </div>
+
+      <div className="flex items-center gap-3 text-xs text-muted-foreground">
+        <label className="flex items-center gap-1.5 cursor-pointer select-none">
+          <input
+            type="checkbox"
+            checked={autoScroll}
+            onChange={(e) => setAutoScroll(e.target.checked)}
+            className="size-3 accent-primary"
+          />
+          {t("launch.log.autoScroll")}
+        </label>
+        <label className="flex items-center gap-1.5 cursor-pointer select-none">
+          <input
+            type="checkbox"
+            checked={wrapText}
+            onChange={(e) => setWrapText(e.target.checked)}
+            className="size-3 accent-primary"
+          />
+          {t("launch.log.wrapText")}
+        </label>
+        <div className="flex-1 relative">
+          <Search className="absolute left-2 top-1/2 -translate-y-1/2 size-3 text-muted-foreground" />
+          <input
+            type="text"
+            value={searchText}
+            onChange={(e) => setSearchText(e.target.value)}
+            placeholder={t("launch.log.search")}
+            className="w-full h-6 pl-7 pr-2 text-xs rounded bg-muted/50 border border-border focus:outline-none focus:ring-1 focus:ring-primary/30"
+          />
+        </div>
+      </div>
+
+      {selectedIds.size > 0 && (
+        <motion.div
+          initial={{ opacity: 0, height: 0 }}
+          animate={{ opacity: 1, height: "auto" }}
+          exit={{ opacity: 0, height: 0 }}
+          className="flex items-center gap-2 text-xs text-primary"
+        >
+          <span>{t("launch.log.selected", { count: selectedIds.size })}</span>
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-5 text-[10px] px-2"
+            onClick={handleCopySelected}
+          >
+            <Copy className="size-3 mr-1" />
+            {t("launch.log.copySelected")}
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            className="h-5 text-[10px] px-2"
+            onClick={() => setSelectedIds(new Set())}
+          >
+            {t("launch.log.deselectAll")}
+          </Button>
+        </motion.div>
+      )}
+    </div>
+  );
 
   return (
     <>
@@ -326,207 +507,49 @@ export function LaunchConsole() {
           <CardTitle className="flex items-center gap-2 text-sm">
             <Terminal className="size-4 text-primary" />
             {t("launch.log.title")}
-            {activeTab === "logs" && logs.length > 0 && (
+            {logs.length > 0 && (
               <span className="text-[10px] text-muted-foreground font-normal">
                 ({logs.length})
               </span>
             )}
           </CardTitle>
-          <div className="flex items-center gap-1">
-            <div className="mr-1 flex rounded-md border border-border bg-muted/30 p-0.5">
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => switchTab("logs")}
-                className={cn(
-                  "h-6 px-2 text-[11px]",
-                  activeTab === "logs"
-                    ? "bg-background shadow-sm text-primary font-medium"
-                    : "text-muted-foreground hover:text-foreground"
-                )}
-              >
-                <Terminal className="size-3 mr-1" />
-                启动日志
-              </Button>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => switchTab("analysis")}
-                className={cn(
-                  "h-6 px-2 text-[11px]",
-                  activeTab === "analysis"
-                    ? "bg-background shadow-sm text-emerald-600 font-medium"
-                    : "text-muted-foreground hover:text-foreground"
-                )}
-              >
-                <Puzzle className="size-3 mr-1" />
-                依赖解析
-              </Button>
-            </div>
-            <AnimatePresence>
-              {activeTab === "logs" && logs.length > 0 && (
-                <motion.div
-                  initial={{ opacity: 0, scale: 0.8 }}
-                  animate={{ opacity: 1, scale: 1 }}
-                  exit={{ opacity: 0, scale: 0.8 }}
-                  transition={{ duration: 0.15 }}
-                  className="flex items-center gap-1"
-                >
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="h-6 w-6 p-0"
-                    onClick={handleCopyAll}
-                    title={t("launch.log.copyAll")}
-                  >
-                    <Copy className="size-3" />
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="h-6 w-6 p-0"
-                    onClick={handleExport}
-                    title={t("launch.log.export")}
-                  >
-                    <Download className="size-3" />
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="h-6 w-6 p-0"
-                    onClick={handleClear}
-                    title={t("common.clear")}
-                  >
-                    <Trash2 className="size-3" />
-                  </Button>
-                </motion.div>
-              )}
-            </AnimatePresence>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-6 w-6 p-0"
-              onClick={() => setOpen(true)}
-              title={t("launch.log.expand")}
-            >
-              <Maximize2 className="size-3.5" />
-            </Button>
-          </div>
+          {toolbar(true)}
         </CardHeader>
 
-        {activeTab === "logs" && (
-          <div className="flex flex-col min-h-0">
-            <div className="shrink-0 border-t border-border px-3 py-2 space-y-2">
-              <div className="flex items-center gap-1 flex-wrap">
-                {LOG_LEVELS.map((level) => (
-                  <LogLevelButton
-                    key={level}
-                    level={level}
-                    count={levelCounts[level]}
-                    visible={visibleLevels[level]}
-                    onToggle={() => toggleLevel(level)}
-                    label={t(`launch.log.level.${level}` as any)}
-                  />
-                ))}
-              </div>
+        <div className="flex flex-col min-h-0">
+          {filters}
 
-              <div className="flex items-center gap-3 text-xs text-muted-foreground">
-                <label className="flex items-center gap-1.5 cursor-pointer select-none">
-                  <input
-                    type="checkbox"
-                    checked={autoScroll}
-                    onChange={(e) => setAutoScroll(e.target.checked)}
-                    className="size-3 accent-primary"
-                  />
-                  {t("launch.log.autoScroll")}
-                </label>
-                <label className="flex items-center gap-1.5 cursor-pointer select-none">
-                  <input
-                    type="checkbox"
-                    checked={wrapText}
-                    onChange={(e) => setWrapText(e.target.checked)}
-                    className="size-3 accent-primary"
-                  />
-                  {t("launch.log.wrapText")}
-                </label>
-                <div className="flex-1 relative">
-                  <Search className="absolute left-2 top-1/2 -translate-y-1/2 size-3 text-muted-foreground" />
-                  <input
-                    type="text"
-                    value={searchText}
-                    onChange={(e) => setSearchText(e.target.value)}
-                    placeholder={t("launch.log.search")}
-                    className="w-full h-6 pl-7 pr-2 text-xs rounded bg-muted/50 border border-border focus:outline-none focus:ring-1 focus:ring-primary/30"
-                  />
-                </div>
-              </div>
-
-              {selectedIds.size > 0 && (
-                <motion.div
-                  initial={{ opacity: 0, height: 0 }}
-                  animate={{ opacity: 1, height: "auto" }}
-                  exit={{ opacity: 0, height: 0 }}
-                  className="flex items-center gap-2 text-xs text-primary"
-                >
-                  <span>{t("launch.log.selected", { count: selectedIds.size })}</span>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className="h-5 text-[10px] px-2"
-                    onClick={handleCopySelected}
-                  >
-                    <Copy className="size-3 mr-1" />
-                    {t("launch.log.copySelected")}
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    className="h-5 text-[10px] px-2"
-                    onClick={() => setSelectedIds(new Set())}
-                  >
-                    {t("launch.log.deselectAll")}
-                  </Button>
-                </motion.div>
-              )}
-            </div>
-
-            <CardContent className="flex-1 min-h-0 px-3 pb-3 pt-0 flex flex-col">
-              <LogViewer
-                logs={logs}
-                visibleLevels={visibleLevels}
-                autoScroll={autoScroll}
-                wrapText={wrapText}
-                searchText={searchText}
-                selectedIds={selectedIds}
-                onToggleSelect={toggleSelect}
-                onCopySelected={handleCopySelected}
-                searchHighlight={searchText}
-                onKeyDown={handleKeyDown}
-                tabIndex={0}
-              />
-            </CardContent>
-
-            {isRunning && (
-              <div className="shrink-0 border-t border-border px-3 py-2 flex items-center justify-end">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="h-6 text-[11px] text-destructive border-destructive/50 hover:bg-destructive/10"
-                  onClick={cancelLaunch}
-                >
-                  <Square className="size-3 mr-1" />
-                  {t("launch.log.terminate")}
-                </Button>
-              </div>
-            )}
-          </div>
-        )}
-
-        {activeTab === "analysis" && (
-          <CardContent className="flex-1 min-h-0 overflow-y-auto px-3 py-2">
-            <ModDependencyPanel />
+          <CardContent className="flex-1 min-h-0 px-3 pb-3 pt-0 flex flex-col">
+            <LogViewer
+              logs={logs}
+              emptyHint={emptyHint}
+              visibleLevels={visibleLevels}
+              autoScroll={autoScroll}
+              wrapText={wrapText}
+              searchText={searchText}
+              selectedIds={selectedIds}
+              onToggleSelect={toggleSelect}
+              onCopySelected={handleCopySelected}
+              searchHighlight={searchText}
+              onKeyDown={handleKeyDown}
+              tabIndex={0}
+            />
           </CardContent>
-        )}
+
+          {isRunning && (
+            <div className="shrink-0 border-t border-border px-3 py-2 flex items-center justify-end">
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-6 text-[11px] text-destructive border-destructive/50 hover:bg-destructive/10"
+                onClick={cancelLaunch}
+              >
+                <Square className="size-3 mr-1" />
+                {t("launch.log.terminate")}
+              </Button>
+            </div>
+          )}
+        </div>
       </Card>
 
       <Dialog open={open} onOpenChange={setOpen}>
@@ -535,173 +558,102 @@ export function LaunchConsole() {
             <DialogTitle className="flex items-center gap-2 text-sm">
               <Terminal className="size-4 text-primary" />
               {t("launch.log.title")}
-              {activeTab === "logs" && logs.length > 0 && (
+              {logs.length > 0 && (
                 <span className="text-[10px] text-muted-foreground font-normal">
                   ({logs.length})
                 </span>
               )}
             </DialogTitle>
-            <div className="flex items-center gap-1">
-              <div className="mr-1 flex rounded-md border border-border bg-muted/30 p-0.5">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => switchTab("logs")}
-                  className={cn(
-                    "h-7 px-2 text-xs",
-                    activeTab === "logs"
-                      ? "bg-background shadow-sm text-primary font-medium"
-                      : "text-muted-foreground hover:text-foreground"
-                  )}
-                >
-                  <Terminal className="size-3 mr-1" />
-                  启动日志
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => switchTab("analysis")}
-                  className={cn(
-                    "h-7 px-2 text-xs",
-                    activeTab === "analysis"
-                      ? "bg-background shadow-sm text-emerald-600 font-medium"
-                      : "text-muted-foreground hover:text-foreground"
-                  )}
-                >
-                  <Puzzle className="size-3 mr-1" />
-                  依赖解析
-                </Button>
-              </div>
-              {activeTab === "logs" && logs.length > 0 && (
-                <>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="h-7 text-xs"
-                    onClick={handleCopyAll}
-                  >
-                    <Copy className="size-3 mr-1" />
-                    {t("launch.log.copyAll")}
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="h-7 text-xs"
-                    onClick={handleExport}
-                  >
-                    <Download className="size-3 mr-1" />
-                    {t("launch.log.export")}
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="h-7 text-xs"
-                    onClick={handleClear}
-                  >
-                    <Trash2 className="size-3 mr-1" />
-                    {t("common.clear")}
-                  </Button>
-                </>
-              )}
-            </div>
+            {toolbar(false)}
           </DialogHeader>
 
-          {activeTab === "logs" && (
-            <>
-              <div className="shrink-0 border-t border-border px-4 py-2 space-y-2">
-                <div className="flex items-center gap-1 flex-wrap">
-                  {LOG_LEVELS.map((level) => (
-                    <LogLevelButton
-                      key={level}
-                      level={level}
-                      count={levelCounts[level]}
-                      visible={visibleLevels[level]}
-                      onToggle={() => toggleLevel(level)}
-                      label={t(`launch.log.level.${level}` as any)}
-                    />
-                  ))}
-                </div>
-                <div className="flex items-center gap-3 text-xs text-muted-foreground">
-                  <label className="flex items-center gap-1.5 cursor-pointer select-none">
-                    <input
-                      type="checkbox"
-                      checked={autoScroll}
-                      onChange={(e) => setAutoScroll(e.target.checked)}
-                      className="size-3 accent-primary"
-                    />
-                    {t("launch.log.autoScroll")}
-                  </label>
-                  <label className="flex items-center gap-1.5 cursor-pointer select-none">
-                    <input
-                      type="checkbox"
-                      checked={wrapText}
-                      onChange={(e) => setWrapText(e.target.checked)}
-                      className="size-3 accent-primary"
-                    />
-                    {t("launch.log.wrapText")}
-                  </label>
-                  <div className="flex-1 relative">
-                    <Search className="absolute left-2 top-1/2 -translate-y-1/2 size-3 text-muted-foreground" />
-                    <input
-                      type="text"
-                      value={searchText}
-                      onChange={(e) => setSearchText(e.target.value)}
-                      placeholder={t("launch.log.search")}
-                      className="w-full h-6 pl-7 pr-2 text-xs rounded bg-muted/50 border border-border focus:outline-none focus:ring-1 focus:ring-primary/30"
-                    />
-                  </div>
-                </div>
-                {selectedIds.size > 0 && (
-                  <motion.div
-                    initial={{ opacity: 0, height: 0 }}
-                    animate={{ opacity: 1, height: "auto" }}
-                    className="flex items-center gap-2 text-xs text-primary"
-                  >
-                    <span>{t("launch.log.selected", { count: selectedIds.size })}</span>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className="h-5 text-[10px] px-2"
-                      onClick={handleCopySelected}
-                    >
-                      <Copy className="size-3 mr-1" />
-                      {t("launch.log.copySelected")}
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      className="h-5 text-[10px] px-2"
-                      onClick={() => setSelectedIds(new Set())}
-                    >
-                      {t("launch.log.deselectAll")}
-                    </Button>
-                  </motion.div>
-                )}
-              </div>
-
-              <div className="flex-1 min-h-0 p-4 pt-0 overflow-y-auto">
-                <LogViewer
-                  logs={logs}
-                  visibleLevels={visibleLevels}
-                  autoScroll={autoScroll}
-                  wrapText={wrapText}
-                  searchText={searchText}
-                  selectedIds={selectedIds}
-                  onToggleSelect={toggleSelect}
-                  onCopySelected={handleCopySelected}
-                  searchHighlight={searchText}
-                  onKeyDown={handleKeyDown}
-                  tabIndex={0}
+          <div className="shrink-0 border-t border-border px-4 py-2 space-y-2">
+            <div className="flex items-center gap-1 flex-wrap">
+              {LOG_LEVELS.map((level) => (
+                <LogLevelButton
+                  key={level}
+                  level={level}
+                  count={levelCounts[level]}
+                  visible={visibleLevels[level]}
+                  onToggle={() => toggleLevel(level)}
+                  label={t(`launch.log.level.${level}` as "launch.log.level.info")}
+                />
+              ))}
+            </div>
+            <div className="flex items-center gap-3 text-xs text-muted-foreground">
+              <label className="flex items-center gap-1.5 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={autoScroll}
+                  onChange={(e) => setAutoScroll(e.target.checked)}
+                  className="size-3 accent-primary"
+                />
+                {t("launch.log.autoScroll")}
+              </label>
+              <label className="flex items-center gap-1.5 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={wrapText}
+                  onChange={(e) => setWrapText(e.target.checked)}
+                  className="size-3 accent-primary"
+                />
+                {t("launch.log.wrapText")}
+              </label>
+              <div className="flex-1 relative">
+                <Search className="absolute left-2 top-1/2 -translate-y-1/2 size-3 text-muted-foreground" />
+                <input
+                  type="text"
+                  value={searchText}
+                  onChange={(e) => setSearchText(e.target.value)}
+                  placeholder={t("launch.log.search")}
+                  className="w-full h-6 pl-7 pr-2 text-xs rounded bg-muted/50 border border-border focus:outline-none focus:ring-1 focus:ring-primary/30"
                 />
               </div>
-            </>
-          )}
-
-          {activeTab === "analysis" && (
-            <div className="flex-1 min-h-0 overflow-y-auto p-4 pt-2 border-t border-border">
-              <ModDependencyPanel />
             </div>
-          )}
+            {selectedIds.size > 0 && (
+              <motion.div
+                initial={{ opacity: 0, height: 0 }}
+                animate={{ opacity: 1, height: "auto" }}
+                className="flex items-center gap-2 text-xs text-primary"
+              >
+                <span>{t("launch.log.selected", { count: selectedIds.size })}</span>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-5 text-[10px] px-2"
+                  onClick={handleCopySelected}
+                >
+                  <Copy className="size-3 mr-1" />
+                  {t("launch.log.copySelected")}
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="h-5 text-[10px] px-2"
+                  onClick={() => setSelectedIds(new Set())}
+                >
+                  {t("launch.log.deselectAll")}
+                </Button>
+              </motion.div>
+            )}
+          </div>
+
+          <div className="flex-1 min-h-0 p-4 pt-0 overflow-y-auto">
+            <LogViewer
+              logs={logs}
+              emptyHint={emptyHint}
+              visibleLevels={visibleLevels}
+              autoScroll={autoScroll}
+              wrapText={wrapText}
+              searchText={searchText}
+              selectedIds={selectedIds}
+              onToggleSelect={toggleSelect}
+              onCopySelected={handleCopySelected}
+              searchHighlight={searchText}
+              onKeyDown={handleKeyDown}
+              tabIndex={0}
+            />
+          </div>
         </DialogContent>
       </Dialog>
     </>

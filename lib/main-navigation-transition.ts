@@ -20,7 +20,7 @@ const FADE_IN_MS = 150;
 const FIRST_MUTATION_SETTLE_MS = 80;
 const TIMEOUT_MS = 1200;
 /** Static export + WebView: client `router.push` can stall; hard-assign if URL unchanged. */
-const APP_ROUTE_PUSH_FALLBACK_MS = 200;
+const APP_ROUTE_PUSH_FALLBACK_MS = 50;
 
 let activeNavigation: ActiveMainNavigation | null = null;
 
