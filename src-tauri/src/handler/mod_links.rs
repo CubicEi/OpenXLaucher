@@ -1244,10 +1244,27 @@ pub async fn download_resource_file(
     downloadUrl: String,
     platform: Option<String>,
     projectId: Option<String>,
+    browseCategory: Option<String>,
+    apiProjectType: Option<String>,
 ) -> Result<u64, String> {
     let task_id = MOD_TASK_COUNTER.fetch_add(1, Ordering::SeqCst);
-    let save_dir = get_resource_download_dir(&resourceKind, &mcVersion, &modLoader)?;
     let file_name = extract_filename_from_url(&downloadUrl);
+    let resolved_kind = crate::handler::resource_kind_resolve::resolve_resource_kind_for_download(
+        &file_name,
+        Some(&resourceKind),
+        browseCategory.as_deref(),
+        apiProjectType.as_deref(),
+    );
+    if resolved_kind != resourceKind {
+        log::info!(
+            "[download] resourceKind corrected {} -> {} for {}",
+            resourceKind,
+            resolved_kind,
+            file_name
+        );
+    }
+    let save_dir = get_resource_download_dir(&resolved_kind, &mcVersion, &modLoader)?;
+    let resolved_kind_clone = resolved_kind.clone();
     let save_dir_clone = save_dir.clone();
     let file_name_clone = file_name.clone();
     let platform_clone = platform.clone();
@@ -1308,7 +1325,7 @@ pub async fn download_resource_file(
         let _ = progress_forward.await;
         match result {
             crate::downloader::modular_download::SingleDownloadResult::Success { size, .. } => {
-                let kind_lower = resourceKind.to_ascii_lowercase();
+                let kind_lower = resolved_kind_clone.to_ascii_lowercase();
                 if kind_lower == "world" || kind_lower == "worlds" {
                     let zip_path = save_dir_clone.join(&file_name_clone);
                     match extract_world_archive(&zip_path, &save_dir_clone) {
@@ -1385,6 +1402,8 @@ pub async fn download_mod_file(
         downloadUrl,
         platform,
         projectId,
+        None,
+        None,
     )
     .await
 }

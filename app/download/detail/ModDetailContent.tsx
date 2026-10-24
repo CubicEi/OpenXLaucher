@@ -10,6 +10,7 @@ import { useSettings } from "@/components/settings/settings-provider";
 import { useRouter } from "next/navigation";
 import { useModFavorites } from "@/hooks/use-mod-favorites";
 import type { ModFavorite } from "@/lib/mod-favorites";
+import { resolveResourceKindForDownload } from "@/lib/resource-kind";
 
 const openExternalUrl = async (url: string) => {
   try {
@@ -382,6 +383,7 @@ export default function ModDetailContent({ modId }: { modId: string }) {
 
   const urlParams = typeof window !== "undefined" ? new URLSearchParams(window.location.search) : null;
   const forceType = urlParams?.get("forceType") || null;
+  const browseCategoryParam = urlParams?.get("category") || forceType || null;
   const returnTo = urlParams?.get("returnTo") || null;
 
   // 根据 URL 获取下载状态（用 taskId 精确匹配）
@@ -822,27 +824,34 @@ export default function ModDetailContent({ modId }: { modId: string }) {
     //           2. Fallback to hasXxx flag inference
     const modLoader = getModLoader(file);
 
-    // Determine resource kind based on project type (affects cache directory)
-    // - mod / minecraft mod -> "mod"
-    // - resourcepack / texture pack -> "resourcepack"
-    // - shader -> "shaderpack"
-    // - datapack -> "datapack"
-    // - world / map -> "world"
-    // - modpack / mod pack -> "modpack"
-    // If forceType is set (e.g. from mcmod search), use it directly to avoid misclassification
     const projectType = (forceType || liveInfo?.projectType || "mod").toLowerCase();
-    let resourceKind = "mod";
+    let hintKind = "mod";
     if (projectType.includes("resourcepack") || projectType.includes("resource pack") || projectType.includes("texture pack")) {
-      resourceKind = "resourcepack";
+      hintKind = "resourcepack";
     } else if (projectType.includes("shader")) {
-      resourceKind = "shaderpack";
+      hintKind = "shaderpack";
     } else if (projectType.includes("datapack") || projectType.includes("data pack")) {
-      resourceKind = "datapack";
+      hintKind = "datapack";
     } else if (projectType.includes("modpack") || projectType.includes("mod pack")) {
-      resourceKind = "modpack";
+      hintKind = "modpack";
     } else if (projectType.includes("world") || projectType.includes("map")) {
-      resourceKind = "world";
+      hintKind = "world";
     }
+
+    let fileNameFromUrl = "download.bin";
+    try {
+      const pathPart = new URL(file.url).pathname.split("/").pop() || "";
+      fileNameFromUrl = decodeURIComponent(pathPart);
+    } catch {
+      /* keep default */
+    }
+
+    const resourceKind = resolveResourceKindForDownload(
+      fileNameFromUrl,
+      hintKind,
+      browseCategoryParam,
+      liveInfo?.projectType ?? null,
+    );
 
     try {
       // First occupy downloading status (show loading before taskId returns)
@@ -869,7 +878,9 @@ export default function ModDetailContent({ modId }: { modId: string }) {
         modLoader,
         file.url,
         platform,
-        projectId
+        projectId,
+        browseCategoryParam,
+        liveInfo?.projectType ?? null,
       );
 
       // Update to real taskId

@@ -24,6 +24,7 @@ pub mod mod_platform;
 pub mod mod_platform_probe;
 pub mod mod_update_locks;
 pub mod mod_updates;
+pub mod resource_kind_resolve;
 #[allow(dead_code)]
 pub mod modpack_builder;
 #[allow(non_snake_case)]

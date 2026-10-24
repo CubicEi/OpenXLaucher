@@ -266,6 +266,7 @@
     "checkingUpdates": "正在检查…",
     "updateAll": "全部更新",
     "updateMod": "更新",
+    "update": "更新",
     "updateAvailable": "有更新",
     "updatesFound": "{count} 个可更新",
     "noUpdatesFound": "未发现可用更新",

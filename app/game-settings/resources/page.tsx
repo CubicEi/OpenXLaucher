@@ -13,4 +13,5 @@ export default createResourcePage({
   cacheKind: "resourcepack",
   extensions: ["zip", "jar"],
   simplifyName: (name) => name.replace(/\.(zip|jar)$/i, ""),
+  enableUpdates: true,
 });

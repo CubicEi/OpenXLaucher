@@ -97,7 +97,9 @@ interface DownloadContextValue {
     modLoader: string,
     downloadUrl: string,
     platform?: "modrinth" | "curseforge",
-    projectId?: string
+    projectId?: string,
+    browseCategory?: string | null,
+    apiProjectType?: string | null
   ) => Promise<number>;
   /** 整合包安装（异步） */
   startModpackDownload: (modpackName: string, path: string) => Promise<number>;
@@ -106,14 +108,16 @@ interface DownloadContextValue {
     instanceDir: string,
     mcVersion: string,
     loader: string,
-    update: ModUpdatePayload
+    update: ModUpdatePayload,
+    resourceKind?: string
   ) => Promise<number>;
   /** 批量模组更新 */
   startModUpdateAll: (
     instanceDir: string,
     mcVersion: string,
     loader: string,
-    updates: ModUpdatePayload[]
+    updates: ModUpdatePayload[],
+    resourceKind?: string
   ) => Promise<number>;
   /** 取消一个下载任务 */
   cancelDownload: (taskId: number) => Promise<void>;
@@ -438,7 +442,9 @@ export function DownloadProvider({ children }: { children: React.ReactNode }) {
       modLoader: string,
       downloadUrl: string,
       platform?: "modrinth" | "curseforge",
-      projectId?: string
+      projectId?: string,
+      browseCategory?: string | null,
+      apiProjectType?: string | null
     ) => {
       const label = `${resourceName} (${mcVersion})`;
       return startModLoaderDownload({
@@ -454,6 +460,8 @@ export function DownloadProvider({ children }: { children: React.ReactNode }) {
           downloadUrl,
           platform: resourceKind === "mod" ? (platform ?? null) : null,
           projectId: resourceKind === "mod" ? (projectId ?? null) : null,
+          browseCategory: browseCategory ?? null,
+          apiProjectType: apiProjectType ?? null,
         },
       });
     },
@@ -509,14 +517,22 @@ export function DownloadProvider({ children }: { children: React.ReactNode }) {
       instanceDir: string,
       mcVersion: string,
       loader: string,
-      update: ModUpdatePayload
+      update: ModUpdatePayload,
+      resourceKind: string = "mod"
     ) => {
       const label = `更新 ${update.modName} (${update.currentVersion} → ${update.newVersion})`;
+      const command = resourceKind === "mod" ? "update_mod" : "update_resource";
       return startModLoaderDownload({
         label,
         mcVersion,
-        tauriCommand: "update_mod",
-        params: { instanceDir, mcVersion, loader, update },
+        tauriCommand: command,
+        params: {
+          instanceDir,
+          mcVersion,
+          loader,
+          update,
+          ...(resourceKind !== "mod" ? { resourceKind } : {}),
+        },
       });
     },
     [startModLoaderDownload]
@@ -528,14 +544,22 @@ export function DownloadProvider({ children }: { children: React.ReactNode }) {
       instanceDir: string,
       mcVersion: string,
       loader: string,
-      updates: ModUpdatePayload[]
+      updates: ModUpdatePayload[],
+      resourceKind: string = "mod"
     ) => {
-      const label = `更新模组 ×${updates.length}`;
+      const label = `更新 ×${updates.length}`;
+      const command = resourceKind === "mod" ? "update_mods" : "update_resources";
       return startModLoaderDownload({
         label,
         mcVersion,
-        tauriCommand: "update_mods",
-        params: { instanceDir, mcVersion, loader, updates },
+        tauriCommand: command,
+        params: {
+          instanceDir,
+          mcVersion,
+          loader,
+          updates,
+          ...(resourceKind !== "mod" ? { resourceKind } : {}),
+        },
       });
     },
     [startModLoaderDownload]

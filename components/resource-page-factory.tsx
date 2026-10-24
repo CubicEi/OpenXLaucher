@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { motion } from "framer-motion";
 import { Package, Loader2 } from "lucide-react";
 import ResourcePanel from "@/components/resource-panel";
@@ -10,6 +10,9 @@ import { useResourceManager } from "@/hooks/use-resource-manager";
 import { useLaunchContext } from "@/components/launch/launch-provider";
 import { fadeSlideUp } from "@/lib/motion";
 import { useI18n, type TranslationKey } from "@/components/i18n/use-i18n";
+import { useInstanceResourceUpdates } from "@/hooks/use-instance-resource-updates";
+import { cacheKindToUpdateResourceKind } from "@/lib/resource-kind";
+import { ResourceRemoteVersionsDialog } from "@/components/resources/resource-remote-versions-dialog";
 
 /**
  * 资源管理页面的配置
@@ -53,6 +56,8 @@ export interface ResourcePageConfig {
   onOpenViewer?: (file: { name: string; size: number; isDir?: boolean }, side: "left" | "right") => void;
   /** 启用预览按钮的文件扩展名（小写不含点） */
   viewerExtensions?: string[];
+  /** 启用检查更新 / 远程版本（资源包、光影、数据包等） */
+  enableUpdates?: boolean;
 }
 
 /**
@@ -97,6 +102,7 @@ export function createResourcePage(config: ResourcePageConfig): React.FC {
     rightIconBg = CACHE_LIBRARY_ICON_BG,
     onOpenViewer,
     viewerExtensions,
+    enableUpdates = false,
   } = config;
 
   const Component: React.FC = () => {
@@ -167,6 +173,21 @@ export function createResourcePage(config: ResourcePageConfig): React.FC {
       directoryNavigation,
     );
 
+    const updateResourceKind = cacheKindToUpdateResourceKind(cacheKind);
+    const updates = useInstanceResourceUpdates({
+      resourceKind: updateResourceKind,
+      needsLoader: needsModLoader,
+      instanceDir,
+      mcVersion,
+      modLoader,
+      onRefresh: refresh,
+    });
+
+    const [remoteVersionsFile, setRemoteVersionsFile] = useState<string | null>(null);
+    const handleOpenRemoteVersions = useCallback((fileName: string) => {
+      setRemoteVersionsFile(fileName);
+    }, []);
+
     const blockingInstanceScan = instancesScanning && !instanceDir;
     if (!configLoaded || (configLoaded && !preparingTimeout && blockingInstanceScan)) {
       return (
@@ -221,10 +242,16 @@ export function createResourcePage(config: ResourcePageConfig): React.FC {
             ...(mcVersion && mcVersion !== versionName ? [t("pageFactory.vanillaMcVersion", { mcVersion: mcVersion })] : []),
           ].join(" · ");
 
+    const leftDescriptionWithUpdates =
+      enableUpdates && updates.checkMessage
+        ? `${description} · ${updates.checkMessage}`
+        : description;
+
     return (
+      <>
       <ResourcePanel
         leftTitle={t(title)}
-        leftDescription={description}
+        leftDescription={leftDescriptionWithUpdates}
         leftIcon={leftIcon}
         leftIconBg={leftIconBg}
         leftFiles={filteredInstanceFiles}
@@ -256,7 +283,41 @@ export function createResourcePage(config: ResourcePageConfig): React.FC {
         simplifyName={simplifyName}
         onOpenViewer={onOpenViewer}
         viewerExtensions={viewerExtensions}
+        {...(enableUpdates
+          ? {
+              modUpdates: updates.modUpdatesForPanel,
+              onCheckUpdates: updates.handleCheckUpdates,
+              checkingUpdates: updates.checkingUpdates,
+              onUpdateAll: updates.handleUpdateAll,
+              onUpdateOne: updates.handleUpdateOne,
+              updatingFiles: updates.updatingFiles,
+              onOpenRemoteVersions: handleOpenRemoteVersions,
+            }
+          : {})}
       />
+      {enableUpdates && instanceDir && mcVersion && (
+        <ResourceRemoteVersionsDialog
+          open={remoteVersionsFile !== null}
+          onOpenChange={(open) => {
+            if (!open) setRemoteVersionsFile(null);
+          }}
+          fileName={remoteVersionsFile}
+          displayName={
+            remoteVersionsFile
+              ? simplifyName(remoteVersionsFile)
+              : ""
+          }
+          instanceDir={instanceDir}
+          mcVersion={mcVersion}
+          loader={needsModLoader ? (modLoader ?? "") : ""}
+          resourceKind={updateResourceKind}
+          onInstalled={() => {
+            refresh();
+            setRemoteVersionsFile(null);
+          }}
+        />
+      )}
+      </>
     );
   };
 

@@ -7,7 +7,10 @@
 //! 4. Copy new mod into mods folder; clear temp
 //! 5. After 5 successful game exits (code 0) for that backup entry, delete it
 
-use crate::handler::cache_paths::{get_mod_cache_dir, parse_mod_loader};
+use crate::handler::cache_paths::{
+    get_cache_dir_for_version, get_mod_cache_dir, parse_mod_loader, parse_resource_kind,
+    CacheResourceKind,
+};
 use crate::handler::diagnostics::{download_file, ModSearchResult};
 use crate::handler::game_dir::canonical_game_dir;
 use crate::handler::launcher::game_process_state::is_game_running_for_dir;
@@ -173,6 +176,57 @@ fn sanitize_tag(s: &str) -> String {
         .collect()
 }
 
+fn parse_update_resource_kind(resource_kind: &str) -> Result<CacheResourceKind, String> {
+    parse_resource_kind(resource_kind)
+}
+
+fn effective_loader_for_kind(kind: CacheResourceKind, loader: &str) -> Result<String, String> {
+    if kind == CacheResourceKind::Mod {
+        let trimmed = loader.trim();
+        if trimmed.is_empty() {
+            return Err("缺少模组加载器".to_string());
+        }
+        return Ok(trimmed.to_string());
+    }
+    Ok(String::new())
+}
+
+fn backup_cache_dir_for_kind(
+    kind: CacheResourceKind,
+    mc_version: &str,
+    loader: &str,
+) -> Result<PathBuf, String> {
+    if kind == CacheResourceKind::Mod {
+        let loader_kind = parse_mod_loader(loader)?;
+        get_mod_cache_dir(mc_version, loader_kind)
+    } else {
+        get_cache_dir_for_version(kind, mc_version)
+    }
+}
+
+fn list_updatable_file_names(resource_dir: &Path) -> Vec<String> {
+    let mut names = Vec::new();
+    if let Ok(entries) = fs::read_dir(resource_dir) {
+        for entry in entries.flatten() {
+            if !entry.file_type().map(|t| t.is_file()).unwrap_or(false) {
+                continue;
+            }
+            let path = entry.path();
+            let ext = path
+                .extension()
+                .and_then(|e| e.to_str())
+                .map(|e| e.to_ascii_lowercase());
+            if matches!(ext.as_deref(), Some("jar") | Some("zip") | Some("litemod")) {
+                if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                    names.push(name.to_string());
+                }
+            }
+        }
+    }
+    names.sort_by(|a, b| a.to_lowercase().cmp(&b.to_lowercase()));
+    names
+}
+
 async fn find_latest_for_mod(
     jar_path: &Path,
     try_order: &[ModPlatformKind],
@@ -190,26 +244,24 @@ async fn find_latest_for_mod(
     None
 }
 
-#[tauri::command]
-pub async fn list_mod_remote_versions(
-    instance_dir: String,
-    file_name: String,
-    mc_version: String,
-    loader: String,
+async fn list_remote_versions_impl(
+    instance_dir: &Path,
+    subdir: &str,
+    file_name: &str,
+    mc_version: &str,
+    loader: &str,
 ) -> Result<ModRemoteVersionsResponse, String> {
-    let mc_version = mc_version.trim();
-    let loader = loader.trim();
-    if mc_version.is_empty() || loader.is_empty() {
-        return Err("缺少 Minecraft 版本或加载器".to_string());
+    if mc_version.is_empty() {
+        return Err("缺少 Minecraft 版本".to_string());
     }
-    let jar_path = PathBuf::from(&instance_dir).join("mods").join(&file_name);
-    if !jar_path.is_file() {
-        return Err(format!("模组文件不存在: {}", file_name));
+    let file_path = instance_dir.join(subdir).join(file_name);
+    if !file_path.is_file() {
+        return Err(format!("文件不存在: {}", file_name));
     }
     let try_order = platform_try_order()
         .await
         .map_err(|_| I18N_MOD_UPDATE_NETWORK_UNREACHABLE.to_string())?;
-    let installed = resolve_installed_file(&jar_path, &try_order).await;
+    let installed = resolve_installed_file(&file_path, &try_order).await;
     if let Some(snapshot) = installed.as_ref() {
         let platform = crate::handler::mod_platform::ResolvedPlatform {
             source: snapshot.source.clone(),
@@ -234,6 +286,64 @@ pub async fn list_mod_remote_versions(
         installed: None,
         versions: Vec::new(),
         message: Some(I18N_MOD_UPDATE_HASH_MISS.to_string()),
+    })
+}
+
+#[tauri::command]
+pub async fn list_resource_remote_versions(
+    instance_dir: String,
+    file_name: String,
+    mc_version: String,
+    loader: String,
+    resource_kind: String,
+) -> Result<ModRemoteVersionsResponse, String> {
+    let kind = parse_update_resource_kind(&resource_kind)?;
+    let mc_version = mc_version.trim();
+    let loader = effective_loader_for_kind(kind, loader.trim())?;
+    let subdir = kind.dir_name();
+    list_remote_versions_impl(
+        Path::new(&instance_dir),
+        subdir,
+        &file_name,
+        mc_version,
+        &loader,
+    )
+    .await
+}
+
+#[tauri::command]
+pub async fn list_mod_remote_versions(
+    instance_dir: String,
+    file_name: String,
+    mc_version: String,
+    loader: String,
+) -> Result<ModRemoteVersionsResponse, String> {
+    list_resource_remote_versions(instance_dir, file_name, mc_version, loader, "mod".to_string())
+        .await
+}
+
+fn to_update_info_from_file(
+    file_name: &str,
+    snapshot: &InstalledFileSnapshot,
+    remote: &ModSearchResult,
+) -> Option<ModUpdateInfo> {
+    let new_version = remote.version_number.as_ref()?;
+    let download_url = remote.download_url.as_ref()?;
+    let new_file_name = remote.file_name.as_ref()?;
+    Some(ModUpdateInfo {
+        file_name: file_name.to_string(),
+        mod_id: remote.slug.clone(),
+        mod_name: if snapshot.title.is_empty() {
+            remote.title.clone()
+        } else {
+            snapshot.title.clone()
+        },
+        current_version: snapshot.version_number.clone(),
+        new_version: new_version.clone(),
+        source: remote.source.clone(),
+        download_url: download_url.clone(),
+        new_file_name: new_file_name.clone(),
+        slug: remote.slug.clone(),
     })
 }
 
@@ -263,27 +373,22 @@ fn to_update_info(
 }
 
 #[tauri::command]
-pub async fn check_mods_updates(
+pub async fn check_resource_updates(
     instance_dir: String,
     mc_version: String,
     loader: String,
+    resource_kind: String,
 ) -> Result<Vec<ModUpdateInfo>, String> {
-    let mods_dir = PathBuf::from(&instance_dir).join("mods");
-    if !mods_dir.exists() {
-        return Ok(Vec::new());
-    }
-    let mods = parse_mods_in_dir(mods_dir.to_string_lossy().to_string());
-    if mods.is_empty() {
-        return Ok(Vec::new());
-    }
-
+    let kind = parse_update_resource_kind(&resource_kind)?;
     let mc_version = mc_version.trim().to_string();
-    let loader = loader.trim().to_string();
     if mc_version.is_empty() {
         return Err("缺少 Minecraft 版本".to_string());
     }
-    if loader.is_empty() {
-        return Err("缺少模组加载器".to_string());
+    let loader = effective_loader_for_kind(kind, loader.trim())?;
+
+    let resource_dir = PathBuf::from(&instance_dir).join(kind.dir_name());
+    if !resource_dir.exists() {
+        return Ok(Vec::new());
     }
 
     let try_order = platform_try_order()
@@ -293,26 +398,58 @@ pub async fn check_mods_updates(
     let sem = std::sync::Arc::new(tokio::sync::Semaphore::new(4));
     let mut handles = Vec::new();
 
-    for mod_info in mods {
-        let permit = sem
-            .clone()
-            .acquire_owned()
-            .await
-            .map_err(|e| e.to_string())?;
-        let mods_dir = mods_dir.clone();
-        let mc_version = mc_version.clone();
-        let loader = loader.clone();
-        let try_order = try_order.clone();
-        handles.push(tokio::spawn(async move {
-            let _permit = permit;
-            let jar_path = mods_dir.join(&mod_info.file_name);
-            if !jar_path.is_file() {
-                return None;
-            }
-            let (snapshot, remote) =
-                find_latest_for_mod(&jar_path, &try_order, &mc_version, &loader).await?;
-            to_update_info(&mod_info, &snapshot, &remote)
-        }));
+    if kind == CacheResourceKind::Mod {
+        let mods = parse_mods_in_dir(resource_dir.to_string_lossy().to_string());
+        if mods.is_empty() {
+            return Ok(Vec::new());
+        }
+        for mod_info in mods {
+            let permit = sem
+                .clone()
+                .acquire_owned()
+                .await
+                .map_err(|e| e.to_string())?;
+            let resource_dir = resource_dir.clone();
+            let mc_version = mc_version.clone();
+            let loader = loader.clone();
+            let try_order = try_order.clone();
+            handles.push(tokio::spawn(async move {
+                let _permit = permit;
+                let jar_path = resource_dir.join(&mod_info.file_name);
+                if !jar_path.is_file() {
+                    return None;
+                }
+                let (snapshot, remote) =
+                    find_latest_for_mod(&jar_path, &try_order, &mc_version, &loader).await?;
+                to_update_info(&mod_info, &snapshot, &remote)
+            }));
+        }
+    } else {
+        let file_names = list_updatable_file_names(&resource_dir);
+        if file_names.is_empty() {
+            return Ok(Vec::new());
+        }
+        for file_name in file_names {
+            let permit = sem
+                .clone()
+                .acquire_owned()
+                .await
+                .map_err(|e| e.to_string())?;
+            let resource_dir = resource_dir.clone();
+            let mc_version = mc_version.clone();
+            let loader = loader.clone();
+            let try_order = try_order.clone();
+            handles.push(tokio::spawn(async move {
+                let _permit = permit;
+                let file_path = resource_dir.join(&file_name);
+                if !file_path.is_file() {
+                    return None;
+                }
+                let (snapshot, remote) =
+                    find_latest_for_mod(&file_path, &try_order, &mc_version, &loader).await?;
+                to_update_info_from_file(&file_name, &snapshot, &remote)
+            }));
+        }
     }
 
     let mut updates = Vec::new();
@@ -325,6 +462,15 @@ pub async fn check_mods_updates(
     }
     updates.sort_by(|a, b| a.mod_name.to_lowercase().cmp(&b.mod_name.to_lowercase()));
     Ok(updates)
+}
+
+#[tauri::command]
+pub async fn check_mods_updates(
+    instance_dir: String,
+    mc_version: String,
+    loader: String,
+) -> Result<Vec<ModUpdateInfo>, String> {
+    check_resource_updates(instance_dir, mc_version, loader, "mod".to_string()).await
 }
 
 fn unique_backup_name(original: &str, old_version: &str, new_version: &str) -> String {
@@ -434,21 +580,24 @@ async fn perform_single_update(
     instance_dir: &Path,
     mc_version: &str,
     loader: &str,
+    kind: CacheResourceKind,
     update: &ModUpdateInfo,
 ) -> Result<ModUpdateResult, String> {
     let instance_dir_str = instance_dir.to_string_lossy();
     let _lock = ModUpdateLockGuard::acquire(instance_dir_str.as_ref())?;
 
-    let mods_dir = instance_dir.join("mods");
-    fs::create_dir_all(&mods_dir).map_err(|e| format!("创建 mods 目录失败: {}", e))?;
+    let subdir = kind.dir_name();
+    let resource_dir = instance_dir.join(subdir);
+    fs::create_dir_all(&resource_dir)
+        .map_err(|e| format!("创建 {} 目录失败: {}", subdir, e))?;
 
-    let old_path = mods_dir.join(&update.file_name);
+    let old_path = resource_dir.join(&update.file_name);
     if !old_path.is_file() {
-        return Err(format!("本地模组文件不存在: {}", update.file_name));
+        return Err(format!("本地文件不存在: {}", update.file_name));
     }
 
     let temp_dir = std::env::temp_dir().join(format!(
-        "openxlauncher-mod-update-{}-{}",
+        "openxlauncher-resource-update-{}-{}",
         sanitize_tag(&update.mod_id),
         now_unix()
     ));
@@ -461,8 +610,7 @@ async fn perform_single_update(
         return Err(e);
     }
 
-    let loader_kind = parse_mod_loader(loader)?;
-    let cache_dir = get_mod_cache_dir(mc_version, loader_kind)?;
+    let cache_dir = backup_cache_dir_for_kind(kind, mc_version, loader)?;
     let backup_name = unique_backup_name(
         &update.file_name,
         &update.current_version,
@@ -498,7 +646,7 @@ async fn perform_single_update(
         }
     }
 
-    let dest_path = mods_dir.join(&update.new_file_name);
+    let dest_path = resource_dir.join(&update.new_file_name);
     // If updating in place with same filename, dest was already moved.
     // If different name and dest exists, remove it first.
     if dest_path.exists() && dest_path != old_path {
@@ -510,7 +658,7 @@ async fn perform_single_update(
         // Best-effort restore from backup
         let _ = fs::rename(&backup_path, &old_path);
         format!(
-            "安装新模组失败 ({} → {}): {}",
+            "安装新文件失败 ({} → {}): {}",
             temp_file.display(),
             dest_path.display(),
             e
@@ -531,13 +679,18 @@ async fn perform_single_update(
 
     let game_dir_key = instance_dir_key(instance_dir_str.as_ref());
     let key = backup_entry_key(&update.mod_id, mc_version, &update.new_version);
+    let stored_loader = if kind == CacheResourceKind::Mod {
+        loader.to_string()
+    } else {
+        String::new()
+    };
     register_backup_entry(BackupEntry {
         key,
         mod_id: update.mod_id.clone(),
         mod_name: update.mod_name.clone(),
         mc_version: mc_version.to_string(),
         game_dir: game_dir_key,
-        loader: loader.to_string(),
+        loader: stored_loader,
         old_version: update.current_version.clone(),
         new_version: update.new_version.clone(),
         backup_path: backup_path.to_string_lossy().to_string(),
@@ -572,15 +725,15 @@ struct UpdateFinishedPayload {
     error: Option<String>,
 }
 
-#[tauri::command]
-pub async fn update_mod(
-    app: AppHandle,
-    instance_dir: String,
-    mc_version: String,
-    loader: String,
-    update: ModUpdateInfo,
-) -> Result<u64, String> {
-    let task_id = UPDATE_TASK_COUNTER.fetch_add(1, Ordering::SeqCst);
+async fn run_update_task(
+    app: &AppHandle,
+    task_id: u64,
+    instance_dir: &Path,
+    mc_version: &str,
+    loader: &str,
+    kind: CacheResourceKind,
+    update: &ModUpdateInfo,
+) -> Result<(), String> {
     let _ = app.emit(
         "mod-download-progress",
         UpdateProgressPayload {
@@ -588,34 +741,52 @@ pub async fn update_mod(
             percent: 5.0,
         },
     );
+    perform_single_update(instance_dir, mc_version, loader, kind, update).await?;
+    let _ = app.emit(
+        "mod-download-progress",
+        UpdateProgressPayload {
+            task_id,
+            percent: 100.0,
+        },
+    );
+    let _ = app.emit(
+        "mod-download-finished",
+        UpdateFinishedPayload {
+            task_id,
+            success: true,
+            error: None,
+        },
+    );
+    Ok(())
+}
 
-    let result = perform_single_update(
+#[tauri::command]
+pub async fn update_resource(
+    app: AppHandle,
+    instance_dir: String,
+    mc_version: String,
+    loader: String,
+    resource_kind: String,
+    update: ModUpdateInfo,
+) -> Result<u64, String> {
+    let kind = parse_update_resource_kind(&resource_kind)?;
+    let mc_version = mc_version.trim();
+    let loader = effective_loader_for_kind(kind, loader.trim())?;
+    let task_id = UPDATE_TASK_COUNTER.fetch_add(1, Ordering::SeqCst);
+
+    let result = run_update_task(
+        &app,
+        task_id,
         Path::new(&instance_dir),
-        &mc_version,
+        mc_version,
         &loader,
+        kind,
         &update,
     )
     .await;
 
     match result {
-        Ok(_) => {
-            let _ = app.emit(
-                "mod-download-progress",
-                UpdateProgressPayload {
-                    task_id,
-                    percent: 100.0,
-                },
-            );
-            let _ = app.emit(
-                "mod-download-finished",
-                UpdateFinishedPayload {
-                    task_id,
-                    success: true,
-                    error: None,
-                },
-            );
-            Ok(task_id)
-        }
+        Ok(()) => Ok(task_id),
         Err(e) => {
             let _ = app.emit(
                 "mod-download-finished",
@@ -631,16 +802,32 @@ pub async fn update_mod(
 }
 
 #[tauri::command]
-pub async fn update_mods(
+pub async fn update_mod(
     app: AppHandle,
     instance_dir: String,
     mc_version: String,
     loader: String,
+    update: ModUpdateInfo,
+) -> Result<u64, String> {
+    update_resource(app, instance_dir, mc_version, loader, "mod".to_string(), update).await
+}
+
+#[tauri::command]
+pub async fn update_resources(
+    app: AppHandle,
+    instance_dir: String,
+    mc_version: String,
+    loader: String,
+    resource_kind: String,
     updates: Vec<ModUpdateInfo>,
 ) -> Result<u64, String> {
+    let kind = parse_update_resource_kind(&resource_kind)?;
+    let mc_version = mc_version.trim();
+    let loader = effective_loader_for_kind(kind, loader.trim())?;
     let task_id = UPDATE_TASK_COUNTER.fetch_add(1, Ordering::SeqCst);
     let total = updates.len().max(1) as f64;
     let mut first_error: Option<String> = None;
+    let instance_path = Path::new(&instance_dir);
 
     for (idx, update) in updates.into_iter().enumerate() {
         let percent = ((idx as f64) / total) * 100.0;
@@ -649,9 +836,10 @@ pub async fn update_mods(
             UpdateProgressPayload { task_id, percent },
         );
         if let Err(e) = perform_single_update(
-            Path::new(&instance_dir),
-            &mc_version,
+            instance_path,
+            mc_version,
             &loader,
+            kind,
             &update,
         )
         .await
@@ -689,6 +877,17 @@ pub async fn update_mods(
     } else {
         Ok(task_id)
     }
+}
+
+#[tauri::command]
+pub async fn update_mods(
+    app: AppHandle,
+    instance_dir: String,
+    mc_version: String,
+    loader: String,
+    updates: Vec<ModUpdateInfo>,
+) -> Result<u64, String> {
+    update_resources(app, instance_dir, mc_version, loader, "mod".to_string(), updates).await
 }
 
 #[cfg(test)]

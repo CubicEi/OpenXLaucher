@@ -59,7 +59,10 @@ use handler::mod_links::{
     search_modrinth_projects,
 };
 use handler::mod_parser::{parse_mod, parse_mods, parse_mods_in_dir, save_incompatible_mods};
-use handler::mod_updates::{check_mods_updates, list_mod_remote_versions, update_mod, update_mods};
+use handler::mod_updates::{
+    check_mods_updates, check_resource_updates, list_mod_remote_versions,
+    list_resource_remote_versions, update_mod, update_mods, update_resource, update_resources,
+};
 use handler::modpack_builder::{
     delete_modpack_instance, export_modpack_instance, get_modpack_dir, list_modpack_instances,
     load_modpack_instance, rename_modpack_instance, save_modpack_instance,
@@ -282,9 +285,13 @@ pub fn run() {
             parse_mods_in_dir,
             save_incompatible_mods,
             check_mods_updates,
+            check_resource_updates,
             list_mod_remote_versions,
+            list_resource_remote_versions,
             update_mod,
             update_mods,
+            update_resource,
+            update_resources,
             search_curseforge_projects,
             search_modrinth_projects,
             export_launch_report,

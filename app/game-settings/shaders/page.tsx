@@ -13,4 +13,5 @@ export default createResourcePage({
   cacheKind: "shaderpack",
   extensions: ["zip", "jar"],
   simplifyName: (name) => name.replace(/\.(zip|jar)$/i, ""),
+  enableUpdates: true,
 });

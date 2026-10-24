@@ -266,6 +266,7 @@
     "checkingUpdates": "Checking…",
     "updateAll": "Update all",
     "updateMod": "Update",
+    "update": "Update",
     "updateAvailable": "Update available",
     "updatesFound": "{count} updates",
     "noUpdatesFound": "No updates found",

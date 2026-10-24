@@ -17,6 +17,7 @@ import {
   Eye,
   Download,
   ArrowUpCircle,
+  Cloud,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -142,6 +143,8 @@ export interface ResourcePanelProps {
   onUpdateAll?: () => void;
   onUpdateOne?: (fileName: string) => void;
   updatingFiles?: Set<string>;
+  /** Left column: open remote versions picker */
+  onOpenRemoteVersions?: (fileName: string) => void;
 }
 
 export default function ResourcePanel({
@@ -188,6 +191,7 @@ export default function ResourcePanel({
   onUpdateAll,
   onUpdateOne,
   updatingFiles,
+  onOpenRemoteVersions,
 }: ResourcePanelProps) {
   const { t } = useI18n();
   // 先做 URL decode（%20 -> 空格 等），再应用用户自定义的 simplifyName
@@ -464,7 +468,21 @@ export default function ResourcePanel({
                       title={`${update.currentVersion} → ${update.newVersion}`}
                     >
                       <Download className="size-3.5" />
-                      {isUpdating ? t("panel.updating") : t("panel.updateMod")}
+                      {isUpdating ? t("panel.updating") : t("panel.update")}
+                    </Button>
+                  )}
+                  {side === "left" && onOpenRemoteVersions && !file.isDir && (
+                    <Button
+                      variant="secondary"
+                      size="icon"
+                      className="size-7 shrink-0"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onOpenRemoteVersions(file.name);
+                      }}
+                      title={t("panel.remoteVersionsTitle")}
+                    >
+                      <Cloud className="size-3.5" />
                     </Button>
                   )}
                   {/* 查看详情（模组专用）- "!" 字符按钮 */}
