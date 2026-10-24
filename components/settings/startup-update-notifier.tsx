@@ -4,10 +4,11 @@ import { useEffect, useState } from "react";
 import { getVersion } from "@tauri-apps/api/app";
 import { invoke } from "@tauri-apps/api/core";
 import { useRouter } from "next/navigation";
-import { Check, Download, Sparkles } from "lucide-react";
+import { Download, Sparkles } from "lucide-react";
 
 import { useI18n } from "@/components/i18n/use-i18n";
 import { setAppUpdateState } from "@/components/settings/app-updater";
+import { LauncherUpdateNoticeAlert } from "@/components/settings/launcher-update-notice-alert";
 import {
   markStartupUpdateCheckCompleted,
   markStartupUpdatePromptDismissed,
@@ -46,12 +47,22 @@ export function StartupUpdateNotifier({ delayMs = 1500 }: { delayMs?: number }) 
   const [updateOpen, setUpdateOpen] = useState(false);
   const [upToDateOpen, setUpToDateOpen] = useState(false);
   const [updateSuccessOpen, setUpdateSuccessOpen] = useState(false);
+  const [updateFailedOpen, setUpdateFailedOpen] = useState(false);
   const [installedVersion, setInstalledVersion] = useState<string>("");
+  const [updateFailureMessage, setUpdateFailureMessage] = useState<string>("");
 
   useEffect(() => {
     let active = true;
-    const showPostUpdateSuccess = async () => {
+    const showPostUpdateNotices = async () => {
       try {
+        const failure = await invoke<string | null>("take_post_update_failure");
+        if (!active) return;
+        if (failure) {
+          setUpdateFailureMessage(failure);
+          setUpdateFailedOpen(true);
+          return;
+        }
+
         const pending = await invoke<boolean>("take_post_update_success");
         if (!active || !pending) return;
         const version = await getVersion();
@@ -64,7 +75,7 @@ export function StartupUpdateNotifier({ delayMs = 1500 }: { delayMs?: number }) 
         // 非 Tauri 环境或命令不可用时忽略
       }
     };
-    void showPostUpdateSuccess();
+    void showPostUpdateNotices();
     return () => {
       active = false;
     };
@@ -183,39 +194,26 @@ export function StartupUpdateNotifier({ delayMs = 1500 }: { delayMs?: number }) 
         </DialogContent>
       </Dialog>
 
-      <Dialog open={updateSuccessOpen} onOpenChange={setUpdateSuccessOpen}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <Check className="size-5 text-emerald-500" />
-              {t("checkUpdate.updateSuccessTitle")}
-            </DialogTitle>
-          </DialogHeader>
-          <p className="px-5 pb-4 text-sm text-muted-foreground">
-            {t("checkUpdate.updateSuccessMessage", { version: installedVersion })}
-          </p>
-          <div className="flex justify-end border-t border-border px-5 py-3">
-            <Button onClick={() => setUpdateSuccessOpen(false)}>{t("settings.appUpdater.dismiss")}</Button>
-          </div>
-        </DialogContent>
-      </Dialog>
+      <LauncherUpdateNoticeAlert
+        open={updateSuccessOpen}
+        onOpenChange={setUpdateSuccessOpen}
+        title={t("checkUpdate.updateSuccessTitle")}
+        description={t("checkUpdate.updateSuccessMessage", { version: installedVersion })}
+      />
 
-      <Dialog open={upToDateOpen} onOpenChange={setUpToDateOpen}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <Check className="size-5 text-emerald-500" />
-              {t("checkUpdate.upToDate")}
-            </DialogTitle>
-          </DialogHeader>
-          <p className="px-5 pb-4 text-sm text-muted-foreground">
-            {t("checkUpdate.upToDateMessage")}
-          </p>
-          <div className="flex justify-end border-t border-border px-5 py-3">
-            <Button onClick={() => setUpToDateOpen(false)}>{t("settings.appUpdater.dismiss")}</Button>
-          </div>
-        </DialogContent>
-      </Dialog>
+      <LauncherUpdateNoticeAlert
+        open={updateFailedOpen}
+        onOpenChange={setUpdateFailedOpen}
+        title={t("checkUpdate.updateFailedTitle")}
+        description={updateFailureMessage}
+      />
+
+      <LauncherUpdateNoticeAlert
+        open={upToDateOpen}
+        onOpenChange={setUpToDateOpen}
+        title={t("checkUpdate.upToDate")}
+        description={t("checkUpdate.upToDateMessage")}
+      />
     </>
   );
 }

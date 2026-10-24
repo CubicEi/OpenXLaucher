@@ -85,6 +85,11 @@ pub fn take_post_update_success() -> bool {
     super::update_ack::take_post_update_success_pending()
 }
 
+#[tauri::command]
+pub fn take_post_update_failure() -> Option<String> {
+    super::update_ack::take_post_update_failure_message()
+}
+
 pub fn create_updater_state() -> UpdaterState {
     UpdaterState {
         fetcher: Arc::new(Mutex::new(UpdateFetcher::new())),

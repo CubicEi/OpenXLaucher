@@ -304,6 +304,7 @@ pub fn run() {
             cancel_update,
             can_check_update,
             updater::handler::take_post_update_success,
+            updater::handler::take_post_update_failure,
             theme_list,
             theme_install_archive,
             theme_register_dev_directory,

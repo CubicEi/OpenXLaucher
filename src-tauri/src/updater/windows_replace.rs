@@ -2,7 +2,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use super::config::{read_ui_language, update_temp_root};
+use super::config::update_temp_root;
 
 const TARGET_EXE_NAME: &str = "OpenXLauncher.exe";
 const OLD_EXE_NAME: &str = "OpenXLauncher_old.exe";
@@ -100,12 +100,14 @@ pub fn build_replace_batch_script(
     install_dir: &Path,
     new_exe_source: &Path,
     ack_path: &Path,
-    msg_fail: &str,
+    fail_notice_template: &Path,
+    fail_notice_flag: &Path,
 ) -> String {
     let install = install_dir.to_string_lossy().replace('%', "%%");
     let new_src = new_exe_source.to_string_lossy().replace('%', "%%");
     let ack = ack_path.to_string_lossy().replace('%', "%%");
-    let fail = escape_for_batch_msg(msg_fail);
+    let fail_tpl = fail_notice_template.to_string_lossy().replace('%', "%%");
+    let fail_flag = fail_notice_flag.to_string_lossy().replace('%', "%%");
 
     format!(
         "@echo off\r\n\
@@ -116,6 +118,8 @@ set \"TARGET=%INSTALL_DIR%\\{target_exe}\"\r\n\
 set \"OLD=%INSTALL_DIR%\\{old_exe}\"\r\n\
 set \"NEW_SRC={new_src}\"\r\n\
 set \"ACK={ack}\"\r\n\
+set \"FAIL_TPL={fail_tpl}\"\r\n\
+set \"FAIL_FLAG={fail_flag}\"\r\n\
 \r\n\
 timeout /t 3 /nobreak >nul\r\n\
 \r\n\
@@ -157,8 +161,8 @@ exit /b 0\r\n\
 taskkill /IM {target_exe} /F >nul 2>&1\r\n\
 if exist \"%TARGET%\" del /f /q \"%TARGET%\"\r\n\
 if exist \"%OLD%\" ren \"%OLD%\" \"{target_exe}\"\r\n\
-if exist \"%TARGET%\" start \"\" \"%TARGET%\"\r\n\
-powershell -NoProfile -ExecutionPolicy Bypass -Command \"Add-Type -AssemblyName PresentationFramework; [System.Windows.MessageBox]::Show(\\\"{fail}\\\",\\\"OpenXLauncher\\\")\"\r\n\
+if exist \"%FAIL_TPL%\" copy /y \"%FAIL_TPL%\" \"%FAIL_FLAG%\" >nul\r\n\
+if exist \"%TARGET%\" start \"\" \"%TARGET%\" --openx-update-fail=\"%FAIL_FLAG%\"\r\n\
 del /f /q \"%~f0\" 2>nul\r\n\
 exit /b 1\r\n",
         install = install,
@@ -166,13 +170,10 @@ exit /b 1\r\n",
         old_exe = OLD_EXE_NAME,
         new_src = new_src,
         ack = ack,
-        fail = fail,
+        fail_tpl = fail_tpl,
+        fail_flag = fail_flag,
         ack_timeout = ACK_TIMEOUT_SECONDS,
     )
-}
-
-fn escape_for_batch_msg(s: &str) -> String {
-    s.replace('\'', "''")
 }
 
 pub fn launch_windows_replace(download_path: &Path) -> Result<(), String> {
@@ -189,17 +190,24 @@ pub fn launch_windows_replace(download_path: &Path) -> Result<(), String> {
         .as_secs();
 
     let ack_path = update_temp_root().join(format!("update_ack_{}.flag", timestamp));
+    let fail_notice_path = update_temp_root().join(format!("update_fail_template_{}.txt", timestamp));
+    let fail_notice_flag = update_temp_root().join(format!("update_fail_notice_{}.flag", timestamp));
     let script_path = update_temp_root().join(format!("replace_{}.bat", timestamp));
     fs::create_dir_all(update_temp_root()).map_err(|e| format!("创建临时目录失败: {}", e))?;
 
-    let language = read_ui_language();
-    let msg_fail = if language.eq_ignore_ascii_case("en-US") {
-        "Update failed. The previous version has been restored."
-    } else {
-        "更新失败，已恢复旧版本。"
-    };
+    let fail_message = super::config::read_ui_language()
+        .eq_ignore_ascii_case("en-US")
+        .then_some("Update failed. The previous version has been restored.")
+        .unwrap_or("更新失败，已恢复旧版本。");
+    fs::write(&fail_notice_path, fail_message).map_err(|e| format!("写入更新失败说明失败: {}", e))?;
 
-    let script = build_replace_batch_script(install_dir, &new_exe, &ack_path, msg_fail);
+    let script = build_replace_batch_script(
+        install_dir,
+        &new_exe,
+        &ack_path,
+        &fail_notice_path,
+        &fail_notice_flag,
+    );
     fs::write(&script_path, script).map_err(|e| format!("写入替换脚本失败: {}", e))?;
     let _ = crate::handler::runtime_log::append_runtime_log(
         "info",
@@ -217,7 +225,7 @@ pub fn launch_windows_replace(download_path: &Path) -> Result<(), String> {
         use std::os::windows::process::CommandExt;
         use winapi::um::winbase::CREATE_NO_WINDOW;
         std::process::Command::new("cmd")
-            .args(["/C", "start", "", "/min", script_path.to_string_lossy().as_ref()])
+            .args(["/C", script_path.to_string_lossy().as_ref()])
             .creation_flags(CREATE_NO_WINDOW)
             .spawn()
             .map_err(|e| format!("启动替换脚本失败: {}", e))?;
@@ -241,10 +249,13 @@ mod tests {
             Path::new(r"C:\Games\OpenX"),
             Path::new(r"C:\Temp\OpenXLauncher\updates\new.exe"),
             Path::new(r"C:\Temp\OpenXLauncher\ack.flag"),
-            "fail",
+            Path::new(r"C:\Temp\OpenXLauncher\fail.txt"),
+            Path::new(r"C:\Temp\OpenXLauncher\fail.flag"),
         );
         assert!(script.contains("OpenXLauncher_old.exe"));
         assert!(script.contains("--openx-update-ack="));
+        assert!(script.contains("--openx-update-fail="));
         assert!(script.contains(":rollback"));
+        assert!(!script.contains("MessageBox"));
     }
 }

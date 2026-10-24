@@ -1,10 +1,13 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Mutex;
 
 const ACK_ARG_PREFIX: &str = "--openx-update-ack=";
+const FAIL_ARG_PREFIX: &str = "--openx-update-fail=";
 
 static POST_UPDATE_SUCCESS_PENDING: AtomicBool = AtomicBool::new(false);
+static POST_UPDATE_FAILURE_MESSAGE: Mutex<Option<String>> = Mutex::new(None);
 
 fn normalize_ack_path_str(raw: &str) -> &str {
     raw.trim().trim_matches('"')
@@ -33,6 +36,51 @@ pub fn parse_update_ack_path_from_argv(args: &[String]) -> Option<PathBuf> {
 /// Frontend calls once per process to show the in-app update success dialog.
 pub fn take_post_update_success_pending() -> bool {
     POST_UPDATE_SUCCESS_PENDING.swap(false, Ordering::SeqCst)
+}
+
+pub fn take_post_update_failure_message() -> Option<String> {
+    POST_UPDATE_FAILURE_MESSAGE
+        .lock()
+        .ok()
+        .and_then(|mut guard| guard.take())
+}
+
+fn parse_fail_path_from_args() -> Option<PathBuf> {
+    std::env::args().find_map(|arg| {
+        arg.strip_prefix(FAIL_ARG_PREFIX)
+            .map(normalize_ack_path_str)
+            .filter(|s| !s.is_empty())
+            .map(PathBuf::from)
+    })
+}
+
+fn parse_fail_path_from_argv(args: &[String]) -> Option<PathBuf> {
+    args.iter().find_map(|arg| {
+        arg.strip_prefix(FAIL_ARG_PREFIX)
+            .map(normalize_ack_path_str)
+            .filter(|s| !s.is_empty())
+            .map(PathBuf::from)
+    })
+}
+
+fn load_failure_notice_from_path(path: &Path) {
+    if !is_allowed_ack_path(path) {
+        eprintln!(
+            "[更新器] 拒绝读取更新失败说明：路径不在系统临时目录内 ({})",
+            path.display()
+        );
+        return;
+    }
+    let message = fs::read_to_string(path)
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+    let _ = fs::remove_file(path);
+    if let Some(message) = message {
+        if let Ok(mut guard) = POST_UPDATE_FAILURE_MESSAGE.lock() {
+            *guard = Some(message);
+        }
+    }
 }
 
 /// Ack files must live under the system temp directory (fail closed).
@@ -84,18 +132,27 @@ fn write_ack_file(path: &Path) -> bool {
 
 /// Write ack as early as possible so the Windows replace script can finish (called from `lib.rs` setup).
 pub fn write_update_ack_if_requested() {
-    let Some(path) = parse_update_ack_path_from_args() else {
-        return;
-    };
-    write_ack_file(&path);
+    if let Some(path) = parse_update_ack_path_from_args() {
+        write_ack_file(&path);
+    }
+    load_post_update_failure_if_requested();
 }
 
 /// When a second instance forwards update ack args to the running process.
 pub fn write_update_ack_from_argv(args: &[String]) {
-    let Some(path) = parse_update_ack_path_from_argv(args) else {
+    if let Some(path) = parse_update_ack_path_from_argv(args) {
+        write_ack_file(&path);
+    }
+    if let Some(path) = parse_fail_path_from_argv(args) {
+        load_failure_notice_from_path(&path);
+    }
+}
+
+pub fn load_post_update_failure_if_requested() {
+    let Some(path) = parse_fail_path_from_args() else {
         return;
     };
-    write_ack_file(&path);
+    load_failure_notice_from_path(&path);
 }
 
 #[cfg(test)]

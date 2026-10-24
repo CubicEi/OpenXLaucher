@@ -3,6 +3,7 @@
     "add": "添加",
     "back": "返回",
     "cancel": "取消",
+    "confirm": "确定",
     "clear": "清空",
     "delete": "删除",
     "loading": "加载中...",
@@ -692,7 +693,8 @@
     "checkUpdateButton": "检查更新",
     "willRestartShortly": "安装完成后会自动关闭启动器并重启应用，请稍候...",
     "updateSuccessTitle": "更新成功",
-    "updateSuccessMessage": "启动器已更新至 v{version}，可以正常使用。"
+    "updateSuccessMessage": "启动器已更新至 v{version}，可以正常使用。",
+    "updateFailedTitle": "更新失败"
   },
   "download": {
     "title": "下载中心",

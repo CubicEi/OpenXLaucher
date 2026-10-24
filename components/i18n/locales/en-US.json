@@ -3,6 +3,7 @@
     "add": "Add",
     "back": "Back",
     "cancel": "Cancel",
+    "confirm": "OK",
     "clear": "Clear",
     "delete": "Delete",
     "loading": "Loading...",
@@ -692,7 +693,8 @@
     "checkUpdateButton": "Check Updates",
     "willRestartShortly": "Once installed, the launcher will automatically close and restart. Please wait...",
     "updateSuccessTitle": "Update successful",
-    "updateSuccessMessage": "OpenXLauncher has been updated to v{version}. You're good to go."
+    "updateSuccessMessage": "OpenXLauncher has been updated to v{version}. You're good to go.",
+    "updateFailedTitle": "Update failed"
   },
   "download": {
     "title": "Download Center",
