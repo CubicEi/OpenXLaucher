@@ -303,6 +303,7 @@ pub fn run() {
             install_update,
             cancel_update,
             can_check_update,
+            updater::handler::take_post_update_success,
             theme_list,
             theme_install_archive,
             theme_register_dev_directory,
@@ -335,6 +336,8 @@ pub fn run() {
                 default_panic_hook(info);
             }));
 
+            updater::update_ack::write_update_ack_if_requested();
+
             system_proxy::apply_system_proxy_env();
             app_paths::ensure_portable_dirs();
             if let Err(error) = updater::identity::ensure_portable_self_hash() {
@@ -346,7 +349,8 @@ pub fn run() {
             );
             #[cfg(not(target_os = "macos"))]
             app.handle().plugin(tauri_plugin_single_instance::init(
-                |app: &tauri::AppHandle, _args, _cwd| {
+                |app: &tauri::AppHandle, args, _cwd| {
+                    updater::update_ack::write_update_ack_from_argv(&args);
                     if let Some(window) = app.get_webview_window("main") {
                         let _ = window.show();
                         let _ = window.unminimize();
@@ -431,7 +435,6 @@ pub fn run() {
             let _ = &window;
 
             let _ = window.show();
-            updater::update_ack::write_update_ack_if_requested();
 
             #[cfg(target_os = "macos")]
             unsafe {

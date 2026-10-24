@@ -71,6 +71,7 @@ export function makeStartDownloadFn(
             return [{
               ...localTask,
               taskId: returnedTaskId,
+              label: localTask.label,
               status: eventTask?.status ?? localTask.status,
               progress: eventTask?.progress ?? localTask.progress,
               detail: eventTask?.detail ?? localTask.detail,

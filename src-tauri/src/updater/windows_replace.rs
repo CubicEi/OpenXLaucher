@@ -100,13 +100,11 @@ pub fn build_replace_batch_script(
     install_dir: &Path,
     new_exe_source: &Path,
     ack_path: &Path,
-    msg_success: &str,
     msg_fail: &str,
 ) -> String {
     let install = install_dir.to_string_lossy().replace('%', "%%");
     let new_src = new_exe_source.to_string_lossy().replace('%', "%%");
     let ack = ack_path.to_string_lossy().replace('%', "%%");
-    let ok = escape_for_batch_msg(msg_success);
     let fail = escape_for_batch_msg(msg_fail);
 
     format!(
@@ -152,7 +150,6 @@ goto wait_ack\r\n\
 \r\n\
 :success\r\n\
 if exist \"%OLD%\" del /f /q \"%OLD%\"\r\n\
-powershell -NoProfile -ExecutionPolicy Bypass -Command \"Add-Type -AssemblyName PresentationFramework; [System.Windows.MessageBox]::Show(\\\"{ok}\\\",\\\"OpenXLauncher\\\")\"\r\n\
 del /f /q \"%~f0\" 2>nul\r\n\
 exit /b 0\r\n\
 \r\n\
@@ -169,7 +166,6 @@ exit /b 1\r\n",
         old_exe = OLD_EXE_NAME,
         new_src = new_src,
         ack = ack,
-        ok = ok,
         fail = fail,
         ack_timeout = ACK_TIMEOUT_SECONDS,
     )
@@ -197,22 +193,13 @@ pub fn launch_windows_replace(download_path: &Path) -> Result<(), String> {
     fs::create_dir_all(update_temp_root()).map_err(|e| format!("创建临时目录失败: {}", e))?;
 
     let language = read_ui_language();
-    let (msg_success, msg_fail) = if language.eq_ignore_ascii_case("en-US") {
-        (
-            "Update completed successfully.",
-            "Update failed. The previous version has been restored.",
-        )
+    let msg_fail = if language.eq_ignore_ascii_case("en-US") {
+        "Update failed. The previous version has been restored."
     } else {
-        ("更新完成。", "更新失败，已恢复旧版本。")
+        "更新失败，已恢复旧版本。"
     };
 
-    let script = build_replace_batch_script(
-        install_dir,
-        &new_exe,
-        &ack_path,
-        msg_success,
-        msg_fail,
-    );
+    let script = build_replace_batch_script(install_dir, &new_exe, &ack_path, msg_fail);
     fs::write(&script_path, script).map_err(|e| format!("写入替换脚本失败: {}", e))?;
     let _ = crate::handler::runtime_log::append_runtime_log(
         "info",
@@ -254,7 +241,6 @@ mod tests {
             Path::new(r"C:\Games\OpenX"),
             Path::new(r"C:\Temp\OpenXLauncher\updates\new.exe"),
             Path::new(r"C:\Temp\OpenXLauncher\ack.flag"),
-            "ok",
             "fail",
         );
         assert!(script.contains("OpenXLauncher_old.exe"));

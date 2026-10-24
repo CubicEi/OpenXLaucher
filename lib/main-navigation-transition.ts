@@ -21,6 +21,8 @@ const FIRST_MUTATION_SETTLE_MS = 80;
 const TIMEOUT_MS = 1200;
 /** Static export + WebView: client `router.push` can stall; hard-assign if URL unchanged. */
 const APP_ROUTE_PUSH_FALLBACK_MS = 200;
+/** Same-layout tab switches (game-settings): avoid full reload; allow slower client routing. */
+const LIGHTWEIGHT_ROUTE_PUSH_FALLBACK_MS = 1500;
 
 let activeNavigation: ActiveMainNavigation | null = null;
 
@@ -90,25 +92,49 @@ export function shouldUseLightweightAppNavigation(current: string, target: strin
   );
 }
 
-/** Client navigation with trailing-slash href; falls back to `location.assign` when push stalls. */
+/** Client navigation with trailing-slash href; falls back when push stalls. */
 export function pushAppRoute(router: AppRouterInstance, href: string) {
   const pushHref = toAppHref(href);
   const targetPathname = normalizeAppPathname(href);
+  const currentPathname =
+    typeof window !== "undefined" ? normalizeAppPathname(window.location.pathname) : "";
+  const lightweight =
+    typeof window !== "undefined" &&
+    shouldUseLightweightAppNavigation(currentPathname, targetPathname);
+
   router.push(pushHref);
 
   if (typeof window === "undefined") return;
+
+  const fallbackMs = lightweight ? LIGHTWEIGHT_ROUTE_PUSH_FALLBACK_MS : APP_ROUTE_PUSH_FALLBACK_MS;
 
   window.setTimeout(() => {
     if (pathnameMatchesNavigationTarget(window.location.pathname, targetPathname)) {
       return;
     }
+
+    if (lightweight) {
+      router.replace(pushHref);
+      window.setTimeout(() => {
+        if (pathnameMatchesNavigationTarget(window.location.pathname, targetPathname)) {
+          return;
+        }
+        appLog.warn("nav", "pushAppRoute lightweight navigation pending", {
+          pushHref,
+          pathname: window.location.pathname,
+          targetPathname,
+        });
+      }, LIGHTWEIGHT_ROUTE_PUSH_FALLBACK_MS);
+      return;
+    }
+
     appLog.warn("nav", "pushAppRoute assign fallback", {
       pushHref,
       pathname: window.location.pathname,
       targetPathname,
     });
     window.location.assign(pushHref);
-  }, APP_ROUTE_PUSH_FALLBACK_MS);
+  }, fallbackMs);
 }
 
 export function isDescendantAppPath(ancestor: string, descendant: string) {

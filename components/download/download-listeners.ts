@@ -49,7 +49,7 @@ function defaultLabelForEvent(eventName: string): string {
       return "Quilt";
     case "mod-download-progress":
     case "mod-download-finished":
-      return "Mod";
+      return "资源下载";
     case "combined-download-progress":
     case "combined-download-finished":
       return "组合安装";
@@ -59,6 +59,35 @@ function defaultLabelForEvent(eventName: string): string {
     default:
       return "下载任务";
   }
+}
+
+/** Backend mod-download events may arrive before invoke returns; adopt the pending client task. */
+function adoptPendingModClientTask(
+  prev: DownloadTask[],
+  backendTaskId: number,
+  percent: number,
+  payloadLabel?: string,
+  isCompleted?: boolean
+): DownloadTask[] | null {
+  if (prev.some((t) => t.taskId === backendTaskId)) return null;
+  const pending = prev.find(
+    (t) =>
+      t.clientId.startsWith("client-") &&
+      t.taskId >= 1_000_000 &&
+      (t.status === "downloading" || t.status === "queued")
+  );
+  if (!pending) return null;
+  return prev.map((t) =>
+    t === pending
+      ? {
+          ...t,
+          taskId: backendTaskId,
+          progress: isCompleted ? 100 : percent,
+          status: (isCompleted ? "success" : "downloading") as DownloadTaskStatus,
+          ...(payloadLabel ? { label: payloadLabel } : {}),
+        }
+      : t
+  );
 }
 
 function makeProgressHandler(
@@ -88,6 +117,16 @@ function makeProgressHandler(
             ...(payloadLabel ? { label: payloadLabel } : {}),
           };
         });
+      }
+      if (eventName.startsWith("mod-download-")) {
+        const adopted = adoptPendingModClientTask(
+          prev,
+          task_id,
+          percent,
+          payloadLabel,
+          isCompleted
+        );
+        if (adopted) return adopted;
       }
       // Do not invent a Java runtime task for unrelated/combined/vanilla progress.
       const newTask: DownloadTask = {

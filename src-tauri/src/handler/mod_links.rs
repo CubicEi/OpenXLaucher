@@ -1050,12 +1050,16 @@ async fn get_mod_files(mod_id: &str) -> Result<HashMap<String, Vec<(Vec<String>,
 struct ModDownloadProgressPayload {
     task_id: u64,
     percent: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    label: Option<String>,
 }
 #[derive(Debug, Serialize, Clone)]
 struct ModDownloadFinishedPayload {
     task_id: u64,
     success: bool,
     error: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    label: Option<String>,
 }
 static MOD_TASK_COUNTER: AtomicU64 = AtomicU64::new(1000);
 struct ModActiveTaskInfo {
@@ -1295,10 +1299,12 @@ pub async fn download_resource_file(
     };
     let app_clone = app.clone();
     let task_id_clone = task_id;
+    let progress_label = Some(format!("{} ({})", resourceName, mcVersion));
     let (progress_tx, mut progress_rx) = tokio::sync::mpsc::channel::<(u64, u64)>(32);
     tokio::spawn(async move {
         let app2 = app_clone.clone();
         let tid = task_id_clone;
+        let label_for_events = progress_label.clone();
         let progress_forward = tokio::spawn(async move {
             while let Some((downloaded, total)) = progress_rx.recv().await {
                 let percent = if total > 0 {
@@ -1312,6 +1318,7 @@ pub async fn download_resource_file(
                     ModDownloadProgressPayload {
                         task_id: tid,
                         percent,
+                        label: label_for_events.clone(),
                     },
                 );
             }
@@ -1362,6 +1369,7 @@ pub async fn download_resource_file(
                         task_id: task_id_clone,
                         success: true,
                         error: None,
+                        label: progress_label.clone(),
                     },
                 );
                 let _ = size;
@@ -1374,6 +1382,7 @@ pub async fn download_resource_file(
                         task_id: task_id_clone,
                         success: false,
                         error: Some(error),
+                        label: progress_label.clone(),
                     },
                 );
             }

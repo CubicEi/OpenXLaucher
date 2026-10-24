@@ -690,7 +690,9 @@
     "installingUpdate": "Installing update. The app will restart...",
     "lastCheckTime": "Last check time",
     "checkUpdateButton": "Check Updates",
-    "willRestartShortly": "Once installed, the launcher will automatically close and restart. Please wait..."
+    "willRestartShortly": "Once installed, the launcher will automatically close and restart. Please wait...",
+    "updateSuccessTitle": "Update successful",
+    "updateSuccessMessage": "OpenXLauncher has been updated to v{version}. You're good to go."
   },
   "download": {
     "title": "Download Center",

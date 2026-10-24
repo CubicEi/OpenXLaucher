@@ -716,6 +716,8 @@ async fn perform_single_update(
 struct UpdateProgressPayload {
     task_id: u64,
     percent: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    label: Option<String>,
 }
 
 #[derive(Clone, Serialize)]
@@ -723,6 +725,37 @@ struct UpdateFinishedPayload {
     task_id: u64,
     success: bool,
     error: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    label: Option<String>,
+}
+
+fn emit_update_progress(app: &AppHandle, task_id: u64, percent: f64, label: &Option<String>) {
+    let _ = app.emit(
+        "mod-download-progress",
+        UpdateProgressPayload {
+            task_id,
+            percent,
+            label: label.clone(),
+        },
+    );
+}
+
+fn emit_update_finished(
+    app: &AppHandle,
+    task_id: u64,
+    success: bool,
+    error: Option<String>,
+    label: &Option<String>,
+) {
+    let _ = app.emit(
+        "mod-download-finished",
+        UpdateFinishedPayload {
+            task_id,
+            success,
+            error,
+            label: label.clone(),
+        },
+    );
 }
 
 async fn run_update_task(
@@ -733,30 +766,12 @@ async fn run_update_task(
     loader: &str,
     kind: CacheResourceKind,
     update: &ModUpdateInfo,
+    display_label: &Option<String>,
 ) -> Result<(), String> {
-    let _ = app.emit(
-        "mod-download-progress",
-        UpdateProgressPayload {
-            task_id,
-            percent: 5.0,
-        },
-    );
+    emit_update_progress(app, task_id, 5.0, display_label);
     perform_single_update(instance_dir, mc_version, loader, kind, update).await?;
-    let _ = app.emit(
-        "mod-download-progress",
-        UpdateProgressPayload {
-            task_id,
-            percent: 100.0,
-        },
-    );
-    let _ = app.emit(
-        "mod-download-finished",
-        UpdateFinishedPayload {
-            task_id,
-            success: true,
-            error: None,
-        },
-    );
+    emit_update_progress(app, task_id, 100.0, display_label);
+    emit_update_finished(app, task_id, true, None, display_label);
     Ok(())
 }
 
@@ -768,6 +783,7 @@ pub async fn update_resource(
     loader: String,
     resource_kind: String,
     update: ModUpdateInfo,
+    display_label: Option<String>,
 ) -> Result<u64, String> {
     let kind = parse_update_resource_kind(&resource_kind)?;
     let mc_version = mc_version.trim();
@@ -782,20 +798,14 @@ pub async fn update_resource(
         &loader,
         kind,
         &update,
+        &display_label,
     )
     .await;
 
     match result {
         Ok(()) => Ok(task_id),
         Err(e) => {
-            let _ = app.emit(
-                "mod-download-finished",
-                UpdateFinishedPayload {
-                    task_id,
-                    success: false,
-                    error: Some(e.clone()),
-                },
-            );
+            emit_update_finished(&app, task_id, false, Some(e.clone()), &display_label);
             Err(e)
         }
     }
@@ -808,8 +818,18 @@ pub async fn update_mod(
     mc_version: String,
     loader: String,
     update: ModUpdateInfo,
+    display_label: Option<String>,
 ) -> Result<u64, String> {
-    update_resource(app, instance_dir, mc_version, loader, "mod".to_string(), update).await
+    update_resource(
+        app,
+        instance_dir,
+        mc_version,
+        loader,
+        "mod".to_string(),
+        update,
+        display_label,
+    )
+    .await
 }
 
 #[tauri::command]
@@ -820,6 +840,7 @@ pub async fn update_resources(
     loader: String,
     resource_kind: String,
     updates: Vec<ModUpdateInfo>,
+    display_label: Option<String>,
 ) -> Result<u64, String> {
     let kind = parse_update_resource_kind(&resource_kind)?;
     let mc_version = mc_version.trim();
@@ -831,10 +852,7 @@ pub async fn update_resources(
 
     for (idx, update) in updates.into_iter().enumerate() {
         let percent = ((idx as f64) / total) * 100.0;
-        let _ = app.emit(
-            "mod-download-progress",
-            UpdateProgressPayload { task_id, percent },
-        );
+        emit_update_progress(&app, task_id, percent, &display_label);
         if let Err(e) = perform_single_update(
             instance_path,
             mc_version,
@@ -856,22 +874,9 @@ pub async fn update_resources(
 
     let success = first_error.is_none();
     if success {
-        let _ = app.emit(
-            "mod-download-progress",
-            UpdateProgressPayload {
-                task_id,
-                percent: 100.0,
-            },
-        );
+        emit_update_progress(&app, task_id, 100.0, &display_label);
     }
-    let _ = app.emit(
-        "mod-download-finished",
-        UpdateFinishedPayload {
-            task_id,
-            success,
-            error: first_error.clone(),
-        },
-    );
+    emit_update_finished(&app, task_id, success, first_error.clone(), &display_label);
     if let Some(e) = first_error {
         Err(e)
     } else {
@@ -886,8 +891,18 @@ pub async fn update_mods(
     mc_version: String,
     loader: String,
     updates: Vec<ModUpdateInfo>,
+    display_label: Option<String>,
 ) -> Result<u64, String> {
-    update_resources(app, instance_dir, mc_version, loader, "mod".to_string(), updates).await
+    update_resources(
+        app,
+        instance_dir,
+        mc_version,
+        loader,
+        "mod".to_string(),
+        updates,
+        display_label,
+    )
+    .await
 }
 
 #[cfg(test)]

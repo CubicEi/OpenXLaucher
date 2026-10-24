@@ -80,6 +80,11 @@ pub fn can_check_update() -> bool {
     should_check_update()
 }
 
+#[tauri::command]
+pub fn take_post_update_success() -> bool {
+    super::update_ack::take_post_update_success_pending()
+}
+
 pub fn create_updater_state() -> UpdaterState {
     UpdaterState {
         fetcher: Arc::new(Mutex::new(UpdateFetcher::new())),

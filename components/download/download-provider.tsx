@@ -511,6 +511,20 @@ export function DownloadProvider({ children }: { children: React.ReactNode }) {
     [startModLoaderDownload]
   );
 
+  const updateKindLabel = (resourceKind: string) => {
+    switch (resourceKind) {
+      case "resourcepack":
+        return "资源包";
+      case "shaderpack":
+        return "光影包";
+      case "datapack":
+        return "数据包";
+      case "mod":
+      default:
+        return "模组";
+    }
+  };
+
   /** 单个模组更新 */
   const startModUpdate = useCallback(
     async (
@@ -520,7 +534,8 @@ export function DownloadProvider({ children }: { children: React.ReactNode }) {
       update: ModUpdatePayload,
       resourceKind: string = "mod"
     ) => {
-      const label = `更新 ${update.modName} (${update.currentVersion} → ${update.newVersion})`;
+      const kind = updateKindLabel(resourceKind);
+      const label = `更新${kind} ${update.modName} (${update.currentVersion} → ${update.newVersion})`;
       const command = resourceKind === "mod" ? "update_mod" : "update_resource";
       return startModLoaderDownload({
         label,
@@ -531,6 +546,7 @@ export function DownloadProvider({ children }: { children: React.ReactNode }) {
           mcVersion,
           loader,
           update,
+          displayLabel: label,
           ...(resourceKind !== "mod" ? { resourceKind } : {}),
         },
       });
@@ -547,7 +563,8 @@ export function DownloadProvider({ children }: { children: React.ReactNode }) {
       updates: ModUpdatePayload[],
       resourceKind: string = "mod"
     ) => {
-      const label = `更新 ×${updates.length}`;
+      const kind = updateKindLabel(resourceKind);
+      const label = `更新${kind} ×${updates.length}`;
       const command = resourceKind === "mod" ? "update_mods" : "update_resources";
       return startModLoaderDownload({
         label,
@@ -558,6 +575,7 @@ export function DownloadProvider({ children }: { children: React.ReactNode }) {
           mcVersion,
           loader,
           updates,
+          displayLabel: label,
           ...(resourceKind !== "mod" ? { resourceKind } : {}),
         },
       });

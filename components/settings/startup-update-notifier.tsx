@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { getVersion } from "@tauri-apps/api/app";
 import { invoke } from "@tauri-apps/api/core";
 import { useRouter } from "next/navigation";
 import { Check, Download, Sparkles } from "lucide-react";
@@ -9,9 +10,11 @@ import { useI18n } from "@/components/i18n/use-i18n";
 import { setAppUpdateState } from "@/components/settings/app-updater";
 import {
   markStartupUpdateCheckCompleted,
+  markStartupUpdatePromptDismissed,
   markUpToDateAndSuppressAutoCheck,
   markUpdateCheckTimeout,
   shouldRunStartupUpdateCheck,
+  shouldShowStartupUpdatePrompt,
 } from "@/lib/launcher-update-session";
 import { isUpdateCheckTimeoutError } from "@/lib/update-check";
 import { Button } from "@/components/ui/button";
@@ -42,6 +45,30 @@ export function StartupUpdateNotifier({ delayMs = 1500 }: { delayMs?: number }) 
   const [availableUpdate, setAvailableUpdate] = useState<AvailableUpdate | null>(null);
   const [updateOpen, setUpdateOpen] = useState(false);
   const [upToDateOpen, setUpToDateOpen] = useState(false);
+  const [updateSuccessOpen, setUpdateSuccessOpen] = useState(false);
+  const [installedVersion, setInstalledVersion] = useState<string>("");
+
+  useEffect(() => {
+    let active = true;
+    const showPostUpdateSuccess = async () => {
+      try {
+        const pending = await invoke<boolean>("take_post_update_success");
+        if (!active || !pending) return;
+        const version = await getVersion();
+        if (!active) return;
+        markUpToDateAndSuppressAutoCheck();
+        setAppUpdateState({ kind: "up-to-date" });
+        setInstalledVersion(version);
+        setUpdateSuccessOpen(true);
+      } catch {
+        // 非 Tauri 环境或命令不可用时忽略
+      }
+    };
+    void showPostUpdateSuccess();
+    return () => {
+      active = false;
+    };
+  }, []);
 
   useEffect(() => {
     if (!shouldRunStartupUpdateCheck()) return;
@@ -49,6 +76,7 @@ export function StartupUpdateNotifier({ delayMs = 1500 }: { delayMs?: number }) 
     let active = true;
     const timer = window.setTimeout(() => {
       const checkAtStartup = async () => {
+        if (!shouldRunStartupUpdateCheck()) return;
         setAppUpdateState({ kind: "checking" });
         try {
           const result = await invoke<UpdateCheckResult>("check_for_updates", { force: true });
@@ -63,7 +91,9 @@ export function StartupUpdateNotifier({ delayMs = 1500 }: { delayMs?: number }) 
               prepared: true,
             });
             setAvailableUpdate({ version: result.target_version, changelog });
-            setUpdateOpen(true);
+            if (shouldShowStartupUpdatePrompt(result.target_version)) {
+              setUpdateOpen(true);
+            }
             return;
           }
 
@@ -96,6 +126,11 @@ export function StartupUpdateNotifier({ delayMs = 1500 }: { delayMs?: number }) 
     };
   }, [delayMs]);
 
+  const dismissUpdatePrompt = () => {
+    markStartupUpdatePromptDismissed(availableUpdate?.version);
+    setUpdateOpen(false);
+  };
+
   const startUpdate = () => {
     setUpdateOpen(false);
     if (!availableUpdate) return;
@@ -104,9 +139,16 @@ export function StartupUpdateNotifier({ delayMs = 1500 }: { delayMs?: number }) 
     );
   };
 
+  const handleUpdateOpenChange = (open: boolean) => {
+    if (!open) {
+      markStartupUpdatePromptDismissed(availableUpdate?.version);
+    }
+    setUpdateOpen(open);
+  };
+
   return (
     <>
-      <Dialog open={updateOpen} onOpenChange={setUpdateOpen}>
+      <Dialog open={updateOpen} onOpenChange={handleUpdateOpenChange}>
         <DialogContent className="sm:max-w-lg">
           <DialogHeader>
             <DialogTitle>
@@ -130,13 +172,30 @@ export function StartupUpdateNotifier({ delayMs = 1500 }: { delayMs?: number }) 
           </div>
 
           <div className="flex items-center justify-end gap-2 border-t border-border px-5 py-3">
-            <Button variant="outline" onClick={() => setUpdateOpen(false)}>
+            <Button variant="outline" onClick={dismissUpdatePrompt}>
               {t("settings.appUpdater.later")}
             </Button>
             <Button onClick={startUpdate}>
               <Download className="size-4" />
               {t("settings.appUpdater.updateNow")}
             </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={updateSuccessOpen} onOpenChange={setUpdateSuccessOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Check className="size-5 text-emerald-500" />
+              {t("checkUpdate.updateSuccessTitle")}
+            </DialogTitle>
+          </DialogHeader>
+          <p className="px-5 pb-4 text-sm text-muted-foreground">
+            {t("checkUpdate.updateSuccessMessage", { version: installedVersion })}
+          </p>
+          <div className="flex justify-end border-t border-border px-5 py-3">
+            <Button onClick={() => setUpdateSuccessOpen(false)}>{t("settings.appUpdater.dismiss")}</Button>
           </div>
         </DialogContent>
       </Dialog>
