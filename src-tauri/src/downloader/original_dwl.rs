@@ -2,13 +2,14 @@ use super::decompression::extract_library_paths;
 use crate::http_client::shared_client;
 use futures::stream::{self, StreamExt};
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use sha1::{Digest, Sha1};
 use std::collections::HashMap;
 use std::env;
 use std::error::Error;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::fs::File;
@@ -26,14 +27,17 @@ pub struct ProgressUpdate {
     pub percent: f64,
     pub stage: Option<String>,
     pub message: Option<String>,
+    /// Cumulative downloaded bytes when known (for UI speed).
+    pub downloaded: Option<u64>,
+    /// Instantaneous bytes/sec when known.
+    pub speed: Option<f64>,
 }
 
 impl ProgressUpdate {
     pub fn percent(percent: f64) -> Self {
         Self {
             percent,
-            stage: None,
-            message: None,
+            ..Default::default()
         }
     }
 
@@ -41,7 +45,7 @@ impl ProgressUpdate {
         Self {
             percent,
             stage: Some(stage.into()),
-            message: None,
+            ..Default::default()
         }
     }
 
@@ -54,6 +58,7 @@ impl ProgressUpdate {
             percent,
             stage: Some(stage.into()),
             message: Some(message.into()),
+            ..Default::default()
         }
     }
 
@@ -62,6 +67,9 @@ impl ProgressUpdate {
             percent: base + self.percent * scale,
             stage: self.stage.clone(),
             message: self.message.clone(),
+            // Absolute transfer metrics — do not scale with percent remap.
+            downloaded: self.downloaded,
+            speed: self.speed,
         }
     }
 }
@@ -74,13 +82,53 @@ struct DownloadTask {
     size: u64,
 }
 struct DownloadProgress {
-    done: Arc<AtomicUsize>, 
+    done: Arc<AtomicUsize>,
+    /// Bytes actually transferred over the network (drives speed).
+    bytes_network: Arc<AtomicU64>,
+    /// Bytes credited from local cache / reuse (drives percent, NOT speed).
+    bytes_local: Arc<AtomicU64>,
 }
 impl DownloadProgress {
     fn new() -> Self {
         Self {
             done: Arc::new(AtomicUsize::new(0)),
+            bytes_network: Arc::new(AtomicU64::new(0)),
+            bytes_local: Arc::new(AtomicU64::new(0)),
         }
+    }
+
+    /// Count network bytes as they arrive (for live speed). Callers that use this
+    /// during transfer should pass `transferred: 0` to `mark_file_done` on completion
+    /// to avoid double-counting.
+    fn add_transferred(&self, n: u64) {
+        if n > 0 {
+            self.bytes_network.fetch_add(n, Ordering::SeqCst);
+        }
+    }
+
+    /// Count a finished file toward progress.
+    /// - Network completion: `transferred` already counted via `add_transferred` → pass 0.
+    /// - Legacy paths that only count at end: pass network byte count as `transferred`.
+    /// Prefer `mark_local_done` for cache hits.
+    fn mark_file_done(&self, transferred: u64) {
+        self.done.fetch_add(1, Ordering::SeqCst);
+        if transferred > 0 {
+            self.bytes_network.fetch_add(transferred, Ordering::SeqCst);
+        }
+    }
+
+    /// Cache hit / local reuse: advance percent without inflating speed.
+    fn mark_local_done(&self, credited: u64) {
+        self.done.fetch_add(1, Ordering::SeqCst);
+        if credited > 0 {
+            self.bytes_local.fetch_add(credited, Ordering::SeqCst);
+        }
+    }
+
+    fn total_credited(&self) -> u64 {
+        self.bytes_network
+            .load(Ordering::SeqCst)
+            .saturating_add(self.bytes_local.load(Ordering::SeqCst))
     }
 }
 #[derive(Debug, Deserialize, Serialize)]
@@ -115,6 +163,8 @@ struct AssetsJson {
 #[derive(Debug, Deserialize, Serialize)]
 struct AssetObject {
     hash: String,
+    #[serde(default)]
+    size: u64,
 }
 #[derive(Debug, Deserialize, Serialize)]
 struct Downloads {
@@ -178,7 +228,7 @@ async fn download_task(
     let _permit = semaphore.acquire().await?;
     if cancel.load(Ordering::SeqCst) {
         if let Some(p) = &progress {
-            p.done.fetch_add(1, Ordering::SeqCst);
+            p.mark_file_done(0);
         }
         return Err("已取消".into());
     }
@@ -188,8 +238,10 @@ async fn download_task(
     if let Ok(mut file) = File::open(&task.target_path).await {
         match check_sha1(&mut file, &task.sha1).await {
             Ok(true) => {
+                // Cache hit — credit local bytes for percent; do NOT count as network speed.
                 if let Some(p) = &progress {
-                    p.done.fetch_add(1, Ordering::SeqCst);
+                    let credited = if task.size > 0 { task.size } else { 64 * 1024 };
+                    p.mark_local_done(credited);
                 }
                 return Ok(());
             }
@@ -203,17 +255,21 @@ async fn download_task(
     }
     for url in &task.urls {
         if cancel.load(Ordering::SeqCst) {
-            break;
+            if let Some(p) = &progress {
+                p.mark_file_done(0);
+            }
+            return Err("已取消".into());
         }
         if used_urls.contains(url) {
             continue;
         }
-        let result = download_with_url(url, &task, &client).await;
+        let result = download_with_url(url, &task, &client, &cancel, progress.as_ref()).await;
         used_urls.push(url.clone());
         match result {
             Ok(true) => {
+                // Bytes already counted mid-transfer via add_transferred.
                 if let Some(p) = &progress {
-                    p.done.fetch_add(1, Ordering::SeqCst);
+                    p.mark_file_done(0);
                 }
                 return Ok(());
             }
@@ -221,6 +277,12 @@ async fn download_task(
                 let _ = fs::remove_file(&task.target_path);
             }
             Err(e) => {
+                if e.to_string().contains("已取消") || cancel.load(Ordering::SeqCst) {
+                    if let Some(p) = &progress {
+                        p.mark_file_done(0);
+                    }
+                    return Err("已取消".into());
+                }
                 eprintln!("下载失败 [{}]: {}", url, e);
             }
         }
@@ -230,8 +292,14 @@ async fn download_task(
         }
         tokio::time::sleep(Duration::from_secs(1)).await;
     }
+    if cancel.load(Ordering::SeqCst) {
+        if let Some(p) = &progress {
+            p.mark_file_done(0);
+        }
+        return Err("已取消".into());
+    }
     if let Some(p) = &progress {
-        p.done.fetch_add(1, Ordering::SeqCst);
+        p.mark_file_done(0);
     }
     Err(format!("文件 {} 下载失败，已尝试所有源", task.target_path.display()).into())
 }
@@ -239,6 +307,8 @@ async fn download_with_url(
     url: &str,
     task: &DownloadTask,
     client: &reqwest::Client,
+    cancel: &Arc<AtomicBool>,
+    progress: Option<&Arc<DownloadProgress>>,
 ) -> Result<bool, Box<dyn Error + Send + Sync>> {
     let response = client.get(url).send().await?.error_for_status()?;
     let content_length = response.content_length().unwrap_or(0);
@@ -249,9 +319,17 @@ async fn download_with_url(
     let mut stream = response.bytes_stream();
     let mut hasher = Sha1::new();
     while let Some(chunk) = stream.next().await {
+        if cancel.load(Ordering::SeqCst) {
+            let _ = fs::remove_file(&task.target_path);
+            return Err("已取消".into());
+        }
         let chunk = chunk?;
+        let n = chunk.len() as u64;
         hasher.update(&chunk);
         file.write_all(&chunk).await?;
+        if let Some(p) = progress {
+            p.add_transferred(n);
+        }
     }
     file.sync_all().await?;
     let computed = format!("{:x}", hasher.finalize());
@@ -276,6 +354,9 @@ pub async fn process_version(
     progress_tx: mpsc::Sender<ProgressUpdate>,
     cancel: Arc<AtomicBool>,
 ) -> Result<Vec<String>, Box<dyn Error + Send + Sync>> {
+    if cancel.load(Ordering::SeqCst) {
+        return Err("已取消".into());
+    }
     let version_dir = minecraft_path.join("versions").join(version);
     fs::create_dir_all(&version_dir)?;
     let natives_dir = &version_dir.join(format!("{}-natives", version));
@@ -288,12 +369,18 @@ pub async fn process_version(
         ))
         .await;
     let json_url = fetch_version_url(version).await?;
+    if cancel.load(Ordering::SeqCst) {
+        return Err("已取消".into());
+    }
     let json_content = reqwest::get(&json_url).await?.text().await?;
     fs::write(version_dir.join(format!("{}.json", version)), &json_content)?;
     let version_data: VersionJson = serde_json::from_str(&json_content)?;
     let _ = progress_tx
         .send(ProgressUpdate::with_stage(1.0, "下载原版文件"))
         .await;
+    if cancel.load(Ordering::SeqCst) {
+        return Err("已取消".into());
+    }
     let assets_content = reqwest::get(&version_data.asset_index.url)
         .await?
         .text()
@@ -379,30 +466,102 @@ pub async fn process_version(
                 .join(prefix)
                 .join(&obj.hash),
             sha1: obj.hash,
-            size: 0,
+            size: obj.size,
         });
     }
     let total = tasks.len();
+    let total_bytes: u64 = tasks
+        .iter()
+        .map(|t| if t.size > 0 { t.size } else { 64 * 1024 })
+        .sum();
     let progress = Arc::new(DownloadProgress::new());
     let semaphore = Arc::new(Semaphore::new(MAX_CONCURRENT_DOWNLOADS));
     let client = shared_client().await;
     let progress_reporter = {
         let done_counter = progress.done.clone();
+        let network_counter = progress.bytes_network.clone();
+        let local_counter = progress.bytes_local.clone();
         let tx = progress_tx.clone();
+        let total_bytes_for_reporter = total_bytes;
         tokio::spawn(async move {
+            let mut last_network = 0u64;
+            let mut last_at = std::time::Instant::now();
+            let mut primed = false;
+            let mut last_logged_percent = -1.0f64;
+            // Short window so UI gets ≥1 good interval quickly without near-zero-dt spikes.
+            const MIN_SPEED_WINDOW_SECS: f64 = 0.35;
+            const MAX_PLAUSIBLE_BPS: f64 = 500.0 * 1024.0 * 1024.0;
             loop {
                 let done = done_counter.load(Ordering::SeqCst);
-                let percent = if total > 0 {
+                let network = network_counter.load(Ordering::SeqCst);
+                let local = local_counter.load(Ordering::SeqCst);
+                let bytes = network.saturating_add(local);
+                let file_percent = if total > 0 {
                     (done as f64 / total as f64) * 100.0
                 } else {
                     100.0
                 };
+                let byte_percent = if total_bytes_for_reporter > 0 {
+                    (bytes as f64 / total_bytes_for_reporter as f64) * 100.0
+                } else {
+                    file_percent
+                };
+                let percent = if done >= total {
+                    100.0
+                } else if total_bytes_for_reporter > 0 {
+                    byte_percent.min(99.5)
+                } else {
+                    file_percent
+                };
+                // Speed from network bytes only — local cache reuse must not inflate B/s.
+                let elapsed = last_at.elapsed().as_secs_f64();
+                let speed = if primed && elapsed >= MIN_SPEED_WINDOW_SECS {
+                    let rate = (network.saturating_sub(last_network) as f64) / elapsed;
+                    if rate > 0.0 && rate <= MAX_PLAUSIBLE_BPS {
+                        Some(rate)
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
+                // Hold the sample window open until we have a usable interval.
+                if !primed || elapsed >= MIN_SPEED_WINDOW_SECS {
+                    last_network = network;
+                    last_at = std::time::Instant::now();
+                    primed = true;
+                }
+                // #region agent log
+                if (percent - last_logged_percent).abs() >= 2.0 || done == 0 || done >= total {
+                    crate::progress_trace_log::progress_trace(
+                        "A",
+                        "original_dwl.rs:progress_reporter",
+                        "vanilla_file_percent",
+                        json!({
+                            "percent_by_files": file_percent,
+                            "percent_by_bytes": byte_percent,
+                            "percent_reported": percent,
+                            "files_done": done,
+                            "files_total": total,
+                            "bytes_network": network,
+                            "bytes_local": local,
+                            "bytes_credited": bytes,
+                            "bytes_total": total_bytes_for_reporter,
+                            "speed_bps": speed,
+                        }),
+                    );
+                    last_logged_percent = percent;
+                }
+                // #endregion
                 if tx
-                    .send(ProgressUpdate::with_detail(
+                    .send(ProgressUpdate {
                         percent,
-                        "下载原版文件",
-                        format!("已下载 {}/{} 个文件", done, total),
-                    ))
+                        stage: Some("下载原版文件".to_string()),
+                        message: Some(format!("已下载 {}/{} 个文件", done, total)),
+                        // Report network bytes for UI speed estimators that delta `downloaded`.
+                        downloaded: Some(network),
+                        speed,
+                    })
                     .await
                     .is_err()
                 {
@@ -411,7 +570,7 @@ pub async fn process_version(
                 if done >= total {
                     break;
                 }
-                tokio::time::sleep(Duration::from_secs(1)).await;
+                tokio::time::sleep(Duration::from_millis(400)).await;
             }
         })
     };
@@ -434,10 +593,17 @@ pub async fn process_version(
         .collect::<Vec<_>>()
         .await;
     progress_reporter.abort();
+    if cancel.load(Ordering::SeqCst) {
+        return Err("已取消".into());
+    }
     let mut errors = Vec::new();
     for result in results {
         if let Err(e) = result {
-            errors.push(e.to_string());
+            let msg = e.to_string();
+            if msg.contains("已取消") {
+                return Err("已取消".into());
+            }
+            errors.push(msg);
         }
     }
     let done = progress.done.load(Ordering::SeqCst);
@@ -449,6 +615,9 @@ pub async fn process_version(
         (done as f64 / total as f64) * 100.0,
         failed
     );
+    if cancel.load(Ordering::SeqCst) {
+        return Err("已取消".into());
+    }
     let _ = progress_tx
         .send(ProgressUpdate::with_stage(98.0, "解压原生库"))
         .await;

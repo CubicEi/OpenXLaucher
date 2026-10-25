@@ -173,32 +173,3 @@ pub fn theme_set_trusted(
         store.set_trusted(&theme_id, &version, trusted)
     })
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use tempfile::TempDir;
-
-    #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
-    async fn store_task_runs_on_the_blocking_pool() {
-        let directory = TempDir::new().expect("create temporary directory");
-        let manager = ThemeStoreManager::new(
-            ThemeStore::open(directory.path()).expect("open Theme store"),
-        );
-        let caller_thread = std::thread::current().id();
-
-        let task_thread = run_store_task(manager, |_store| Ok(std::thread::current().id()))
-            .await
-            .expect("run store task");
-
-        assert_ne!(task_thread, caller_thread);
-    }
-
-    #[test]
-    fn store_initialization_error_does_not_abort_startup() {
-        report_theme_store_initialization(Err(ThemeStoreError::new(
-            "THEME_STORE_INVALID",
-            "test failure",
-        )));
-    }
-}

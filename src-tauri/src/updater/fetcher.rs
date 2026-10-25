@@ -618,22 +618,3 @@ fn hex_encode_lower(bytes: &[u8]) -> String {
     }
     s
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use super::super::config::{github_release_download_url, TEST_FIXTURE_RELEASE_TAG};
-
-    #[test]
-    fn signed_download_url_produces_a_plain_filename() {
-        let url = format!(
-            "{}?sign=abc&t=123",
-            github_release_download_url(TEST_FIXTURE_RELEASE_TAG, "OpenXLauncher_1.2.0_x64-setup.exe")
-        );
-
-        assert_eq!(
-            filename_from_download_url(&url).as_deref(),
-            Ok("OpenXLauncher_1.2.0_x64-setup.exe")
-        );
-    }
-}

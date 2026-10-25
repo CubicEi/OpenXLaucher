@@ -1,4 +1,5 @@
 use crate::downloader::concurrent_download::{self, DownloadTask};
+use crate::downloader::install_progress;
 use crate::downloader::shared_utils::{self, Library, MetaResponse};
 use crate::http_client::shared_client;
 use anyhow::{anyhow, Result};
@@ -51,6 +52,7 @@ pub async fn install_fabric_loader(
     mc_folder_path: &str,
     use_mirror: bool,
     progress_tx: Option<mpsc::Sender<f64>>,
+    byte_batch_tx: Option<mpsc::Sender<(u64, u64)>>,
 ) -> Result<String> {
     if let Some(tx) = progress_tx.as_ref() {
         let _ = tx.try_send(0.0);
@@ -96,11 +98,10 @@ pub async fn install_fabric_loader(
         maven_base_url,
         mc_folder_path,
         progress_tx.clone(),
+        byte_batch_tx,
     )
     .await?;
-    if let Some(tx) = progress_tx.as_ref() {
-        let _ = tx.try_send(100.0);
-    }
+    install_progress::emit_install_phase_start(&progress_tx);
     
     // 确保 options.txt 存在并设置语言为中文
     let options_path = versions_dir.join("options.txt");
@@ -126,6 +127,7 @@ pub async fn install_fabric_loader(
         fs::write(&options_path, "lang:zh_cn")?;
     }
     
+    install_progress::emit_install_phase_done(&progress_tx);
     println!("Fabric Loader 安装完成，版本 ID: {}", version_id);
     Ok(version_id)
 }
@@ -135,7 +137,11 @@ pub async fn install_fabric_api(
     mc_version: &str,
     fabric_api_version: &str,
     mc_folder_path: &str,
+    progress_tx: Option<mpsc::Sender<f64>>,
 ) -> Result<()> {
+    if let Some(tx) = progress_tx.as_ref() {
+        let _ = tx.try_send(0.0);
+    }
     let fabric_api_url = format!(
         "https://maven.fabricmc.net/net/fabricmc/fabric-api/fabric-api/{}/fabric-api-{}.jar",
         fabric_api_version, fabric_api_version
@@ -154,12 +160,16 @@ pub async fn install_fabric_api(
         urls: vec![fabric_api_url],
         sha1: None,
     };
-    match concurrent_download::download_file(&task, None, None).await {
-        crate::downloader::modular_download::SingleDownloadResult::Success { .. } => {}
-        crate::downloader::modular_download::SingleDownloadResult::Failed { error, .. } => {
-            return Err(anyhow!("下载 Fabric API 失败: {}", error));
-        }
+    let dl_tx = progress_tx
+        .as_ref()
+        .map(|outer| install_progress::attach_download_progress_scaler(outer.clone()));
+    let result = concurrent_download::download_all(vec![task], dl_tx).await;
+    if !result.failures.is_empty() {
+        let f = &result.failures[0];
+        return Err(anyhow!("下载 Fabric API 失败: {}", f.error));
     }
+    install_progress::emit_install_phase_start(&progress_tx);
+    install_progress::emit_install_phase_done(&progress_tx);
     println!("Fabric API 安装完成，版本: {}", fabric_api_version);
     Ok(())
 }
@@ -170,6 +180,7 @@ async fn download_libraries(
     default_url: &str,
     mc_folder_path: &str,
     progress_tx: Option<mpsc::Sender<f64>>,
+    byte_batch_tx: Option<mpsc::Sender<(u64, u64)>>,
 ) -> Result<()> {
     let mut tasks = Vec::new();
     for lib in libraries {
@@ -204,7 +215,11 @@ async fn download_libraries(
 
     println!("准备下载 {} 个库文件...", tasks.len());
 
-    let result = concurrent_download::download_all(tasks, progress_tx).await;
+    let byte_tracker = byte_batch_tx.map(install_progress::ByteBatchTracker::new);
+    let dl_tx = progress_tx
+        .as_ref()
+        .map(|outer| install_progress::attach_download_progress_scaler(outer.clone()));
+    let result = concurrent_download::download_all_with_bytes(tasks, dl_tx, byte_tracker).await;
     if !result.failures.is_empty() {
         eprintln!("\n以下文件下载失败:");
         for f in &result.failures {

@@ -1,13 +1,20 @@
 'use client'
 
 import { useCallback, useEffect, useState, useSyncExternalStore } from 'react'
-import { Copy, Maximize2, Minus, X } from 'lucide-react'
+import { Copy, Cpu, Maximize2, Minus, X } from 'lucide-react'
+import { usePathname, useRouter } from 'next/navigation'
 
 import { ModeToggle } from '@/components/mode-toggle'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { ThemeSlot } from '@/components/themes/theme-slot'
 import { useThemeRuntime } from '@/components/themes/theme-runtime-provider'
+import { useI18n } from '@/components/i18n/use-i18n'
+import { PROCESS_LIST_BUTTON_ID } from '@/components/process-list/fly-to-process-list'
+import {
+  navigateWithMainTransition,
+  normalizeAppPathname,
+} from '@/lib/main-navigation-transition'
 
 interface WindowApi {
   minimize: () => Promise<void>
@@ -72,6 +79,38 @@ function WindowButton({ onClick, title, children, className }: WindowButtonProps
       title={title}
     >
       {children}
+    </Button>
+  )
+}
+
+function ProcessListButton() {
+  const router = useRouter()
+  const pathname = usePathname()
+  const { t } = useI18n()
+  const label = t('processList.open')
+  const isActive = normalizeAppPathname(pathname) === '/process-list'
+
+  const handleClick = () => {
+    if (isActive) return
+    navigateWithMainTransition(router, '/process-list')
+  }
+
+  return (
+    <Button
+      id={PROCESS_LIST_BUTTON_ID}
+      type='button'
+      variant='ghost'
+      size='icon'
+      className={cn(
+        'h-8 w-8 rounded-full',
+        isActive && 'bg-muted text-foreground'
+      )}
+      onClick={handleClick}
+      title={label}
+      aria-label={label}
+      aria-current={isActive ? 'page' : undefined}
+    >
+      <Cpu className='h-4 w-4' />
     </Button>
   )
 }
@@ -189,9 +228,12 @@ export function TitleBar({ className }: TitleBarProps) {
             </ThemeSlot>
           </div>
 
-          <div className='no-drag absolute inset-y-0 right-0 flex items-center pr-3'>
+          <div className='no-drag absolute inset-y-0 right-0 flex items-center gap-1 pr-3'>
             <ThemeSlot {...themeSlot} slotId='app.titlebar.actions'>
-              <ModeToggle />
+              <div className='flex items-center gap-1'>
+                <ProcessListButton />
+                <ModeToggle />
+              </div>
             </ThemeSlot>
           </div>
         </>
@@ -210,7 +252,10 @@ export function TitleBar({ className }: TitleBarProps) {
 
           <div className='no-drag flex h-full items-center gap-1'>
             <ThemeSlot {...themeSlot} slotId='app.titlebar.actions'>
-              <ModeToggle />
+              <div className='flex items-center gap-1'>
+                <ProcessListButton />
+                <ModeToggle />
+              </div>
             </ThemeSlot>
 
             <div className='flex items-center gap-1 pr-3'>

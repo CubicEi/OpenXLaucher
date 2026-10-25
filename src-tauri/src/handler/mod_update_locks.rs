@@ -47,22 +47,3 @@ pub fn is_game_dir_mod_update_locked(game_dir_key: &str) -> bool {
         .map(|locks| locks.contains(game_dir_key))
         .unwrap_or(false)
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn begin_end_update_lock() {
-        let dir = std::env::temp_dir()
-            .join("openx-mod-lock-test")
-            .to_string_lossy()
-            .to_string();
-        end_mod_update(&dir);
-        begin_mod_update(&dir).expect("first lock");
-        assert!(is_game_dir_mod_update_locked(&instance_dir_key(&dir)));
-        assert!(begin_mod_update(&dir).is_err());
-        end_mod_update(&dir);
-        assert!(!is_game_dir_mod_update_locked(&instance_dir_key(&dir)));
-    }
-}

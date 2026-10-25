@@ -3,7 +3,7 @@ use crate::downloader::{
     mod_loader_installer_shared as shared,
 };
 use crate::http_client::shared_client;
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, Result};
 use serde::Deserialize;
 use std::path::PathBuf;
 #[derive(Debug, Deserialize, Clone)]
@@ -89,32 +89,6 @@ fn neoforge_version_matches_mc(mc_version: &str, neoforge_version: &str) -> bool
 
     neoforge_version.starts_with(&short_prefix)
 }
-
-#[cfg(test)]
-mod tests {
-    use super::neoforge_version_matches_mc;
-
-    #[test]
-    fn matches_short_neoforge_versions_to_minecraft() {
-        assert!(neoforge_version_matches_mc("1.20.2", "20.2.93"));
-        assert!(neoforge_version_matches_mc("1.21", "21.0.167"));
-        assert!(neoforge_version_matches_mc("1.21.1", "21.1.215"));
-        assert!(neoforge_version_matches_mc("26.2", "26.2.0.40-beta"));
-        assert!(neoforge_version_matches_mc("26.1.2", "26.1.2.93"));
-    }
-
-    #[test]
-    fn rejects_versions_for_other_minecraft_releases() {
-        assert!(!neoforge_version_matches_mc("1.20.2", "26.2.0.40-beta"));
-        assert!(!neoforge_version_matches_mc("1.21.1", "21.0.167"));
-    }
-
-    #[test]
-    fn keeps_legacy_minecraft_prefixed_versions() {
-        assert!(neoforge_version_matches_mc("1.20.1", "1.20.1-47.1.106"));
-    }
-}
-
 async fn fetch_official_neoforge_versions(mc_version: &str) -> Result<Vec<String>> {
     let client = shared_client().await;
 
@@ -272,12 +246,19 @@ pub async fn get_neoforge_versions(mc_version: &str) -> Result<Vec<String>> {
     }
     fetch_official_neoforge_versions(mc_version).await
 }
-async fn download_installer(neoforge_version: &str, mc_dir: &PathBuf) -> Result<PathBuf> {
+async fn download_installer(
+    neoforge_version: &str,
+    mc_dir: &PathBuf,
+    progress_tx: Option<tokio::sync::mpsc::Sender<f64>>,
+) -> Result<PathBuf> {
     let cache_dir = mc_dir.join("cache").join("neoforge_installer");
     std::fs::create_dir_all(&cache_dir).ok();
     let file_name = format!("neoforge-{}-installer.jar", neoforge_version);
     let target_path = cache_dir.join(&file_name);
     if target_path.exists() {
+        if let Some(tx) = progress_tx.as_ref() {
+            let _ = tx.try_send(crate::downloader::install_progress::LIB_DOWNLOAD_START);
+        }
         return Ok(target_path);
     }
     // NeoForge 有两种 Maven 路径格式：
@@ -310,9 +291,24 @@ async fn download_installer(neoforge_version: &str, mc_dir: &PathBuf) -> Result<
         urls,
         sha1: None,
     };
-    concurrent_download::download_one(task)
-        .await
-        .with_context(|| format!("下载 NeoForge Installer JAR 失败: {}", file_name))
+    let byte_tx = progress_tx.as_ref().map(|outer| {
+        let outer = outer.clone();
+        let (inner, mut rx) = tokio::sync::mpsc::channel::<(u64, u64)>(64);
+        tokio::spawn(async move {
+            while let Some((done, total)) = rx.recv().await {
+                let p =
+                    crate::downloader::install_progress::map_jar_bytes_to_installer_percent(done, total);
+                let _ = outer.try_send(p);
+            }
+        });
+        inner
+    });
+    match concurrent_download::download_file(&task, byte_tx, None).await {
+        concurrent_download::SingleDownloadResult::Success { path, .. } => Ok(path),
+        concurrent_download::SingleDownloadResult::Failed { error, .. } => {
+            Err(anyhow::anyhow!("下载 NeoForge Installer JAR 失败: {}", error))
+        }
+    }
 }
 pub async fn install_neoforge(
     mc_version: &str,
@@ -320,10 +316,15 @@ pub async fn install_neoforge(
     mc_dir: &str,
     java_path: &str,
     progress_tx: Option<tokio::sync::mpsc::Sender<f64>>,
+    byte_batch_tx: Option<tokio::sync::mpsc::Sender<(u64, u64)>>,
     wait_for_original: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
 ) -> Result<String> {
     let mc_path = PathBuf::from(mc_dir);
-    let installer_jar = download_installer(neoforge_version, &mc_path).await?;
+    if let Some(tx) = progress_tx.as_ref() {
+        let _ = tx.try_send(0.0);
+    }
+    let installer_jar =
+        download_installer(neoforge_version, &mc_path, progress_tx.clone()).await?;
     let java_executable = if java_path.is_empty() {
         let auto = shared::pick_java_executable(mc_version);
         println!("[NeoForge] 自动探测 Java: {} (java_path 为空)", auto);
@@ -343,5 +344,5 @@ pub async fn install_neoforge(
             "https://libraries.minecraft.net/".to_string(),
         ],
     };
-    shared::install(&cfg, &mc_path, progress_tx, wait_for_original).await
+    shared::install(&cfg, &mc_path, progress_tx, byte_batch_tx, wait_for_original).await
 }

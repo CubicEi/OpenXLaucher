@@ -738,6 +738,7 @@
     "selectLoaderVersionHint": "Select a {name} version to install",
     "selectFabricApiVersion": "Select Fabric API version",
     "selectFabricApiVersionHint": "Select a Fabric API version to install",
+    "selectFabricApiVersionCombinedHint": "Pick a version to include in combined install; tap a version to confirm and return",
     "selectQuiltApiVersion": "Select Quilt API version",
     "selectQuiltApiVersionHint": "Select a Quilt API version to install",
     "viewFabricApiVersions": "View Fabric API versions",
@@ -787,6 +788,34 @@
       "emptyHint": "Click the Star on a Mod file page to add that version to your favorites.",
       "starTip": "See these stars? If you like OpenXLauncher, give us a star at https://github.com/CubicEi/OpenXLaucher",
       "closeTip": "Dismiss tip"
+    }
+  },
+  "processList": {
+    "title": "Task Queue",
+    "subtitle": "Track downloads, updates, and install tasks",
+    "open": "Open task queue",
+    "overallSpeed": "Overall download speed",
+    "overallProgress": "Overall progress",
+    "speedIdle": "—",
+    "activeCount": "{count} tasks in progress",
+    "noActive": "No active tasks",
+    "taskCount": "{count} tasks total",
+    "clearFinished": "Clear finished",
+    "cancelTask": "Cancel task",
+    "removeTask": "Remove task",
+    "emptyTitle": "No tasks",
+    "emptyHint": "When you download a game version, mod, or run an update, tasks will show up here.",
+    "stage": {
+      "queued": "Queued…",
+      "cancelled": "Cancelled",
+      "error": "Failed",
+      "warning": "Completed with warnings",
+      "warningFailed": "{count} files failed; game may be affected",
+      "success": "Completed",
+      "download": "Downloading",
+      "replace": "Replacing",
+      "preparing": "Preparing…",
+      "processing": "Processing…"
     }
   }
 }

@@ -26,10 +26,7 @@ export function GlobalDragDrop() {
             // 从路径中提取文件名作为整合包名称
             const modpackName = path.split(/[\\/]/).pop()?.replace(/\.(zip|mrpack|jar)$/i, "") || "未知整合包";
             
-            // 使用下载管理器启动整合包安装，这样会自动添加到下载任务栏
-            const taskId: number = await startModpackDownload(modpackName, path);
-            
-            console.log(`整合包安装任务已启动，ID: ${taskId}`);
+            await startModpackDownload(modpackName, path);
           } catch (error) {
             console.error(`整合包安装失败: ${error}`);
           }

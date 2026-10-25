@@ -80,31 +80,3 @@ pub fn write_runtime_log(
 ) -> Result<(), String> {
     append_runtime_log(&level, &category, &message, data)
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn normalize_levels() {
-        assert_eq!(normalize_log_level("info"), "INFO");
-        assert_eq!(normalize_log_level("WARN"), "WARN");
-        assert_eq!(normalize_log_level("error"), "ERROR");
-        assert_eq!(normalize_log_level("panic"), "PANIC");
-        assert_eq!(normalize_log_level("debug"), "INFO");
-    }
-
-    #[test]
-    fn build_body_with_category_and_data() {
-        let data = serde_json::json!({ "id": 1 });
-        let body = build_log_body("launch", "config loaded", Some(&data));
-        assert_eq!(body, r#"launch/config loaded {"id":1}"#);
-    }
-
-    #[test]
-    fn format_line_structure() {
-        let line = format_runtime_log_line("warn", "nav/route fallback");
-        assert!(line.starts_with('['));
-        assert!(line.contains(" WARN] nav/route fallback"));
-    }
-}

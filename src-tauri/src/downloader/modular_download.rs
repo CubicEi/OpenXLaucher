@@ -2111,6 +2111,7 @@ pub async fn download_all_with_file_info(
             }
         },
         Option::<fn(f64) -> ()>::None,
+        None,
     )
     .await;
     
@@ -2123,6 +2124,15 @@ pub async fn download_all_with_file_info(
 pub async fn download_all(
     tasks: Vec<DownloadTask>,
     progress_tx: Option<mpsc::Sender<f64>>,
+) -> DownloadResult {
+    download_all_with_bytes(tasks, progress_tx, None).await
+}
+
+/// Like `download_all`, but also forwards per-file byte progress `(downloaded, total)` when known.
+pub async fn download_all_with_bytes(
+    tasks: Vec<DownloadTask>,
+    progress_tx: Option<mpsc::Sender<f64>>,
+    byte_tracker: Option<crate::downloader::install_progress::ByteBatchTracker>,
 ) -> DownloadResult {
     let total = tasks.len();
     if total == 0 {
@@ -2144,6 +2154,7 @@ pub async fn download_all(
                 let _ = tx.try_send(percent);
             }
         }),
+        byte_tracker,
     )
     .await;
 
@@ -2275,6 +2286,7 @@ async fn smart_batch_download(
     done_counter: Arc<AtomicU64>,
     on_any_done: impl Fn(usize, usize, String) + Clone + Send + Sync + 'static,
     on_percent: Option<impl Fn(f64) + Clone + Send + Sync + 'static>,
+    byte_tracker: Option<crate::downloader::install_progress::ByteBatchTracker>,
 ) -> (usize, Vec<DownloadFailure>) {
     if tasks.is_empty() {
         return (0, Vec::new());
@@ -2421,9 +2433,12 @@ async fn smart_batch_download(
                 let conn_sem_clone = conn_sem.clone();
                 spawn_count += 1;
 
+                let file_prog = byte_tracker
+                    .clone()
+                    .map(|t| t.file_progress_sender(fname.clone()));
                 tokio::spawn(async move {
                     let _conn_permit = conn_sem_clone.acquire_owned().await;
-                    let result = download_file(&task, None, None).await;
+                    let result = download_file(&task, file_prog, None).await;
                     in_flight_clone.fetch_sub(1, Ordering::SeqCst);
 
                     match result {

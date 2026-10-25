@@ -1052,6 +1052,12 @@ struct ModDownloadProgressPayload {
     percent: f64,
     #[serde(skip_serializing_if = "Option::is_none")]
     label: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    downloaded: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    total: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    speed: Option<f64>,
 }
 #[derive(Debug, Serialize, Clone)]
 struct ModDownloadFinishedPayload {
@@ -1306,12 +1312,36 @@ pub async fn download_resource_file(
         let tid = task_id_clone;
         let label_for_events = progress_label.clone();
         let progress_forward = tokio::spawn(async move {
+            let mut last_downloaded = 0u64;
+            let mut last_at = std::time::Instant::now();
+            let mut primed = false;
+            const MIN_SPEED_WINDOW_SECS: f64 = 0.3;
+            const MAX_PLAUSIBLE_BPS: f64 = 500.0 * 1024.0 * 1024.0;
             while let Some((downloaded, total)) = progress_rx.recv().await {
                 let percent = if total > 0 {
                     (downloaded as f64 / total as f64) * 100.0
                 } else {
                     downloaded as f64 / 1_000_000.0
                 };
+                let elapsed = last_at.elapsed().as_secs_f64();
+                let speed = if primed && elapsed >= MIN_SPEED_WINDOW_SECS {
+                    let rate =
+                        (downloaded.saturating_sub(last_downloaded) as f64) / elapsed;
+                    if rate > 0.0 && rate <= MAX_PLAUSIBLE_BPS {
+                        Some(rate)
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
+                // Advance the sample window once we have a baseline, or after a
+                // usable elapsed window (keeps short bursts from dividing by ~0).
+                if !primed || elapsed >= MIN_SPEED_WINDOW_SECS {
+                    last_downloaded = downloaded;
+                    last_at = std::time::Instant::now();
+                    primed = true;
+                }
                 let progress_event = "mod-download-progress";
                 let _ = app2.emit(
                     progress_event,
@@ -1319,6 +1349,9 @@ pub async fn download_resource_file(
                         task_id: tid,
                         percent,
                         label: label_for_events.clone(),
+                        downloaded: Some(downloaded),
+                        total: if total > 0 { Some(total) } else { None },
+                        speed,
                     },
                 );
             }

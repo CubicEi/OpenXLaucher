@@ -12,7 +12,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { LoaderVersionList } from "@/components/download/loader-version-list";
-import { ArrowLeft, Loader2, Download } from "lucide-react";
+import { ArrowLeft, Download } from "lucide-react";
 import { slideInFromRight, fadeIn } from "@/lib/motion";
 import type { LoaderVersion } from "@/types";
 import { invoke } from "@tauri-apps/api/core";
@@ -25,6 +25,7 @@ interface FabricApiDetailProps {
 }
 
 const FABRIC_LOADER_DEFAULT = "0.15.11";
+const FABRIC_API_DETAIL_NOTICE_ID = "fabric-api-detail-versions";
 
 export function FabricApiDetail({ mcVersion, onBack }: FabricApiDetailProps) {
   const { t } = useI18n();
@@ -35,32 +36,53 @@ export function FabricApiDetail({ mcVersion, onBack }: FabricApiDetailProps) {
   const [pendingApi, setPendingApi] = useState<LoaderVersion | null>(null);
   const [instanceNameInput, setInstanceNameInput] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
-  const { startFabricDownload } = useDownloadManager();
+  const { startFabricDownload, pushNotice, dismissNotice } = useDownloadManager();
+  const loadingNoticeActiveRef = useRef(false);
 
   useEffect(() => {
+    let cancelled = false;
     const fetchApiVersions = async () => {
       setLoading(true);
+      pushNotice({
+        id: FABRIC_API_DETAIL_NOTICE_ID,
+        message: t("download.loadingVersionList"),
+        variant: "info",
+        loading: true,
+      });
+      loadingNoticeActiveRef.current = true;
       try {
         const result = await invoke<{ id: string; version: string }[]>(
           "get_fabric_api_versions",
           { mcVersion }
         );
-        const versions: LoaderVersion[] = result.map(v => ({
+        if (cancelled) return;
+        const versions: LoaderVersion[] = result.map((v) => ({
           id: v.id,
           version: v.version,
           releaseDate: "",
-          isRecommended: false
+          isRecommended: false,
         }));
         setApiVersions(versions);
       } catch (err) {
         console.error("获取Fabric API版本列表失败:", err);
-        setApiVersions([]);
+        if (!cancelled) setApiVersions([]);
       } finally {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
+        if (loadingNoticeActiveRef.current) {
+          dismissNotice(FABRIC_API_DETAIL_NOTICE_ID);
+          loadingNoticeActiveRef.current = false;
+        }
       }
     };
-    fetchApiVersions();
-  }, [mcVersion]);
+    void fetchApiVersions();
+    return () => {
+      cancelled = true;
+      if (loadingNoticeActiveRef.current) {
+        dismissNotice(FABRIC_API_DETAIL_NOTICE_ID);
+        loadingNoticeActiveRef.current = false;
+      }
+    };
+  }, [mcVersion, pushNotice, dismissNotice, t]);
 
   const defaultName = (apiVer: string) => `${mcVersion}-Fabric-${FABRIC_LOADER_DEFAULT}-API-${apiVer}`;
 
@@ -74,8 +96,7 @@ export function FabricApiDetail({ mcVersion, onBack }: FabricApiDetailProps) {
     setPendingApi(null);
 
     try {
-      const taskId = await startFabricDownload(mcVersion, FABRIC_LOADER_DEFAULT, api.version, instanceName);
-      console.log(`Fabric API 下载任务已启动，任务ID: ${taskId}`);
+      await startFabricDownload(mcVersion, FABRIC_LOADER_DEFAULT, api.version, instanceName);
     } catch (err) {
       console.error("下载并安装Fabric API失败:", err);
     }
@@ -127,19 +148,7 @@ export function FabricApiDetail({ mcVersion, onBack }: FabricApiDetailProps) {
       {/* 内容区域 */}
       <div className="flex-1 min-h-0 overflow-y-auto p-1">
         <AnimatePresence mode="wait">
-          {loading ? (
-            <motion.div
-              key="loading"
-              className="flex flex-1 flex-col items-center justify-center gap-3 text-muted-foreground"
-              variants={fadeIn}
-              initial="initial"
-              animate="animate"
-              exit="exit"
-            >
-              <Loader2 className="size-8 animate-spin" />
-              <p className="text-sm">{t("download.loadingVersionList")}</p>
-            </motion.div>
-          ) : (
+          {!loading ? (
             <motion.div
               key="list"
               variants={fadeIn}
@@ -153,7 +162,7 @@ export function FabricApiDetail({ mcVersion, onBack }: FabricApiDetailProps) {
                 onInstall={handleInstall}
               />
             </motion.div>
-          )}
+          ) : null}
         </AnimatePresence>
       </div>
     </div>

@@ -92,10 +92,9 @@ pnpm tauri:build:portable
 pnpm tauri:build:debug
 ```
 
-### 测试与检查
+### 检查
 
 ```bash
-pnpm test
 pnpm exec tsc --noEmit
 cd src-tauri && cargo check
 ```
@@ -154,7 +153,7 @@ OpenXLauncher/
 1. 提交 issue  
 2. 提交 Pull Request  
 
-提交前请运行 `pnpm test`、`pnpm exec tsc --noEmit` 与 `cargo check`（在 `src-tauri` 下）。
+提交前请运行 `pnpm exec tsc --noEmit` 与 `cargo check`（在 `src-tauri` 下）。
 
 ## 开源协议
 

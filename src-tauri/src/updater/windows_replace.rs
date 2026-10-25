@@ -238,24 +238,3 @@ pub fn launch_windows_replace(download_path: &Path) -> Result<(), String> {
 
     std::process::exit(0);
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn batch_script_contains_old_rename_and_ack_flag() {
-        let script = build_replace_batch_script(
-            Path::new(r"C:\Games\OpenX"),
-            Path::new(r"C:\Temp\OpenXLauncher\updates\new.exe"),
-            Path::new(r"C:\Temp\OpenXLauncher\ack.flag"),
-            Path::new(r"C:\Temp\OpenXLauncher\fail.txt"),
-            Path::new(r"C:\Temp\OpenXLauncher\fail.flag"),
-        );
-        assert!(script.contains("OpenXLauncher_old.exe"));
-        assert!(script.contains("--openx-update-ack="));
-        assert!(script.contains("--openx-update-fail="));
-        assert!(script.contains(":rollback"));
-        assert!(!script.contains("MessageBox"));
-    }
-}

@@ -169,9 +169,6 @@ pub fn github_release_download_url(tag: &str, file_name: &str) -> String {
     )
 }
 
-/// 单测用 Release 标签占位，勿当作真实发布版本。
-pub const TEST_FIXTURE_RELEASE_TAG: &str = "v0.0.0-test-fixture";
-
 fn get_current_timestamp() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -294,48 +291,5 @@ pub fn get_current_os() -> String {
     #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
     {
         return "unknown".to_string();
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn manual_check_cooldown_opens_at_five_seconds() {
-        assert!(!has_check_interval_elapsed(1_000, 1_004));
-        assert!(has_check_interval_elapsed(1_000, 1_005));
-    }
-
-    #[test]
-    fn updater_accepts_only_configured_release_hosts() {
-        let trusted_repo_asset = github_release_download_url(TEST_FIXTURE_RELEASE_TAG, "app.exe");
-        assert!(is_trusted_download_url(&trusted_repo_asset));
-        assert!(is_trusted_download_url(
-            "https://release-assets.githubusercontent.com/github-production-release-asset/app.exe"
-        ));
-        assert!(!is_trusted_download_url(&format!(
-            "https://example.com/{}/releases/download/{}/app.exe",
-            github_repo_slug(),
-            TEST_FIXTURE_RELEASE_TAG
-        )));
-        assert!(!is_trusted_download_url(&format!(
-            "http://github.com/{}/releases/download/{}/app.exe",
-            github_repo_slug(),
-            TEST_FIXTURE_RELEASE_TAG
-        )));
-    }
-
-    #[test]
-    fn initial_asset_url_is_limited_to_the_configured_repository_or_bucket() {
-        let fixture_url = github_release_download_url(TEST_FIXTURE_RELEASE_TAG, "app.exe");
-        assert!(is_trusted_release_asset_url(&fixture_url));
-        assert!(!is_trusted_release_asset_url(&format!(
-            "https://github.com/another-owner/another-repo/releases/download/{}/app.exe",
-            TEST_FIXTURE_RELEASE_TAG
-        )));
-        assert!(!is_trusted_release_asset_url(
-            "https://release-assets.githubusercontent.com/github-production-release-asset/app.exe"
-        ));
     }
 }

@@ -1,3 +1,4 @@
+use crate::downloader::concurrent_download;
 use crate::downloader::mod_loader_installer_shared as shared;
 use crate::http_client::shared_client;
 use anyhow::{bail, Context, Result};
@@ -171,6 +172,7 @@ async fn download_installer(
     mc_version: &str,
     forge_version: &str,
     mc_dir: &PathBuf,
+    progress_tx: Option<tokio::sync::mpsc::Sender<f64>>,
 ) -> Result<PathBuf> {
     let cache_dir = mc_dir.join("cache").join("forge_installer");
     std::fs::create_dir_all(&cache_dir).ok();
@@ -254,6 +256,9 @@ async fn download_installer(
         let target_path = cache_dir.join(&file_name);
         if target_path.exists() {
             println!("[Forge] 缓存命中: {}", file_name);
+            if let Some(tx) = progress_tx.as_ref() {
+                let _ = tx.try_send(crate::downloader::install_progress::LIB_DOWNLOAD_START);
+            }
             return Ok(target_path);
         }
     }
@@ -303,68 +308,38 @@ async fn download_installer(
     for (i, (_, url)) in candidate_urls.iter().enumerate() {
         println!("[Forge]   [{}/{}] {}", i + 1, candidate_urls.len(), url);
     }
-    let client = shared_client().await;
     let mut last_error: Option<String> = None;
     for (file_name, url) in &candidate_urls {
         let target_path = cache_dir.join(&file_name);
         println!("[Forge] 正在下载: {}", url);
-        match client
-            .get(url)
-            .timeout(std::time::Duration::from_secs(180))
-            .send()
-            .await
-        {
-            Ok(resp) => {
-                if !resp.status().is_success() {
-                    let status = resp.status();
-                    println!("[Forge]   <- HTTP {}, skipping", status);
-                    last_error = Some(format!("HTTP {}", status));
-                    continue;
+        let task = concurrent_download::DownloadTask {
+            file_name: file_name.clone(),
+            target_dir: cache_dir.clone(),
+            urls: vec![url.clone()],
+            sha1: None,
+        };
+        let byte_tx = progress_tx.as_ref().map(|outer| {
+            let outer = outer.clone();
+            let (inner, mut rx) = tokio::sync::mpsc::channel::<(u64, u64)>(64);
+            tokio::spawn(async move {
+                while let Some((done, total)) = rx.recv().await {
+                    let p = crate::downloader::install_progress::map_jar_bytes_to_installer_percent(
+                        done, total,
+                    );
+                    let _ = outer.try_send(p);
                 }
-                match std::fs::File::create(&target_path) {
-                    Ok(mut file) => {
-                        use std::io::Write;
-                        match resp.bytes().await {
-                            Ok(bytes) => {
-                                if let Err(e) = file.write_all(&bytes) {
-                                    println!("[Forge]   <- Failed to write file: {}", e);
-                                    last_error = Some(format!("写文件失败: {}", e));
-                                    let _ = std::fs::remove_file(&target_path);
-                                    continue;
-                                }
-                                let size = bytes.len() as u64;
-                                if size == 0 {
-                                    println!("[Forge]   <- File size is 0, skipping");
-                                    last_error = Some("下载文件为空".to_string());
-                                    let _ = std::fs::remove_file(&target_path);
-                                    continue;
-                                }
-                                println!(
-                                    "[Forge]   <- OK, {} bytes, file: {}",
-                                    size,
-                                    target_path.display()
-                                );
-                                return Ok(target_path);
-                            }
-                            Err(e) => {
-                                println!("[Forge]   <- Failed to read response body: {}", e);
-                                last_error = Some(format!("读取响应体失败: {}", e));
-                                let _ = std::fs::remove_file(&target_path);
-                                continue;
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        println!("[Forge]   <- Failed to create file: {}", e);
-                        last_error = Some(format!("创建文件失败: {}", e));
-                        continue;
-                    }
+            });
+            inner
+        });
+        match concurrent_download::download_file(&task, byte_tx, None).await {
+            concurrent_download::SingleDownloadResult::Success { path, .. } => {
+                if path.exists() {
+                    return Ok(path);
                 }
             }
-            Err(e) => {
-                println!("[Forge]   <- Request failed: {}", e);
-                last_error = Some(format!("请求失败: {}", e));
-                continue;
+            concurrent_download::SingleDownloadResult::Failed { error, .. } => {
+                println!("[Forge]   <- {}", error);
+                last_error = Some(error);
             }
         }
     }
@@ -390,6 +365,7 @@ pub async fn install_forge(
     mc_dir: &str,
     java_path: &str,
     progress_tx: Option<tokio::sync::mpsc::Sender<f64>>,
+    byte_batch_tx: Option<tokio::sync::mpsc::Sender<(u64, u64)>>,
     wait_for_original: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
 ) -> Result<String> {
     let mc_path = PathBuf::from(mc_dir);
@@ -402,7 +378,11 @@ pub async fn install_forge(
         "[Forge] 版本号归一化: {} -> {}",
         forge_version, normalized_version
     );
-    let installer_jar = download_installer(mc_version, &normalized_version, &mc_path).await?;
+    if let Some(tx) = progress_tx.as_ref() {
+        let _ = tx.try_send(0.0);
+    }
+    let installer_jar =
+        download_installer(mc_version, &normalized_version, &mc_path, progress_tx.clone()).await?;
     let java_executable = if java_path.is_empty() {
         let auto = shared::pick_java_executable(mc_version);
         println!("[Forge] 自动探测 Java: {} (java_path 为空)", auto);
@@ -425,5 +405,5 @@ pub async fn install_forge(
             "https://repo1.maven.org/maven2/".to_string(),
         ],
     };
-    shared::install(&cfg, &mc_path, progress_tx, wait_for_original).await
+    shared::install(&cfg, &mc_path, progress_tx, byte_batch_tx, wait_for_original).await
 }

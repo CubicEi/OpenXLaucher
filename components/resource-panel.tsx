@@ -376,7 +376,9 @@ export default function ResourcePanel({
             ? [
                 `v${info.version}`,
                 info.mod_id,
-                info.authors.length > 0 ? info.authors.slice(0, 2).join(", ") : null,
+                info.authors && info.authors.length > 0
+                  ? info.authors.slice(0, 2).join(", ")
+                  : null,
               ].filter(Boolean).join(" · ")
             : (getFileSubtitle ? getFileSubtitle(file) : formatSize(file.size));
           const hasDetail = !!onOpenModDetail;

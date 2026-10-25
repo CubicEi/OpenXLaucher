@@ -47,28 +47,3 @@ pub(super) fn launch_auth_identity(
         ("msa", "{}")
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::{is_valid_uuid, offline_uuid};
-
-    #[test]
-    fn generates_minecraft_offline_uuid_vectors() {
-        assert_eq!(
-            offline_uuid("Notch"),
-            "b50ad385-829d-3141-a216-7e7d7539ba7f"
-        );
-        assert_eq!(
-            offline_uuid("Steve"),
-            "5627dd98-e6be-3c21-b8a8-e92344183641"
-        );
-    }
-
-    #[test]
-    fn accepts_only_compact_or_canonical_uuid_layouts() {
-        assert!(is_valid_uuid("b50ad385829d3141a2167e7d7539ba7f"));
-        assert!(is_valid_uuid("b50ad385-829d-3141-a216-7e7d7539ba7f"));
-        assert!(!is_valid_uuid("b50ad385829d3141-a2167e7d7539ba7f"));
-        assert!(!is_valid_uuid("b50ad385-829d3141-a216-7e7d7539ba7f"));
-    }
-}

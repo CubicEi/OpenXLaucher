@@ -738,6 +738,7 @@
     "selectLoaderVersionHint": "选择一个 {name} 版本进行安装",
     "selectFabricApiVersion": "选择 Fabric API 版本",
     "selectFabricApiVersionHint": "选择一个 Fabric API 版本进行安装",
+    "selectFabricApiVersionCombinedHint": "选择要纳入组合安装的 Fabric API 版本，点选后将返回加载器列表",
     "selectQuiltApiVersion": "选择 Quilt API 版本",
     "selectQuiltApiVersionHint": "选择一个 Quilt API 版本进行安装",
     "viewFabricApiVersions": "查看 Fabric API 版本",
@@ -787,6 +788,34 @@
       "emptyHint": "在 Mod 文件选择页点击 Star，即可将指定版本加入收藏。",
       "starTip": "看到这些 Star 了吗？喜欢 OpenXLauncher 的话，就到 https://github.com/CubicEi/OpenXLaucher 给我们点个 Star 吧",
       "closeTip": "关闭提示"
+    }
+  },
+  "processList": {
+    "title": "任务队列",
+    "subtitle": "查看下载、更新与安装任务的进度",
+    "open": "打开任务队列",
+    "overallSpeed": "总下载速度",
+    "overallProgress": "总体进度",
+    "speedIdle": "—",
+    "activeCount": "{count} 个任务进行中",
+    "noActive": "当前没有进行中的任务",
+    "taskCount": "共 {count} 个任务",
+    "clearFinished": "清除已完成",
+    "cancelTask": "取消任务",
+    "removeTask": "移除任务",
+    "emptyTitle": "暂无任务",
+    "emptyHint": "开始下载游戏版本、模组或执行更新后，任务会出现在这里。",
+    "stage": {
+      "queued": "排队等待中…",
+      "cancelled": "已取消",
+      "error": "任务失败",
+      "warning": "部分完成",
+      "warningFailed": "{count} 个文件失败，可能影响运行",
+      "success": "已完成",
+      "download": "下载",
+      "replace": "替换",
+      "preparing": "准备中…",
+      "processing": "处理中…"
     }
   }
 }

@@ -271,12 +271,10 @@ export default function ModpackManagementPage() {
         installStatus.kind === "parsed"
           ? installStatus.info
           : await invoke("parse_modpack_cmd", { path });
-      // 启动整合包下载，进度显示在右下角下载任务栏
       await startModpackDownload(info.name, path);
-      // 安装成功后，设置成成功状态并刷新缓存
       setInstallStatus({
         kind: "success",
-        message: "整合包正在安装中，查看右下角任务栏进度",
+        message: "整合包正在安装中，可在标题栏打开「任务队列」查看进度",
         instanceName: null,
       });
       refreshCache();

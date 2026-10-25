@@ -3017,7 +3017,6 @@ dependencies = [
  "tauri-plugin-log",
  "tauri-plugin-opener",
  "tauri-plugin-single-instance",
- "tempfile",
  "tokio",
  "trash",
  "url",

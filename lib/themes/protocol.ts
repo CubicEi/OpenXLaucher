@@ -9,6 +9,7 @@ export const CORE_ROUTE_IDS = [
   "core.launch",
   "core.download",
   "core.download.detail",
+  "core.process-list",
   "core.multiplayer",
   "core.tools",
   "core.settings",

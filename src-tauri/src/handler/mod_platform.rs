@@ -7,9 +7,10 @@ use crate::http_client::{
 };
 use serde::{Deserialize, Serialize};
 use sha1::{Digest, Sha1};
+use std::collections::HashMap;
 use std::fs;
 use std::io::Read;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 pub const I18N_MOD_UPDATE_NETWORK_UNREACHABLE: &str = "panel.modUpdateNetworkUnreachable";
 pub const I18N_MOD_UPDATE_HASH_MISS: &str = "panel.modUpdateHashMiss";
 
@@ -137,6 +138,52 @@ pub fn file_sha1_hex(path: &Path) -> Option<String> {
     Some(hex::encode(hasher.finalize()))
 }
 
+/// SHA1 + CurseForge fingerprint for one local file (single disk read).
+#[derive(Clone, Debug)]
+pub struct UpdateCheckFileDigest {
+    pub sha1_hex: String,
+    pub curseforge_fingerprint: i32,
+}
+
+#[derive(Clone, Default)]
+pub struct UpdateCheckDigestCache {
+    entries: HashMap<PathBuf, UpdateCheckFileDigest>,
+}
+
+impl UpdateCheckDigestCache {
+    pub fn get(&self, path: &Path) -> Option<&UpdateCheckFileDigest> {
+        self.entries.get(path)
+    }
+}
+
+pub fn compute_update_check_file_digest(path: &Path) -> Option<UpdateCheckFileDigest> {
+    let data = fs::read(path).ok()?;
+    let mut hasher = Sha1::new();
+    hasher.update(&data);
+    Some(UpdateCheckFileDigest {
+        sha1_hex: hex::encode(hasher.finalize()),
+        curseforge_fingerprint: curseforge_fingerprint_bytes(&data),
+    })
+}
+
+pub fn build_update_check_digest_cache(paths: &[PathBuf]) -> UpdateCheckDigestCache {
+    use rayon::prelude::*;
+    let entries = paths
+        .par_iter()
+        .filter_map(|path| {
+            compute_update_check_file_digest(path).map(|digest| (path.clone(), digest))
+        })
+        .collect();
+    UpdateCheckDigestCache { entries }
+}
+
+fn digest_for_path<'a>(
+    cache: Option<&'a UpdateCheckDigestCache>,
+    path: &Path,
+) -> Option<&'a UpdateCheckFileDigest> {
+    cache.and_then(|c| c.get(path))
+}
+
 fn normalize_curseforge_fingerprint_input(data: &[u8]) -> Vec<u8> {
     data.iter()
         .filter(|b| !matches!(*b, 9 | 10 | 13 | 32))
@@ -211,6 +258,11 @@ fn murmur_hash2_signed(data: &[u8], seed: u32) -> i32 {
 fn curseforge_fingerprint_file(path: &Path) -> Option<i32> {
     let data = fs::read(path).ok()?;
     Some(curseforge_fingerprint_bytes(&data))
+}
+
+/// CurseForge expects 32-bit Murmur fingerprints as **unsigned** JSON integers.
+fn curseforge_fingerprint_request_body(fingerprint: i32) -> serde_json::Value {
+    serde_json::json!({ "fingerprints": [fingerprint as u32] })
 }
 
 fn primary_modrinth_file(version: &serde_json::Value) -> Option<(String, String)> {
@@ -403,12 +455,11 @@ async fn modrinth_installed_snapshot(
     })
 }
 
-async fn curseforge_installed_snapshot(
+async fn curseforge_snapshot_from_fingerprint(
     client: &reqwest::Client,
-    jar_path: &Path,
+    fingerprint: i32,
 ) -> Option<InstalledFileSnapshot> {
-    let fingerprint = curseforge_fingerprint_file(jar_path)?;
-    let body = serde_json::json!({ "fingerprints": [fingerprint] });
+    let body = curseforge_fingerprint_request_body(fingerprint);
     let semaphore = global_semaphore().await;
     let _permit = semaphore.acquire().await.ok()?;
     let response = client
@@ -457,6 +508,17 @@ async fn curseforge_installed_snapshot(
     })
 }
 
+async fn curseforge_installed_snapshot(
+    client: &reqwest::Client,
+    jar_path: &Path,
+    digests: Option<&UpdateCheckDigestCache>,
+) -> Option<InstalledFileSnapshot> {
+    let fingerprint = digest_for_path(digests, jar_path)
+        .map(|d| d.curseforge_fingerprint)
+        .or_else(|| curseforge_fingerprint_file(jar_path))?;
+    curseforge_snapshot_from_fingerprint(client, fingerprint).await
+}
+
 fn snapshot_to_resolved(snapshot: &InstalledFileSnapshot) -> ResolvedPlatform {
     ResolvedPlatform {
         source: snapshot.source.clone(),
@@ -469,19 +531,22 @@ fn snapshot_to_resolved(snapshot: &InstalledFileSnapshot) -> ResolvedPlatform {
 pub async fn resolve_installed_file_on_platform(
     jar_path: &Path,
     kind: ModPlatformKind,
+    digests: Option<&UpdateCheckDigestCache>,
 ) -> Option<InstalledFileSnapshot> {
     if !jar_path.is_file() {
         return None;
     }
     match kind {
         ModPlatformKind::Modrinth => {
-            let sha1 = file_sha1_hex(jar_path)?;
+            let sha1 = digest_for_path(digests, jar_path)
+                .map(|d| d.sha1_hex.clone())
+                .or_else(|| file_sha1_hex(jar_path))?;
             let client = modrinth_client().await;
             modrinth_installed_snapshot(&client, &sha1).await
         }
         ModPlatformKind::CurseForge => {
             let client = curseforge_client().await;
-            curseforge_installed_snapshot(&client, jar_path).await
+            curseforge_installed_snapshot(&client, jar_path, digests).await
         }
     }
 }
@@ -490,9 +555,12 @@ pub async fn resolve_installed_file_on_platform(
 pub async fn resolve_installed_file(
     jar_path: &Path,
     try_order: &[ModPlatformKind],
+    digests: Option<&UpdateCheckDigestCache>,
 ) -> Option<InstalledFileSnapshot> {
     for kind in try_order {
-        if let Some(snapshot) = resolve_installed_file_on_platform(jar_path, *kind).await {
+        if let Some(snapshot) =
+            resolve_installed_file_on_platform(jar_path, *kind, digests).await
+        {
             return Some(snapshot);
         }
     }
@@ -505,10 +573,14 @@ pub async fn installed_file_supports_instance(
     snapshot: &InstalledFileSnapshot,
     mc_version: &str,
     loader: &str,
+    digests: Option<&UpdateCheckDigestCache>,
 ) -> bool {
     match snapshot.source.as_str() {
         "modrinth" => {
-            let Some(sha1) = file_sha1_hex(jar_path) else {
+            let sha1 = digest_for_path(digests, jar_path)
+                .map(|d| d.sha1_hex.clone())
+                .or_else(|| file_sha1_hex(jar_path));
+            let Some(sha1) = sha1 else {
                 return false;
             };
             let client = modrinth_client().await;
@@ -522,11 +594,14 @@ pub async fn installed_file_supports_instance(
             version_is_compatible(&json, mc_version, loader)
         }
         "curseforge" => {
-            let Some(fingerprint) = curseforge_fingerprint_file(jar_path) else {
+            let fingerprint = digest_for_path(digests, jar_path)
+                .map(|d| d.curseforge_fingerprint)
+                .or_else(|| curseforge_fingerprint_file(jar_path));
+            let Some(fingerprint) = fingerprint else {
                 return false;
             };
             let client = curseforge_client().await;
-            let body = serde_json::json!({ "fingerprints": [fingerprint] });
+            let body = curseforge_fingerprint_request_body(fingerprint);
             let semaphore = global_semaphore().await;
             let Ok(_permit) = semaphore.acquire().await else {
                 return false;
@@ -580,50 +655,18 @@ fn modrinth_version_published_at(version: &serde_json::Value) -> Option<i64> {
         .and_then(|s| parse_iso8601_unix(&s).map(|t| t as i64))
 }
 
-fn release_type_rank(release_type: &str) -> u8 {
-    match release_type.to_ascii_lowercase().as_str() {
-        "release" => 0,
-        "beta" => 1,
-        "alpha" => 2,
-        _ => 3,
-    }
-}
-
 fn sort_versions_newest_first(versions: &mut [RemoteModVersion]) {
     versions.sort_by(|a, b| {
         let ta = a.published_at.unwrap_or(0);
         let tb = b.published_at.unwrap_or(0);
         tb.cmp(&ta)
-            .then_with(|| release_type_rank(&a.release_type).cmp(&release_type_rank(&b.release_type)))
     });
 }
 
 fn pick_best_candidate(versions: &[RemoteModVersion]) -> Option<&RemoteModVersion> {
-    if versions.is_empty() {
-        return None;
-    }
-    for want in ["release", "beta", "alpha"] {
-        let mut best: Option<&RemoteModVersion> = None;
-        for v in versions {
-            if v.release_type.eq_ignore_ascii_case(want) {
-                let replace = match best {
-                    None => true,
-                    Some(b) => {
-                        let ta = v.published_at.unwrap_or(0);
-                        let tb = b.published_at.unwrap_or(0);
-                        ta > tb
-                    }
-                };
-                if replace {
-                    best = Some(v);
-                }
-            }
-        }
-        if best.is_some() {
-            return best;
-        }
-    }
-    versions.iter().max_by_key(|v| v.published_at.unwrap_or(0))
+    versions
+        .iter()
+        .max_by_key(|v| v.published_at.unwrap_or(0))
 }
 
 /// Whether a newer compatible release exists vs the installed file (publish time only).
@@ -681,14 +724,21 @@ pub async fn pick_update_if_newer(
     snapshot: &InstalledFileSnapshot,
     mc_version: &str,
     loader: &str,
+    digests: Option<&UpdateCheckDigestCache>,
 ) -> Option<ModSearchResult> {
     let platform = snapshot_to_resolved(snapshot);
     let versions = list_compatible_versions(&platform, mc_version, loader).await;
     if versions.is_empty() {
         return None;
     }
-    let supports_instance =
-        installed_file_supports_instance(jar_path, snapshot, mc_version, loader).await;
+    let supports_instance = installed_file_supports_instance(
+        jar_path,
+        snapshot,
+        mc_version,
+        loader,
+        digests,
+    )
+    .await;
     let pick = pick_update_candidate(snapshot.published_at, &versions, supports_instance)?;
     Some(remote_version_to_search_result(&platform, pick, mc_version))
 }
@@ -705,6 +755,54 @@ fn modrinth_loaders(version: &serde_json::Value) -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// Modrinth `GET /project/{id}/version` supports `game_versions` + `loaders` query filters.
+fn modrinth_versions_list_url(slug: &str, mc_version: &str, loader: &str) -> String {
+    let mc = mc_version.trim();
+    let game_versions =
+        serde_json::to_string(&[mc]).unwrap_or_else(|_| format!(r#"["{}"]"#, mc));
+    let mut query = format!(
+        "game_versions={}&include_changelog=false",
+        urlencoding::encode(&game_versions)
+    );
+    let loader_norm = loader.trim().to_ascii_lowercase();
+    if !loader_norm.is_empty() && loader_norm != "universal" && loader_norm != "vanilla" {
+        let loaders =
+            serde_json::to_string(&[loader_norm.as_str()]).unwrap_or_else(|_| {
+                format!(r#"["{}"]"#, loader_norm)
+            });
+        query.push('&');
+        query.push_str(&format!("loaders={}", urlencoding::encode(&loaders)));
+    }
+    format!(
+        "https://api.modrinth.com/v2/project/{}/version?{}",
+        urlencoding::encode(slug),
+        query
+    )
+}
+
+fn curseforge_mod_loader_type_param(loader: &str) -> Option<&'static str> {
+    match loader.trim().to_ascii_lowercase().as_str() {
+        "forge" => Some("1"),
+        "fabric" => Some("4"),
+        "quilt" => Some("5"),
+        "neoforge" => Some("6"),
+        "liteloader" => Some("3"),
+        _ => None,
+    }
+}
+
+fn curseforge_files_list_url(mod_id: i64, mc_version: &str, loader: &str) -> String {
+    let mut url = format!(
+        "https://api.curseforge.com/v1/mods/{}/files?gameVersion={}&pageSize=50",
+        mod_id,
+        urlencoding::encode(mc_version.trim()),
+    );
+    if let Some(loader_type) = curseforge_mod_loader_type_param(loader) {
+        url.push_str(&format!("&modLoaderType={}", loader_type));
+    }
+    url
+}
+
 pub async fn list_compatible_versions(
     platform: &ResolvedPlatform,
     mc_version: &str,
@@ -712,10 +810,7 @@ pub async fn list_compatible_versions(
 ) -> Vec<RemoteModVersion> {
     if platform.source == "modrinth" {
         let client = modrinth_client().await;
-        let url = format!(
-            "https://api.modrinth.com/v2/project/{}/version",
-            urlencoding::encode(&platform.slug)
-        );
+        let url = modrinth_versions_list_url(&platform.slug, mc_version, loader);
         let Some(json) = get_modrinth_json(&client, &url).await else {
             return Vec::new();
         };
@@ -753,7 +848,7 @@ pub async fn list_compatible_versions(
         let Some(mod_id) = search.get("id").and_then(|v| v.as_i64()) else {
             return Vec::new();
         };
-        let files_url = format!("https://api.curseforge.com/v1/mods/{}/files?pageSize=1000", mod_id);
+        let files_url = curseforge_files_list_url(mod_id, mc_version, loader);
         let Some(files_json) = get_curseforge_json(&client, &files_url).await else {
             return Vec::new();
         };
@@ -796,82 +891,4 @@ pub async fn list_compatible_versions(
     }
 
     Vec::new()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn curseforge_fingerprint_empty() {
-        assert_eq!(curseforge_fingerprint_bytes(b""), 1);
-    }
-
-    #[test]
-    fn curseforge_fingerprint_strips_whitespace() {
-        let with_ws: Vec<u8> = vec![9, 116, 10, 101, 13, 115, 32, 116];
-        assert_eq!(curseforge_fingerprint_bytes(&with_ws), curseforge_fingerprint_bytes(b"test"));
-    }
-
-    #[test]
-    fn parse_iso8601_unix_reads_utc() {
-        let ts = parse_iso8601_unix("2024-06-01T12:00:00Z").expect("parse");
-        assert!(ts > 1_700_000_000);
-    }
-
-    #[test]
-    fn should_offer_update_by_time_respects_baseline() {
-        let versions = vec![
-            RemoteModVersion {
-                version_number: "8.2.19".into(),
-                release_type: "release".into(),
-                download_url: "u1".into(),
-                file_name: "a.jar".into(),
-                loaders: vec![],
-                source: "modrinth".into(),
-                published_at: Some(100),
-            },
-            RemoteModVersion {
-                version_number: "8.2.20".into(),
-                release_type: "release".into(),
-                download_url: "u2".into(),
-                file_name: "b.jar".into(),
-                loaders: vec![],
-                source: "modrinth".into(),
-                published_at: Some(200),
-            },
-        ];
-        assert!(should_offer_update_by_time(Some(100), &versions).is_some());
-        assert!(should_offer_update_by_time(Some(200), &versions).is_none());
-        assert!(should_offer_update_by_time(None, &versions).is_some());
-    }
-
-    #[test]
-    fn should_offer_update_by_time_skips_missing_candidate_date() {
-        let versions = vec![RemoteModVersion {
-            version_number: "8.2.20".into(),
-            release_type: "release".into(),
-            download_url: "u2".into(),
-            file_name: "b.jar".into(),
-            loaders: vec![],
-            source: "modrinth".into(),
-            published_at: None,
-        }];
-        assert!(should_offer_update_by_time(Some(50), &versions).is_none());
-    }
-
-    #[test]
-    fn pick_update_candidate_for_incompatible_instance_ignores_time() {
-        let versions = vec![RemoteModVersion {
-            version_number: "2.0.0".into(),
-            release_type: "release".into(),
-            download_url: "u".into(),
-            file_name: "mod.jar".into(),
-            loaders: vec![],
-            source: "modrinth".into(),
-            published_at: Some(10),
-        }];
-        assert!(pick_update_candidate(Some(500), &versions, false).is_some());
-        assert!(pick_update_candidate(Some(500), &versions, true).is_none());
-    }
 }

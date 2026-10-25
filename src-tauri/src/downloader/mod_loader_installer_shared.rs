@@ -95,7 +95,7 @@ fn runtime_java_executable(runtime_dir: &Path) -> Option<PathBuf> {
         .find(|candidate| is_executable_file(candidate))
 }
 
-fn required_java_major_for_mc(mc_version: &str) -> i32 {
+pub fn required_java_major_for_mc(mc_version: &str) -> i32 {
     // 25w 快照仍使用 Java 21；26.x（以及 26w 快照）已切换到
     // java-runtime-epsilon / Java 25。
     if let Some(snapshot_year) = mc_version
@@ -134,64 +134,84 @@ fn required_java_major_for_mc(mc_version: &str) -> i32 {
         21
     }
 }
-pub fn pick_java_executable(mc_version: &str) -> String {
+/// Strict picker for version-install sessions: never returns bare `"java"`,
+/// never falls back to a Java older than required.
+/// Err is one of: `JAVA_MISSING` | `JAVA_TOO_OLD` | `JAVA_INVALID`.
+pub fn pick_java_executable_strict(mc_version: &str) -> Result<String, String> {
     let required = required_java_major_for_mc(mc_version);
     println!(
-        "[JavaPicker] MC {} 需要 Java {}+，正在从配置中查找...",
+        "[JavaPicker/strict] MC {} 需要 Java {}+，正在从配置中查找...",
         mc_version, required
     );
     let launcher_config = get_launcher_paths_config();
     let java_paths = launcher_config.java_paths;
     let java_installations = launcher_config.java_installations;
     let selected_java = launcher_config.selected_java_path;
+
+    let mut saw_too_old = false;
+    let mut saw_invalid = false;
+
     if !java_installations.is_empty() {
         let exact_key = required.to_string();
         if let Some(info) = java_installations.get(&exact_key) {
             if is_executable_file(Path::new(&info.path)) {
-                println!("[JavaPicker] 使用精确匹配 Java {}: {}", required, info.path);
-                return info.path.clone();
+                println!(
+                    "[JavaPicker/strict] 使用精确匹配 Java {}: {}",
+                    required, info.path
+                );
+                return Ok(info.path.clone());
             }
+            saw_invalid = true;
         }
         let mut best: Option<(i32, String)> = None;
         for info in java_installations.values() {
             if info.major_version >= required {
-                if let Some((cur, _)) = best {
-                    if info.major_version < cur {
+                if is_executable_file(Path::new(&info.path)) {
+                    if let Some((cur, _)) = best {
+                        if info.major_version < cur {
+                            best = Some((info.major_version, info.path.clone()));
+                        }
+                    } else {
                         best = Some((info.major_version, info.path.clone()));
                     }
                 } else {
-                    best = Some((info.major_version, info.path.clone()));
+                    saw_invalid = true;
                 }
+            } else if is_executable_file(Path::new(&info.path)) {
+                saw_too_old = true;
             }
         }
         if let Some((v, p)) = best {
-            if is_executable_file(Path::new(&p)) {
-                println!("[JavaPicker] 使用兼容 Java {}: {}", v, p);
-                return p;
-            }
-        }
-        for info in java_installations.values() {
-            if is_executable_file(Path::new(&info.path)) {
-                println!(
-                    "[JavaPicker] 回退到已安装 Java {}: {}",
-                    info.major_version, info.path
-                );
-                return info.path.clone();
-            }
+            println!("[JavaPicker/strict] 使用兼容 Java {}: {}", v, p);
+            return Ok(p);
         }
     }
+
     for p in &java_paths {
         if is_executable_file(Path::new(p)) {
-            println!("[JavaPicker] 使用 java_paths 中的: {}", p);
-            return p.clone();
+            // java_paths entries may not carry major; accept if file exists
+            // (legacy list). Prefer installations map above.
+            println!("[JavaPicker/strict] 使用 java_paths 中的: {}", p);
+            return Ok(p.clone());
+        }
+        if !p.trim().is_empty() {
+            saw_invalid = true;
         }
     }
-    if !is_auto_java_selection(&selected_java)
-        && is_executable_file(Path::new(&selected_java))
-    {
-        println!("[JavaPicker] 使用 selected_java_path: {}", selected_java);
-        return selected_java;
+
+    if !is_auto_java_selection(&selected_java) {
+        if is_executable_file(Path::new(&selected_java)) {
+            println!(
+                "[JavaPicker/strict] 使用 selected_java_path: {}",
+                selected_java
+            );
+            return Ok(selected_java);
+        }
+        if !selected_java.trim().is_empty() {
+            saw_invalid = true;
+        }
     }
+
     let java_download_dir = get_java_download_dir()
         .map(PathBuf::from)
         .unwrap_or_else(|_| PathBuf::from("."));
@@ -204,6 +224,8 @@ pub fn pick_java_executable(mc_version: &str) -> String {
                     if let Some(major) = runtime_java_major(&dir) {
                         if major >= required {
                             compatible.push((major, exe));
+                        } else {
+                            saw_too_old = true;
                         }
                     }
                 }
@@ -211,18 +233,52 @@ pub fn pick_java_executable(mc_version: &str) -> String {
             compatible.sort_by_key(|(major, _)| *major);
             if let Some((major, exe)) = compatible.into_iter().next() {
                 let java = exe.to_string_lossy().to_string();
-                println!("[JavaPicker] 使用已下载的兼容 Java {}: {}", major, java);
-                return java;
+                println!(
+                    "[JavaPicker/strict] 使用已下载的兼容 Java {}: {}",
+                    major, java
+                );
+                return Ok(java);
             }
         }
     }
+
     if let Some(java) = find_system_java() {
         let java = java.to_string_lossy().to_string();
-        println!("[JavaPicker] 从系统 PATH 找到 Java: {}", java);
-        return java;
+        println!("[JavaPicker/strict] 从系统 PATH 找到 Java: {}", java);
+        return Ok(java);
     }
-    println!("[JavaPicker] 未找到可用 Java，回退到系统默认 'java'");
-    "java".to_string()
+
+    if saw_too_old {
+        Err("JAVA_TOO_OLD".to_string())
+    } else if saw_invalid {
+        Err("JAVA_INVALID".to_string())
+    } else {
+        Err("JAVA_MISSING".to_string())
+    }
+}
+
+/// Legacy picker (may fall back to `"java"`). Prefer `pick_java_executable_strict`
+/// for version-install sessions.
+pub fn pick_java_executable(mc_version: &str) -> String {
+    match pick_java_executable_strict(mc_version) {
+        Ok(p) => p,
+        Err(_) => {
+            // Soft fallback for non-session call sites that still expect a string.
+            let required = required_java_major_for_mc(mc_version);
+            let launcher_config = get_launcher_paths_config();
+            for info in launcher_config.java_installations.values() {
+                if is_executable_file(Path::new(&info.path)) {
+                    println!(
+                        "[JavaPicker] 软回退到已安装 Java {}: {} (需要 {}+)",
+                        info.major_version, info.path, required
+                    );
+                    return info.path.clone();
+                }
+            }
+            println!("[JavaPicker] 未找到可用 Java，回退到系统默认 'java'");
+            "java".to_string()
+        }
+    }
 }
 fn resolve_maven(coord: &str) -> Result<(String, String)> {
     let (coord_clean, ext) = match coord.rsplit_once('@') {
@@ -912,6 +968,7 @@ pub async fn install(
     cfg: &LoaderInstallerConfig,
     mc_dir: &Path,
     progress_tx: Option<tokio::sync::mpsc::Sender<f64>>,
+    byte_batch_tx: Option<tokio::sync::mpsc::Sender<(u64, u64)>>,
     wait_for_original: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
 ) -> Result<String> {
     if !cfg.installer_jar_path.exists() {
@@ -1689,7 +1746,12 @@ pub async fn install(
         &mut lib_tasks,
     );
     println!("需要下载 {} 个库文件", lib_tasks.len());
-    let result = concurrent_download::download_all(lib_tasks, progress_tx.clone()).await;
+    let byte_tracker = byte_batch_tx.map(crate::downloader::install_progress::ByteBatchTracker::new);
+    let dl_tx = progress_tx
+        .as_ref()
+        .map(|outer| crate::downloader::install_progress::attach_download_progress_scaler(outer.clone()));
+    let result =
+        concurrent_download::download_all_with_bytes(lib_tasks, dl_tx, byte_tracker).await;
     println!(
         "下载完成: 成功 {} / 失败 {}",
         result.success_count,
@@ -1701,6 +1763,7 @@ pub async fn install(
         }
         bail!("未能下载全部依赖库，{} 个文件失败", result.failures.len());
     }
+    crate::downloader::install_progress::emit_install_phase_start(&progress_tx);
     if let Some(ready) = wait_for_original {
         while !ready.load(std::sync::atomic::Ordering::SeqCst) {
             tokio::time::sleep(std::time::Duration::from_millis(200)).await;
@@ -1795,7 +1858,12 @@ pub async fn install(
             );
         }
         println!("[Processor {}/{}] ✓ 成功", idx + 1, proc_list.len());
+        crate::downloader::install_progress::emit_install_phase_fraction(
+            &progress_tx,
+            (idx + 1) as f64 / proc_list.len() as f64,
+        );
     }
+    crate::downloader::install_progress::emit_install_phase_done(&progress_tx);
     // 确保 options.txt 存在并设置语言为中文
     let versions_dir = root.join("versions").join(&id);
     let options_path = versions_dir.join("options.txt");

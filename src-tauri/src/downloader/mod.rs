@@ -11,6 +11,7 @@ pub mod dwPatch;
 // the loader formats we support, even when the current UI does not call them.
 pub mod fabric_installer;
 pub mod forge_installer;
+pub mod install_progress;
 #[allow(dead_code)]
 pub mod liteloader_installer;
 #[allow(dead_code, non_snake_case)]
@@ -27,3 +28,4 @@ pub mod optifine_installer;
 pub mod quilt_installer;
 #[allow(dead_code)]
 pub mod shared_utils;
+pub mod version_install;

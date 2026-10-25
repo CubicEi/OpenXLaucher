@@ -10,8 +10,29 @@ import {
 } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { type UnlistenFn } from "@tauri-apps/api/event";
-import { makeStartDownloadFn } from "./download-event-utils";
+import { dismissTaskIds, isTaskDismissed } from "./download-dismissed-tasks";
+import {
+  bindVersionInstallPair,
+  makeStartDownloadFn,
+} from "./download-event-utils";
 import { isTauriRuntime } from "@/lib/tauri-runtime";
+import { flyToProcessList } from "@/components/process-list/fly-to-process-list";
+import {
+  DownloadCornerNoticeProvider,
+  useDownloadCornerNotice,
+  type PushDownloadCornerNoticeInput,
+} from "@/components/download/download-corner-notice";
+import {
+  downloadTaskLabel,
+  formatJavaInvokeError,
+  installTaskLabel,
+  planMcVersionForJava,
+  planNeedsJava,
+  registerVanillaQueueUnlock,
+  type JavaCheckResult,
+  type VersionInstallPlanInput,
+  type VersionInstallSessionStart,
+} from "./version-install";
 
 export type DownloadTaskStatus =
   | "queued"
@@ -29,8 +50,14 @@ export interface DownloadTask {
   mcVersion: string;
   status: DownloadTaskStatus;
   progress?: number;
-  /** 当前阶段文案（如「下载原版文件」「安装 mod 加载器」） */
+  /** 当前阶段文案（如「下载原版文件」「安装mod加载器」） */
   detail?: string;
+  /** 后端 progress 事件的 stage 字段（优先于 detail 展示） */
+  stage?: string;
+  /** 瞬时下载速度（字节/秒），仅在涉及下载的阶段有意义 */
+  speedBps?: number;
+  /** 已下载字节数（用于速度估算） */
+  bytesDownloaded?: number;
   error?: string;
   /** 部分失败的文件数量 */
   failedCount?: number;
@@ -38,6 +65,12 @@ export interface DownloadTask {
   startedAt: number;
   /** 目标实例目录名（组包/加载器安装完成后的 versions 文件夹名） */
   targetInstanceName?: string;
+  /** Dual-task version-install role */
+  role?: "download" | "install";
+  /** Shared session id for download+install pair */
+  sessionId?: string;
+  /** Install tasks use indeterminate UI (no percent/speed) */
+  progressMode?: "percent" | "indeterminate";
 }
 
 /** Matches Rust `ModUpdateInfo` (camelCase serde). */
@@ -125,6 +158,9 @@ interface DownloadContextValue {
   clearFinished: () => void;
   /** 从任务列表中移除单个任务 */
   removeTask: (taskId: number) => void;
+  /** 右下角提示（版本列表加载等） */
+  pushNotice: (input: PushDownloadCornerNoticeInput) => string;
+  dismissNotice: (id: string) => void;
 }
 
 const DownloadContext = createContext<DownloadContextValue | null>(null);
@@ -139,13 +175,23 @@ export function useDownloadManager() {
 
 /** 排队中的任务（还未发往后端，只用于原版下载）*/
 interface QueueItem {
-  localId: number;
-  label: string;
+  localDownloadId: number;
+  localInstallId: number;
+  displayName: string;
   mcVersion: string;
   instanceName?: string;
 }
 
 export function DownloadProvider({ children }: { children: React.ReactNode }) {
+  return (
+    <DownloadCornerNoticeProvider>
+      <DownloadProviderInner>{children}</DownloadProviderInner>
+    </DownloadCornerNoticeProvider>
+  );
+}
+
+function DownloadProviderInner({ children }: { children: React.ReactNode }) {
+  const { pushNotice, dismissNotice } = useDownloadCornerNotice();
   const [tasks, setTasks] = useState<DownloadTask[]>([]);
   const unlistensRef = useRef<UnlistenFn[]>([]);
   const listenerSetupRef = useRef<Promise<void> | null>(null);
@@ -155,6 +201,57 @@ export function DownloadProvider({ children }: { children: React.ReactNode }) {
   const localIdCounterRef = useRef(-1);
   /** 非原版下载的 taskId 计数器（从 1_000_000 起，避免与后端 taskId 冲突）*/
   const taskIdCounterRef = useRef(1_000_000);
+  /** Local placeholder IDs cancelled before backend bind — remap cancel to real taskId. */
+  const cancelledLocalIdsRef = useRef(new Set<number>());
+  const showJavaPrecheckFailure = useCallback(
+    (message: string) => {
+      pushNotice({
+        variant: "error",
+        message,
+      });
+    },
+    [pushNotice]
+  );
+
+  /** Strict Java preflight — returns false when UI should abort (no tasks created yet). */
+  const ensureJavaForPlan = useCallback(
+    async (plan: VersionInstallPlanInput): Promise<boolean> => {
+      if (!planNeedsJava(plan)) return true;
+      const mcVersion = planMcVersionForJava(plan);
+      try {
+        const result = await invoke<JavaCheckResult>("check_java_for_mc_version", {
+          mcVersion,
+          needsJava: true,
+        });
+        if (result.ok) return true;
+        showJavaPrecheckFailure(
+          result.errorMessage ||
+            `未找到适用于 Minecraft ${mcVersion} 的 Java ${result.requiredMajor}+，请先前往设置下载或配置 Java。`
+        );
+        return false;
+      } catch (e) {
+        showJavaPrecheckFailure(formatJavaInvokeError(e));
+        return false;
+      }
+    },
+    [showJavaPrecheckFailure]
+  );
+
+  /** Avoid TDZ between dequeue ↔ session start ↔ listener warmup. */
+  const ensureDownloadListenersRef = useRef<() => Promise<void>>(async () => {});
+  const startVersionInstallSessionRef = useRef<
+    (opts: {
+      plan: VersionInstallPlanInput;
+      displayName: string;
+      mcVersion: string;
+      instanceName?: string;
+      localDownloadId?: number;
+      localInstallId?: number;
+      placeholdersExist?: boolean;
+    }) => Promise<number>
+  >(async () => {
+    throw new Error("startVersionInstallSession not ready");
+  });
 
   /** ========== 排队机制（仅用于原版 Minecraft 下载）========== */
   const dequeueNext = useCallback(async () => {
@@ -164,27 +261,41 @@ export function DownloadProvider({ children }: { children: React.ReactNode }) {
 
     isDownloadingRef.current = true;
     try {
-      const taskId = await invoke<number>("download_patcher", {
+      await ensureDownloadListenersRef.current();
+      const downloadTaskId = await startVersionInstallSessionRef.current({
+        plan: {
+          kind: "vanillaOnly",
+          mcVersion: next.mcVersion,
+          instanceName: next.instanceName ?? null,
+        },
+        displayName: next.displayName,
         mcVersion: next.mcVersion,
-        instanceName: next.instanceName ?? null,
+        instanceName: next.instanceName,
+        localDownloadId: next.localDownloadId,
+        localInstallId: next.localInstallId,
+        placeholdersExist: true,
       });
-      setTasks((prev) =>
-        prev.map((t) =>
-          t.taskId === next.localId
-            ? { ...t, taskId, status: "downloading" as const, startedAt: Date.now() }
-            : t
-        )
-      );
+      registerVanillaQueueUnlock(downloadTaskId);
     } catch (e) {
-      setTasks((prev) =>
-        prev.map((t) =>
-          t.taskId === next.localId
-            ? { ...t, status: "error" as const, error: String(e) }
-            : t
-        )
-      );
+      const msg = String(e);
+      if (msg.includes("JAVA_PRECHECK_FAILED")) {
+        setTasks((prev) =>
+          prev.filter(
+            (t) =>
+              t.taskId !== next.localDownloadId && t.taskId !== next.localInstallId
+          )
+        );
+      } else {
+        setTasks((prev) =>
+          prev.map((t) =>
+            t.taskId === next.localDownloadId || t.taskId === next.localInstallId
+              ? { ...t, status: "error" as const, error: msg }
+              : t
+          )
+        );
+      }
       isDownloadingRef.current = false;
-      dequeueNext();
+      void dequeueNext();
     }
   }, []);
 
@@ -217,6 +328,171 @@ export function DownloadProvider({ children }: { children: React.ReactNode }) {
     }
     await listenerSetupRef.current;
   }, [markDownloadDone]);
+  ensureDownloadListenersRef.current = ensureDownloadListeners;
+
+  /**
+   * Create dual placeholders, invoke start_version_install_session, bind both IDs.
+   * Returns downloadTaskId (compat with existing callers).
+   * Callers must run Java-sensitive plans only after listeners are warm; Java is
+   * checked here **before** creating placeholders.
+   */
+  const startVersionInstallSession = useCallback(
+    async (opts: {
+      plan: VersionInstallPlanInput;
+      displayName: string;
+      mcVersion: string;
+      instanceName?: string;
+      localDownloadId?: number;
+      localInstallId?: number;
+      placeholdersExist?: boolean;
+    }): Promise<number> => {
+      await ensureDownloadListenersRef.current();
+      const {
+        plan,
+        displayName,
+        mcVersion,
+        instanceName,
+        placeholdersExist = false,
+      } = opts;
+
+      if (!(await ensureJavaForPlan(plan))) {
+        throw new Error("JAVA_PRECHECK_FAILED");
+      }
+
+      const localDownloadId = opts.localDownloadId ?? taskIdCounterRef.current++;
+      const localInstallId = opts.localInstallId ?? taskIdCounterRef.current++;
+      const startedAt = Date.now();
+
+      if (!placeholdersExist) {
+        const downloadTask: DownloadTask = {
+          clientId: `client-${localDownloadId}`,
+          taskId: localDownloadId,
+          label: downloadTaskLabel(displayName),
+          mcVersion,
+          status: "downloading",
+          detail: "准备下载",
+          role: "download",
+          progressMode: "percent",
+          startedAt,
+          ...(instanceName?.trim()
+            ? { targetInstanceName: instanceName.trim() }
+            : {}),
+        };
+        const installTask: DownloadTask = {
+          clientId: `client-${localInstallId}`,
+          taskId: localInstallId,
+          label: installTaskLabel(displayName),
+          mcVersion,
+          status: "downloading",
+          detail: "准备安装",
+          role: "install",
+          progressMode: "indeterminate",
+          startedAt,
+          ...(instanceName?.trim()
+            ? { targetInstanceName: instanceName.trim() }
+            : {}),
+        };
+        setTasks((prev) => [downloadTask, installTask, ...prev]);
+        flyToProcessList();
+      } else {
+        setTasks((prev) =>
+          prev.map((t) => {
+            if (t.taskId === localDownloadId || t.taskId === localInstallId) {
+              return {
+                ...t,
+                status: "downloading" as const,
+                startedAt,
+              };
+            }
+            return t;
+          })
+        );
+      }
+
+      try {
+        const start = await invoke<VersionInstallSessionStart>(
+          "start_version_install_session",
+          { plan }
+        );
+        setTasks((prev) =>
+          bindVersionInstallPair(
+            prev,
+            localDownloadId,
+            localInstallId,
+            start.downloadTaskId,
+            start.installTaskId,
+            start.sessionId,
+            { status: "downloading" }
+          ).map((t) => {
+            if (t.taskId === start.downloadTaskId) {
+              return {
+                ...t,
+                label: downloadTaskLabel(start.displayName || displayName),
+                detail: t.detail ?? "准备下载",
+              };
+            }
+            if (t.taskId === start.installTaskId) {
+              return {
+                ...t,
+                label: installTaskLabel(start.displayName || displayName),
+                detail: t.detail ?? "准备安装",
+              };
+            }
+            return t;
+          })
+        );
+
+        if (
+          cancelledLocalIdsRef.current.has(localDownloadId) ||
+          cancelledLocalIdsRef.current.has(localInstallId)
+        ) {
+          cancelledLocalIdsRef.current.delete(localDownloadId);
+          cancelledLocalIdsRef.current.delete(localInstallId);
+          cancelledLocalIdsRef.current.add(start.downloadTaskId);
+          cancelledLocalIdsRef.current.add(start.installTaskId);
+          dismissTaskIds(localDownloadId, localInstallId);
+          if (isTaskDismissed(localDownloadId) || isTaskDismissed(localInstallId)) {
+            dismissTaskIds(start.downloadTaskId, start.installTaskId);
+          } else {
+            setTasks((prev) =>
+              prev.map((t) =>
+                t.sessionId === start.sessionId ||
+                t.taskId === start.downloadTaskId ||
+                t.taskId === start.installTaskId
+                  ? { ...t, status: "cancelled" as const, error: "已取消" }
+                  : t
+              )
+            );
+          }
+          try {
+            await invoke("cancel_version_install_session", {
+              sessionId: start.sessionId,
+            });
+          } catch (cancelErr) {
+            console.error("取消版本安装会话失败:", cancelErr);
+          }
+        }
+        return start.downloadTaskId;
+      } catch (e) {
+        const message = String(e).includes("JAVA_")
+          ? formatJavaInvokeError(e)
+          : String(e);
+        if (String(e).includes("JAVA_")) {
+          showJavaPrecheckFailure(message);
+        }
+        setTasks((prev) =>
+          prev.map((t) =>
+            t.taskId === localDownloadId || t.taskId === localInstallId
+              ? { ...t, status: "error" as const, error: message }
+              : t
+          )
+        );
+        throw e;
+      }
+    },
+    [ensureJavaForPlan, showJavaPrecheckFailure]
+  );
+  startVersionInstallSessionRef.current = startVersionInstallSession;
 
   /** ========== 空闲时预热事件监听 ========== */
   useEffect(() => {
@@ -243,50 +519,75 @@ export function DownloadProvider({ children }: { children: React.ReactNode }) {
 
   /** ========== 启动函数 ========== */
 
-  /** 原版下载（排队制）*/
+  /** 原版下载（排队制）— dual-task version-install session */
   const startDownload = useCallback(
     async (label: string, mcVersion: string, instanceName?: string): Promise<number> => {
       await ensureDownloadListeners();
+      const displayName = instanceName?.trim() || label || mcVersion;
+      flyToProcessList();
       if (!isDownloadingRef.current) {
         isDownloadingRef.current = true;
         try {
-          const taskId = await invoke<number>("download_patcher", { mcVersion, instanceName: instanceName ?? null });
-          const task: DownloadTask = {
-            clientId: `server-${taskId}`,
-            taskId,
-            label,
+          const downloadTaskId = await startVersionInstallSession({
+            plan: {
+              kind: "vanillaOnly",
+              mcVersion,
+              instanceName: instanceName ?? null,
+            },
+            displayName,
             mcVersion,
-            status: "downloading",
-            startedAt: Date.now(),
-            ...(instanceName?.trim()
-              ? { targetInstanceName: instanceName.trim() }
-              : {}),
-          };
-          setTasks((prev) => [task, ...prev]);
-          return taskId;
+            instanceName,
+          });
+          registerVanillaQueueUnlock(downloadTaskId);
+          return downloadTaskId;
         } catch (e) {
           isDownloadingRef.current = false;
+          void dequeueNext();
+          if (String(e).includes("JAVA_PRECHECK_FAILED")) return -1;
           throw e;
         }
-      } else {
-        const localId = localIdCounterRef.current--;
-        pendingQueueRef.current.push({ localId, label, mcVersion, instanceName });
-        const task: DownloadTask = {
-          clientId: `client-${localId}`,
-          taskId: localId,
-          label,
-          mcVersion,
-          status: "queued",
-          startedAt: Date.now(),
-          ...(instanceName?.trim()
-            ? { targetInstanceName: instanceName.trim() }
-            : {}),
-        };
-        setTasks((prev) => [task, ...prev]);
-        return localId;
       }
+
+      const localDownloadId = localIdCounterRef.current--;
+      const localInstallId = localIdCounterRef.current--;
+      pendingQueueRef.current.push({
+        localDownloadId,
+        localInstallId,
+        displayName,
+        mcVersion,
+        instanceName,
+      });
+      const startedAt = Date.now();
+      const downloadTask: DownloadTask = {
+        clientId: `client-${localDownloadId}`,
+        taskId: localDownloadId,
+        label: downloadTaskLabel(displayName),
+        mcVersion,
+        status: "queued",
+        role: "download",
+        progressMode: "percent",
+        startedAt,
+        ...(instanceName?.trim()
+          ? { targetInstanceName: instanceName.trim() }
+          : {}),
+      };
+      const installTask: DownloadTask = {
+        clientId: `client-${localInstallId}`,
+        taskId: localInstallId,
+        label: installTaskLabel(displayName),
+        mcVersion,
+        status: "queued",
+        role: "install",
+        progressMode: "indeterminate",
+        startedAt,
+        ...(instanceName?.trim()
+          ? { targetInstanceName: instanceName.trim() }
+          : {}),
+      };
+      setTasks((prev) => [downloadTask, installTask, ...prev]);
+      return localDownloadId;
     },
-    [ensureDownloadListeners]
+    [dequeueNext, ensureDownloadListeners, startVersionInstallSession]
   );
 
   /** 使用工厂生成的通用 start 函数 */
@@ -294,12 +595,14 @@ export function DownloadProvider({ children }: { children: React.ReactNode }) {
     setTasks,
     taskIdCounterRef,
     dequeueNext,
-    ensureDownloadListeners
+    ensureDownloadListeners,
+    cancelledLocalIdsRef
   );
 
   /** Java 下载 - 只创建前端 task，不 invoke，Java 下载由其他命令触发 */
   const startJavaDownload = useCallback(async (runtimeName: string) => {
     await ensureDownloadListeners();
+    flyToProcessList();
     const taskId = taskIdCounterRef.current++;
     setTasks((prev) => {
       const isDownloading = prev.some(
@@ -312,6 +615,7 @@ export function DownloadProvider({ children }: { children: React.ReactNode }) {
         label: runtimeName,
         mcVersion: "Java",
         status: "downloading",
+        detail: "下载",
         startedAt: Date.now(),
       };
       return [task, ...prev];
@@ -319,87 +623,120 @@ export function DownloadProvider({ children }: { children: React.ReactNode }) {
     return taskId;
   }, [ensureDownloadListeners]);
 
+  const startSingleLoaderSession = useCallback(
+    async (
+      loaderType: string,
+      mcVersion: string,
+      loaderVersion: string,
+      displayName: string,
+      instanceName?: string,
+      apiVersion?: string
+    ) => {
+      try {
+        return await startVersionInstallSession({
+          plan: {
+            kind: "singleLoader",
+            loaderType,
+            mcVersion,
+            loaderVersion,
+            apiVersion: apiVersion || null,
+            instanceName: instanceName ?? null,
+          },
+          displayName: instanceName?.trim() || displayName,
+          mcVersion,
+          instanceName,
+        });
+      } catch (e) {
+        if (String(e).includes("JAVA_PRECHECK_FAILED")) return -1;
+        throw e;
+      }
+    },
+    [startVersionInstallSession]
+  );
+
   /** OptiFine */
   const startOptifineDownload = useCallback(
-    async (optifineVersion: string, mcVersion: string, instanceName?: string, optifineFallbackUrl?: string) => {
-      return startModLoaderDownload({
-        label: optifineVersion,
+    async (optifineVersion: string, mcVersion: string, instanceName?: string, _optifineFallbackUrl?: string) => {
+      return startSingleLoaderSession(
+        "optifine",
         mcVersion,
-        tauriCommand: "download_and_install_optifine",
-        params: { optifineVersion, mcVersion, instanceName: instanceName ?? null, optifineFallbackUrl: optifineFallbackUrl ?? null },
-      });
+        optifineVersion,
+        optifineVersion,
+        instanceName
+      );
     },
-    [startModLoaderDownload]
+    [startSingleLoaderSession]
   );
 
   /** Fabric */
   const startFabricDownload = useCallback(
     async (mcVersion: string, loaderVersion: string, apiVersion?: string, instanceName?: string) => {
       const label = `Fabric ${loaderVersion}${apiVersion ? ` + API ${apiVersion}` : ""}`;
-      return startModLoaderDownload({
-        label,
+      return startSingleLoaderSession(
+        "fabric",
         mcVersion,
-        tauriCommand: "download_and_install_fabric",
-        params: { mcVersion, loaderVersion, apiVersion: apiVersion || null, instanceName: instanceName ?? null },
-      });
+        loaderVersion,
+        label,
+        instanceName,
+        apiVersion
+      );
     },
-    [startModLoaderDownload]
+    [startSingleLoaderSession]
   );
 
   /** Quilt */
   const startQuiltDownload = useCallback(
     async (mcVersion: string, loaderVersion: string, apiVersion?: string, instanceName?: string) => {
       const label = `Quilt ${loaderVersion}${apiVersion ? ` + API ${apiVersion}` : ""}`;
-      return startModLoaderDownload({
-        label,
+      return startSingleLoaderSession(
+        "quilt",
         mcVersion,
-        tauriCommand: "download_and_install_quilt",
-        params: { mcVersion, loaderVersion, apiVersion: apiVersion || null, instanceName: instanceName ?? null },
-      });
+        loaderVersion,
+        label,
+        instanceName,
+        apiVersion
+      );
     },
-    [startModLoaderDownload]
+    [startSingleLoaderSession]
   );
 
   /** Forge */
   const startForgeDownload = useCallback(
     async (mcVersion: string, forgeVersion: string, instanceName?: string) => {
       const label = `Forge ${forgeVersion} (MC ${mcVersion})`;
-      return startModLoaderDownload({
-        label,
-        mcVersion,
-        tauriCommand: "download_and_install_forge",
-        params: { mcVersion, forgeVersion, instanceName: instanceName ?? null },
-      });
+      return startSingleLoaderSession("forge", mcVersion, forgeVersion, label, instanceName);
     },
-    [startModLoaderDownload]
+    [startSingleLoaderSession]
   );
 
   /** NeoForge */
   const startNeoForgeDownload = useCallback(
     async (mcVersion: string, neoforgeVersion: string, instanceName?: string) => {
       const label = `NeoForge ${neoforgeVersion} (MC ${mcVersion})`;
-      return startModLoaderDownload({
-        label,
+      return startSingleLoaderSession(
+        "neoforge",
         mcVersion,
-        tauriCommand: "download_and_install_neoforge",
-        params: { mcVersion, neoforgeVersion, instanceName: instanceName ?? null },
-      });
+        neoforgeVersion,
+        label,
+        instanceName
+      );
     },
-    [startModLoaderDownload]
+    [startSingleLoaderSession]
   );
 
   /** LiteLoader */
   const startLiteLoaderDownload = useCallback(
     async (mcVersion: string, liteloaderVersion: string, instanceName?: string) => {
       const label = `LiteLoader ${liteloaderVersion} (MC ${mcVersion})`;
-      return startModLoaderDownload({
-        label,
+      return startSingleLoaderSession(
+        "liteloader",
         mcVersion,
-        tauriCommand: "download_and_install_liteloader",
-        params: { mcVersion, liteloaderVersion, instanceName: instanceName ?? null },
-      });
+        liteloaderVersion,
+        label,
+        instanceName
+      );
     },
-    [startModLoaderDownload]
+    [startSingleLoaderSession]
   );
 
   /** Mod 文件下载 */
@@ -468,7 +805,7 @@ export function DownloadProvider({ children }: { children: React.ReactNode }) {
     [startModLoaderDownload]
   );
 
-  /** 组合安装（原版 + 多个兼容加载器 + Fabric API，后端自动组包成单个实例） */
+  /** 组合安装（原版 + 多个兼容加载器 + Fabric API）— dual-task session */
   const startCombinedInstall = useCallback(
     async (
       label: string,
@@ -476,39 +813,44 @@ export function DownloadProvider({ children }: { children: React.ReactNode }) {
       selections: { loader: string; version: string }[],
       instanceName: string
     ) => {
-      await ensureDownloadListeners();
-      const taskId = await invoke<number>("install_combined_package", {
-        mcVersion,
-        selections: selections.map((s) => ({ loader_type: s.loader, version: s.version })),
-        instanceName,
-      });
-      const task: DownloadTask = {
-        clientId: `server-${taskId}`,
-        taskId,
-        label,
-        mcVersion,
-        status: "downloading",
-        startedAt: Date.now(),
-        targetInstanceName: instanceName.trim() || undefined,
-      };
-      setTasks((prev) => [task, ...prev]);
-      return taskId;
+      try {
+        return await startVersionInstallSession({
+          plan: {
+            kind: "combined",
+            mcVersion,
+            selections: selections.map((s) => ({
+              loaderType: s.loader,
+              version: s.version,
+            })),
+            instanceName: instanceName || null,
+          },
+          displayName: instanceName.trim() || label || mcVersion,
+          mcVersion,
+          instanceName,
+        });
+      } catch (e) {
+        if (String(e).includes("JAVA_PRECHECK_FAILED")) return -1;
+        throw e;
+      }
     },
-    [ensureDownloadListeners]
+    [startVersionInstallSession]
   );
 
-  /** 整合包安装（异步，进度显示在右下角下载任务栏） */
+  /** 整合包安装（异步，进度显示在任务队列） */
   const startModpackDownload = useCallback(
     async (modpackName: string, path: string) => {
-      const label = `整合包: ${modpackName}`;
-      return startModLoaderDownload({
-        label,
-        mcVersion: "整合包",
-        tauriCommand: "install_modpack_from_zip_cmd",
-        params: { path },
-      });
+      try {
+        return await startVersionInstallSession({
+          plan: { kind: "modpack", zipPath: path },
+          displayName: modpackName,
+          mcVersion: "整合包",
+        });
+      } catch (e) {
+        if (String(e).includes("JAVA_PRECHECK_FAILED")) return -1;
+        throw e;
+      }
     },
-    [startModLoaderDownload]
+    [startVersionInstallSession]
   );
 
   const updateKindLabel = (resourceKind: string) => {
@@ -586,52 +928,111 @@ export function DownloadProvider({ children }: { children: React.ReactNode }) {
   /** ========== 取消与清理 ========== */
   const cancelDownload = useCallback(
     async (taskId: number) => {
-      if (taskId < 0) {
-        // 排队中的任务，从队列和 tasks 中移除即可
-        pendingQueueRef.current = pendingQueueRef.current.filter(
-          (item) => item.localId !== taskId
-        );
-        setTasks((prev) => prev.filter((t) => t.taskId !== taskId));
+      // Snapshot pairing from latest tasks state.
+      const snapshot = await new Promise<{
+        sessionId?: string;
+        pairedIds: number[];
+      }>((resolve) => {
+        setTasks((prev) => {
+          const target = prev.find((t) => t.taskId === taskId);
+          let pairedIds = [taskId];
+          const sid = target?.sessionId;
+          if (sid) {
+            pairedIds = prev.filter((t) => t.sessionId === sid).map((t) => t.taskId);
+          } else if (target?.role) {
+            const sibling = prev.find(
+              (t) =>
+                t.taskId !== taskId &&
+                !t.sessionId &&
+                t.role &&
+                t.role !== target.role &&
+                t.mcVersion === target.mcVersion &&
+                Math.abs(t.startedAt - target.startedAt) < 2000
+            );
+            if (sibling) pairedIds = [taskId, sibling.taskId];
+          }
+          resolve({ sessionId: sid, pairedIds });
+          return prev;
+        });
+      });
+
+      const { sessionId, pairedIds } = snapshot;
+
+      pendingQueueRef.current = pendingQueueRef.current.filter(
+        (item) =>
+          !pairedIds.includes(item.localDownloadId) &&
+          !pairedIds.includes(item.localInstallId)
+      );
+
+      for (const id of pairedIds) {
+        cancelledLocalIdsRef.current.add(id);
+        dismissTaskIds(id);
+      }
+
+      const allQueuedLocal = pairedIds.every((id) => id < 0);
+      if (allQueuedLocal) {
+        setTasks((prev) => prev.filter((t) => !pairedIds.includes(t.taskId)));
         return;
       }
-      // 立即更新前端状态
+
       setTasks((prev) =>
         prev.map((t) =>
-          t.taskId === taskId && t.status === "downloading"
+          pairedIds.includes(t.taskId) &&
+          (t.status === "downloading" || t.status === "queued")
             ? { ...t, status: "cancelled" as const, error: "已取消" }
             : t
         )
       );
+
       try {
-        await Promise.allSettled([
-          invoke("cancel_download", { taskId }),
-          invoke("cancel_mod_download", { taskId }),
-          invoke("cancel_optifine_download", { taskId }),
-          invoke("cancel_fabric_download", { taskId }),
-          invoke("cancel_quilt_download", { taskId }),
-          invoke("cancel_forge_download", { taskId }),
-          invoke("cancel_neoforge_download", { taskId }),
-          invoke("cancel_liteloader_download", { taskId }),
-          invoke("cancel_combined_download", { taskId }),
-          invoke("cancel_java_download", { taskId }),
-        ]);
+        if (sessionId) {
+          await invoke("cancel_version_install_session", { sessionId });
+        } else {
+          // Legacy / unbound: cancel by either task id (backend maps to session).
+          await Promise.allSettled([
+            ...pairedIds.flatMap((id) => [
+              invoke("cancel_download", { taskId: id }),
+              invoke("cancel_combined_download", { taskId: id }),
+              invoke("cancel_optifine_download", { taskId: id }),
+              invoke("cancel_fabric_download", { taskId: id }),
+              invoke("cancel_quilt_download", { taskId: id }),
+              invoke("cancel_forge_download", { taskId: id }),
+              invoke("cancel_neoforge_download", { taskId: id }),
+              invoke("cancel_liteloader_download", { taskId: id }),
+              invoke("cancel_modpack_install", { taskId: id }),
+            ]),
+            invoke("cancel_mod_download", { taskId }),
+            invoke("cancel_java_download", { taskId }),
+          ]);
+        }
       } catch (e) {
         console.error("取消下载失败:", e);
       }
-      // 取消正在下载的任务后，重置下载状态并尝试启动下一个任务
       isDownloadingRef.current = false;
-      dequeueNext();
+      void dequeueNext();
     },
     [dequeueNext]
   );
 
   const clearFinished = useCallback(() => {
-    setTasks((prev) =>
-      prev.filter((t) => t.status === "downloading" || t.status === "queued")
-    );
+    setTasks((prev) => {
+      const keep: DownloadTask[] = [];
+      const removedIds: number[] = [];
+      for (const t of prev) {
+        if (t.status === "downloading" || t.status === "queued") {
+          keep.push(t);
+        } else {
+          removedIds.push(t.taskId);
+        }
+      }
+      dismissTaskIds(...removedIds);
+      return keep;
+    });
   }, []);
 
   const removeTask = useCallback((taskId: number) => {
+    dismissTaskIds(taskId);
+    cancelledLocalIdsRef.current.delete(taskId);
     setTasks((prev) => prev.filter((t) => t.taskId !== taskId));
   }, []);
 
@@ -656,6 +1057,8 @@ export function DownloadProvider({ children }: { children: React.ReactNode }) {
         cancelDownload,
         clearFinished,
         removeTask,
+        pushNotice,
+        dismissNotice,
       }}
     >
       {children}

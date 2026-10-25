@@ -12,7 +12,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { LoaderVersionList } from "@/components/download/loader-version-list";
-import { ArrowLeft, Loader2, Download } from "lucide-react";
+import { ArrowLeft, Download } from "lucide-react";
 import { slideInFromRight, fadeIn } from "@/lib/motion";
 import type { LoaderVersion } from "@/types";
 import { invoke } from "@tauri-apps/api/core";
@@ -34,32 +34,54 @@ export function QuiltApiDetail({ mcVersion, onBack }: QuiltApiDetailProps) {
   const [pendingApi, setPendingApi] = useState<LoaderVersion | null>(null);
   const [instanceNameInput, setInstanceNameInput] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
-  const { startQuiltDownload } = useDownloadManager();
+  const { startQuiltDownload, pushNotice, dismissNotice } = useDownloadManager();
+  const loadingNoticeActiveRef = useRef(false);
 
   useEffect(() => {
+    let cancelled = false;
+    const noticeId = "quilt-api-detail-versions";
     const fetchApiVersions = async () => {
       setLoading(true);
+      pushNotice({
+        id: noticeId,
+        message: t("download.loadingVersionList"),
+        variant: "info",
+        loading: true,
+      });
+      loadingNoticeActiveRef.current = true;
       try {
         const result = await invoke<{ id: string; version: string }[]>(
           "get_quilt_api_versions",
           { mcVersion }
         );
-        const versions: LoaderVersion[] = result.map(v => ({
+        if (cancelled) return;
+        const versions: LoaderVersion[] = result.map((v) => ({
           id: v.id,
           version: v.version,
           releaseDate: "",
-          isRecommended: false
+          isRecommended: false,
         }));
         setApiVersions(versions);
       } catch (err) {
         console.error("获取Quilt API版本列表失败:", err);
-        setApiVersions([]);
+        if (!cancelled) setApiVersions([]);
       } finally {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
+        if (loadingNoticeActiveRef.current) {
+          dismissNotice(noticeId);
+          loadingNoticeActiveRef.current = false;
+        }
       }
     };
-    fetchApiVersions();
-  }, [mcVersion]);
+    void fetchApiVersions();
+    return () => {
+      cancelled = true;
+      if (loadingNoticeActiveRef.current) {
+        dismissNotice(noticeId);
+        loadingNoticeActiveRef.current = false;
+      }
+    };
+  }, [mcVersion, pushNotice, dismissNotice, t]);
 
   const defaultName = (apiVer: string) => `${mcVersion}-Quilt-${QUILT_LOADER_DEFAULT}-API-${apiVer}`;
 
@@ -73,8 +95,7 @@ export function QuiltApiDetail({ mcVersion, onBack }: QuiltApiDetailProps) {
     setPendingApi(null);
 
     try {
-      const taskId = await startQuiltDownload(mcVersion, QUILT_LOADER_DEFAULT, api.version, instanceName);
-      console.log(`Quilt API 下载任务已启动，任务ID: ${taskId}`);
+      await startQuiltDownload(mcVersion, QUILT_LOADER_DEFAULT, api.version, instanceName);
     } catch (err) {
       console.error("下载并安装Quilt API失败:", err);
     }
@@ -126,19 +147,7 @@ export function QuiltApiDetail({ mcVersion, onBack }: QuiltApiDetailProps) {
       {/* 内容区域 */}
       <div className="flex-1 min-h-0 overflow-y-auto p-1">
         <AnimatePresence mode="wait">
-          {loading ? (
-            <motion.div
-              key="loading"
-              className="flex flex-1 flex-col items-center justify-center gap-3 text-muted-foreground"
-              variants={fadeIn}
-              initial="initial"
-              animate="animate"
-              exit="exit"
-            >
-              <Loader2 className="size-8 animate-spin" />
-              <p className="text-sm">{t("download.loadingVersionList")}</p>
-            </motion.div>
-          ) : (
+          {!loading ? (
             <motion.div
               key="list"
               variants={fadeIn}
@@ -152,7 +161,7 @@ export function QuiltApiDetail({ mcVersion, onBack }: QuiltApiDetailProps) {
                 onInstall={handleInstall}
               />
             </motion.div>
-          )}
+          ) : null}
         </AnimatePresence>
       </div>
     </div>

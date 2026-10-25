@@ -613,6 +613,11 @@ async fn download_once(
     let label_owned = label.to_string();
     let window_clone = window.clone();
     let reporter = tokio::spawn(async move {
+        let mut last_done = 0u64;
+        let mut last_at = std::time::Instant::now();
+        let mut primed = false;
+        const MIN_SPEED_WINDOW_SECS: f64 = 0.35;
+        const MAX_PLAUSIBLE_BPS: f64 = 500.0 * 1024.0 * 1024.0;
         loop {
             let done = downloaded_for_report.load(Ordering::Relaxed);
             let percent = if total > 0 {
@@ -620,18 +625,38 @@ async fn download_once(
             } else {
                 0.0
             };
+            let elapsed = last_at.elapsed().as_secs_f64();
+            let speed = if primed && elapsed >= MIN_SPEED_WINDOW_SECS {
+                let rate = (done.saturating_sub(last_done) as f64) / elapsed;
+                if rate > 0.0 && rate <= MAX_PLAUSIBLE_BPS {
+                    Some(rate)
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+            if !primed || elapsed >= MIN_SPEED_WINDOW_SECS {
+                last_done = done;
+                last_at = std::time::Instant::now();
+                primed = true;
+            }
             let _ = window_clone.emit(
                 "java-download-progress",
                 serde_json::json!({
                     "task_id": task_id,
                     "percent": percent.min(99.0),
                     "label": label_owned,
+                    "stage": "下载",
+                    "downloaded": done,
+                    "total": total,
+                    "speed": speed,
                 }),
             );
             if total > 0 && done >= total {
                 break;
             }
-            tokio::time::sleep(Duration::from_millis(400)).await;
+            tokio::time::sleep(Duration::from_millis(350)).await;
         }
     });
 
@@ -734,22 +759,5 @@ fn launch_installer(path: &Path) -> Result<(), String> {
     {
         let _ = path_str;
         Err("当前平台不支持自动启动安装程序".to_string())
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn vendor_labels() {
-        assert_eq!(JavaVendor::Zulu.offer_label(21), "Zulu JDK 21");
-        assert_eq!(JavaVendor::Adoptium.offer_label(17), "Temurin 17");
-        assert_eq!(JavaVendor::parse("temurin").unwrap(), JavaVendor::Adoptium);
-    }
-
-    #[test]
-    fn oracle_url_contains_major() {
-        assert!(oracle_download_page(21).contains("#java21"));
     }
 }

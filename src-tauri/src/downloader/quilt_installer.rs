@@ -1,4 +1,5 @@
 use crate::downloader::concurrent_download::{self, DownloadTask};
+use crate::downloader::install_progress;
 use crate::downloader::shared_utils::{self, Library, MetaResponse};
 use crate::http_client::shared_client;
 use anyhow::{anyhow, Result};
@@ -46,6 +47,7 @@ pub async fn install_quilt_loader(
     quilt_version: &str,
     mc_folder_path: &str,
     progress_tx: Option<mpsc::Sender<f64>>,
+    byte_batch_tx: Option<mpsc::Sender<(u64, u64)>>,
 ) -> Result<String> {
     let url = format!(
         "https://meta.quiltmc.org/v3/versions/loader/{}/{}/profile/json",
@@ -78,9 +80,11 @@ pub async fn install_quilt_loader(
         &profile.libraries,
         "https://maven.quiltmc.org/repository/release",
         mc_folder_path,
-        progress_tx,
+        progress_tx.clone(),
+        byte_batch_tx,
     )
     .await?;
+    install_progress::emit_install_phase_start(&progress_tx);
 
     // 确保 options.txt 存在并设置语言为中文
     let options_path = versions_dir.join("options.txt");
@@ -106,6 +110,7 @@ pub async fn install_quilt_loader(
         fs::write(&options_path, "lang:zh_cn")?;
     }
     
+    install_progress::emit_install_phase_done(&progress_tx);
     println!("Quilt Loader 安装完成，版本 ID: {}", version_id);
     Ok(version_id)
 }
@@ -173,6 +178,7 @@ async fn download_libraries(
     default_url: &str,
     mc_folder_path: &str,
     progress_tx: Option<mpsc::Sender<f64>>,
+    byte_batch_tx: Option<mpsc::Sender<(u64, u64)>>,
 ) -> Result<()> {
     let mut tasks = Vec::new();
     for lib in libraries {
@@ -207,7 +213,11 @@ async fn download_libraries(
 
     println!("准备下载 {} 个库文件...", tasks.len());
 
-    let result = concurrent_download::download_all(tasks, progress_tx).await;
+    let byte_tracker = byte_batch_tx.map(install_progress::ByteBatchTracker::new);
+    let dl_tx = progress_tx
+        .as_ref()
+        .map(|outer| install_progress::attach_download_progress_scaler(outer.clone()));
+    let result = concurrent_download::download_all_with_bytes(tasks, dl_tx, byte_tracker).await;
     if !result.failures.is_empty() {
         eprintln!("\n以下文件下载失败:");
         for f in &result.failures {

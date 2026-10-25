@@ -718,6 +718,7 @@ pub async fn install_parsed_modpack(
                         &java_path_str,
                         None,
                         None,
+                        None,
                     )
                     .await
                     .map_err(|e| anyhow!("Forge 安装失败: {}", e))?;
@@ -739,6 +740,7 @@ pub async fn install_parsed_modpack(
                         &neo_ver,
                         &mc_dir_str,
                         &java_path_str,
+                        None,
                         None,
                         None,
                     )
@@ -774,6 +776,7 @@ pub async fn install_parsed_modpack(
                         &mc_dir_str,
                         true,
                         None,
+                        None,
                     )
                     .await
                     .map_err(|e| anyhow!("Fabric 安装失败: {}", e))?;
@@ -794,6 +797,7 @@ pub async fn install_parsed_modpack(
                         &parsed_mc,
                         &quilt_ver,
                         &mc_dir_str,
+                        None,
                         None,
                     )
                     .await

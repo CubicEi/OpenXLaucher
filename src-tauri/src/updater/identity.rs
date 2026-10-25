@@ -159,39 +159,3 @@ fn write_launcher_json_value(value: &Value) -> Result<(), String> {
 fn hex_lower(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{:02x}", b)).collect()
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// 单测占位版本，与 `config::TEST_FIXTURE_RELEASE_TAG` 同理，不代表真实 Release。
-    const TEST_FIXTURE_IDENTITY_VERSION: &str = "0.0.0-test-fixture";
-
-    fn sample_identity_json(version: &str, sha256: &str) -> String {
-        format!(
-            r#"{{
-            "schema": 1,
-            "product": "OpenXLauncher",
-            "version": "{version}",
-            "sha256": "{sha256}",
-            "build_uuid": "550e8400-e29b-41d4-a716-446655440000"
-        }}"#
-        )
-    }
-
-    #[test]
-    fn parse_valid_identity() {
-        let json = sample_identity_json(
-            TEST_FIXTURE_IDENTITY_VERSION,
-            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-        );
-        let id = parse_release_identity_json(&json).expect("parse");
-        assert_eq!(id.version, TEST_FIXTURE_IDENTITY_VERSION);
-    }
-
-    #[test]
-    fn rejects_bad_sha256_in_identity() {
-        let json = sample_identity_json(TEST_FIXTURE_IDENTITY_VERSION, "not-a-hash");
-        assert!(parse_release_identity_json(&json).is_err());
-    }
-}

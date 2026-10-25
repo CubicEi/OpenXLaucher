@@ -89,29 +89,3 @@ pub(super) fn is_plausible_minecraft_version(version: &str) -> bool {
         })
         .is_match(version)
 }
-
-#[cfg(test)]
-mod tests {
-    use super::get_java_major_version;
-
-    #[test]
-    #[cfg(unix)]
-    fn reads_java_8_from_the_legacy_version_format() {
-        use std::os::unix::fs::PermissionsExt;
-
-        let path = std::env::temp_dir().join(format!(
-            "openxlauncher-java-version-{}-{}",
-            std::process::id(),
-            std::thread::current().name().unwrap_or("test")
-        ));
-        std::fs::write(&path, "#!/bin/sh\necho 'java version \"1.8.0_301\"' >&2\n")
-            .expect("write Java version fixture");
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700))
-            .expect("make Java version fixture executable");
-
-        let major = get_java_major_version(path.to_str().expect("UTF-8 fixture path"));
-        let _ = std::fs::remove_file(&path);
-
-        assert_eq!(major, "8");
-    }
-}

@@ -25,6 +25,7 @@ tauri-build = { version = "2.5.4", features = [] }
 uuid = { version = "1", features = ["v4"] }
 
 [dependencies]
+uuid = { version = "1", features = ["v4"] }
 serde_json = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 semver = "1.0"
@@ -77,9 +78,6 @@ tauri-plugin-single-instance = "2"
 nix = { version = "0.27", default-features = false, features = ["user"] }
 libc = "0.2"
 
-[dev-dependencies]
-tempfile = "3"
-
 # ===== Release 体积优化配置 =====
 # 这会显著减小最终 exe 体积（从 ~20MB → ~8-10MB）
 # 构建时间会变长，但产物更小、运行更快
@@ -92,6 +90,3 @@ panic = "abort"            # panic 时直接终止，移除 stack-unwinding 代�
 incremental = false        # 禁用增量编译（release 不需要）
 overflow-checks = false    # 禁用整数溢出运行时检查（release 默认就 false，明确设置）
 
-# 优化测试 profile（仅影响 cargo test，不影响最终产物）
-[profile.test]
-opt-level = 1

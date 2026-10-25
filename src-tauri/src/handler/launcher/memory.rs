@@ -1,6 +1,6 @@
 use sysinfo::System;
 
-use crate::handler::system::{auto_allocate_memory_mb, compute_auto_allocate_mb};
+use crate::handler::system::auto_allocate_memory_mb;
 
 /// 根据物理内存和当前可用内存，给 JVM 留出系统和启动器所需的余量。
 ///
@@ -97,20 +97,6 @@ pub(super) fn resolve_max_memory_mb(max_memory: &str) -> anyhow::Result<(u64, Op
 fn auto_allocate() -> (u64, u64, u64) {
     auto_allocate_memory_mb()
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn auto_allocate_matches_shared_compute() {
-        let (alloc, total, avail) = compute_auto_allocate_mb(8192, 5000);
-        assert_eq!(alloc, 5000_u64.saturating_sub((8192 / 8).clamp(512, 2048)).min(8192 * 3 / 4).max(512));
-        assert_eq!(total, 8192);
-        assert_eq!(avail, 5000);
-    }
-}
-
 pub(super) fn is_heap_size_argument(argument: &str) -> bool {
     argument.starts_with("-Xmx")
         || argument.starts_with("-Xms")

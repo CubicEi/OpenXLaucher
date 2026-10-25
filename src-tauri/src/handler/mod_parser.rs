@@ -376,9 +376,60 @@ fn parse_toml_dep(obj: &serde_json::Map<String, JsonValue>) -> Option<(String, M
         },
     ))
 }
+/// Fabric jars often ship `fabric.mod.json` with raw newlines inside string values (invalid strict JSON).
+fn parse_fabric_mod_json_value(content: &str) -> Result<JsonValue, String> {
+    match serde_json::from_str(content) {
+        Ok(value) => Ok(value),
+        Err(first_err) => {
+            let sanitized = escape_control_chars_in_json_strings(content);
+            serde_json::from_str(&sanitized).map_err(|_| {
+                format!("解析 JSON 失败: {}", first_err)
+            })
+        }
+    }
+}
+
+fn escape_control_chars_in_json_strings(input: &str) -> String {
+    let mut out = String::with_capacity(input.len() + 64);
+    let mut in_string = false;
+    let mut escape = false;
+    for ch in input.chars() {
+        if escape {
+            out.push(ch);
+            escape = false;
+            continue;
+        }
+        if in_string {
+            if ch == '\\' {
+                escape = true;
+                out.push(ch);
+            } else if ch == '"' {
+                in_string = false;
+                out.push(ch);
+            } else if ch == '\n' {
+                out.push_str("\\n");
+            } else if ch == '\r' {
+                out.push_str("\\r");
+            } else if ch == '\t' {
+                out.push_str("\\t");
+            } else if ch.is_control() {
+                use std::fmt::Write;
+                let _ = write!(out, "\\u{:04x}", ch as u32);
+            } else {
+                out.push(ch);
+            }
+        } else if ch == '"' {
+            in_string = true;
+            out.push(ch);
+        } else {
+            out.push(ch);
+        }
+    }
+    out
+}
+
 fn parse_fabric_mod_json(content: &str, file_name: &str) -> Result<ModInfo, String> {
-    let json: JsonValue =
-        serde_json::from_str(content).map_err(|e| format!("解析 JSON 失败: {}", e))?;
+    let json: JsonValue = parse_fabric_mod_json_value(content)?;
     let mod_id = json
         .get("id")
         .and_then(|v| v.as_str())

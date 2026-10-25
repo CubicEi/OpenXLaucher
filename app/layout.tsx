@@ -5,7 +5,7 @@ import { SettingsProvider } from "@/components/settings/settings-provider";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { AccountProvider } from "@/components/accounts/account-provider";
 import { DownloadProvider } from "@/components/download/download-provider";
-import { DownloadTaskList } from "@/components/download/download-task-list";
+import { FlyToProcessListOverlay } from "@/components/process-list/fly-to-process-list";
 import { LaunchProvider } from "@/components/launch/launch-provider";
 import { DeferredGlobalFeatures } from "@/components/global/deferred-global-features";
 import { StartupRuntimeDependencyNotifier } from "@/components/settings/startup-runtime-dependency-notifier";
@@ -50,7 +50,7 @@ export default function RootLayout({
                           <StartupJavaScan />
                           <JavaIncompatibleDialog />
                           <ThemeShell>{children}</ThemeShell>
-                          <DownloadTaskList />
+                          <FlyToProcessListOverlay />
                         </ThemeRuntimeProvider>
                       </TooltipProvider>
                     </DownloadProvider>

@@ -11,6 +11,7 @@ mod handler;
 mod http_client;
 mod system_proxy;
 mod multiplayer;
+mod progress_trace_log;
 mod themes;
 mod updater;
 mod version_management;
@@ -24,6 +25,9 @@ use auth::official::{
 use auth::yissadrail::{getAccountList, getPlayerSkin, thirdPartyLogin};
 use downloader::decompression::extract_library_paths;
 use downloader::dwPatch::{cancel_download, download_patcher};
+use downloader::version_install::{
+    cancel_version_install_session, check_java_for_mc_version, start_version_install_session,
+};
 use downloader::version_fetcher::classify_minecraft_versions;
 use handler::cache_paths::{
     cache_to_instance, get_cache_dir, get_cache_dir_by_version, get_cache_root,
@@ -244,6 +248,9 @@ pub fn run() {
             cancel_neoforge_download,
             install_combined_package,
             cancel_combined_download,
+            check_java_for_mc_version,
+            start_version_install_session,
+            cancel_version_install_session,
             get_liteloader_versions,
             download_and_install_liteloader,
             cancel_liteloader_download,

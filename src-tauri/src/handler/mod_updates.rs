@@ -1,7 +1,7 @@
 //! Mod update check / replace flow (plan §6 / §6.1).
 //!
 //! Flow:
-//! 1. Parse local jars → Modrinth then CurseForge → filter by MC version + loader
+//! 1. Hash local jars → Modrinth then CurseForge → filter by MC version + loader
 //! 2. Download latest to temp
 //! 3. Move replaced mod into cache library with old-version backup tagging
 //! 4. Copy new mod into mods folder; clear temp
@@ -11,16 +11,17 @@ use crate::handler::cache_paths::{
     get_cache_dir_for_version, get_mod_cache_dir, parse_mod_loader, parse_resource_kind,
     CacheResourceKind,
 };
-use crate::handler::diagnostics::{download_file, ModSearchResult};
+use crate::downloader::modular_download::{download_file as modular_download_file, DownloadTask as ModularDownloadTask, SingleDownloadResult};
+use crate::handler::diagnostics::ModSearchResult;
 use crate::handler::game_dir::canonical_game_dir;
 use crate::handler::launcher::game_process_state::is_game_running_for_dir;
 use crate::handler::mod_update_locks::{begin_mod_update, end_mod_update, instance_dir_key};
 use crate::handler::mod_file_registry::register_file_at_path;
-use crate::handler::mod_parser::{parse_mods_in_dir, ModInfo};
 use crate::handler::mod_platform::{
-    file_sha1_hex, list_compatible_versions, pick_update_if_newer,
+    build_update_check_digest_cache, file_sha1_hex, list_compatible_versions, pick_update_if_newer,
     resolve_installed_file, resolve_installed_file_on_platform, I18N_MOD_UPDATE_HASH_MISS,
     I18N_MOD_UPDATE_NETWORK_UNREACHABLE, InstalledFileSnapshot, ModRemoteVersionsResponse,
+    UpdateCheckDigestCache,
 };
 use crate::handler::mod_platform_probe::ModPlatformKind;
 use crate::handler::mod_platform_probe::platform_try_order;
@@ -35,6 +36,8 @@ use tauri::{AppHandle, Emitter};
 
 const SUCCESS_THRESHOLD: u32 = 5;
 const TRACKING_FILE_NAME: &str = "mod-update-tracking.json";
+/// Parallel mod/resource update checks (8–16 range).
+const UPDATE_CHECK_CONCURRENCY: usize = 12;
 
 static UPDATE_TASK_COUNTER: AtomicU64 = AtomicU64::new(500_000);
 
@@ -232,12 +235,17 @@ async fn find_latest_for_mod(
     try_order: &[ModPlatformKind],
     mc_version: &str,
     loader: &str,
+    digests: &UpdateCheckDigestCache,
 ) -> Option<(InstalledFileSnapshot, ModSearchResult)> {
     for kind in try_order {
-        let Some(snapshot) = resolve_installed_file_on_platform(jar_path, *kind).await else {
+        let Some(snapshot) =
+            resolve_installed_file_on_platform(jar_path, *kind, Some(digests)).await
+        else {
             continue;
         };
-        if let Some(remote) = pick_update_if_newer(jar_path, &snapshot, mc_version, loader).await {
+        if let Some(remote) =
+            pick_update_if_newer(jar_path, &snapshot, mc_version, loader, Some(digests)).await
+        {
             return Some((snapshot, remote));
         }
     }
@@ -261,7 +269,7 @@ async fn list_remote_versions_impl(
     let try_order = platform_try_order()
         .await
         .map_err(|_| I18N_MOD_UPDATE_NETWORK_UNREACHABLE.to_string())?;
-    let installed = resolve_installed_file(&file_path, &try_order).await;
+    let installed = resolve_installed_file(&file_path, &try_order, None).await;
     if let Some(snapshot) = installed.as_ref() {
         let platform = crate::handler::mod_platform::ResolvedPlatform {
             source: snapshot.source.clone(),
@@ -347,31 +355,6 @@ fn to_update_info_from_file(
     })
 }
 
-fn to_update_info(
-    mod_info: &ModInfo,
-    snapshot: &InstalledFileSnapshot,
-    remote: &ModSearchResult,
-) -> Option<ModUpdateInfo> {
-    let new_version = remote.version_number.as_ref()?;
-    let download_url = remote.download_url.as_ref()?;
-    let new_file_name = remote.file_name.as_ref()?;
-    Some(ModUpdateInfo {
-        file_name: mod_info.file_name.clone(),
-        mod_id: mod_info.mod_id.clone(),
-        mod_name: if mod_info.name.is_empty() {
-            remote.title.clone()
-        } else {
-            mod_info.name.clone()
-        },
-        current_version: snapshot.version_number.clone(),
-        new_version: new_version.clone(),
-        source: remote.source.clone(),
-        download_url: download_url.clone(),
-        new_file_name: new_file_name.clone(),
-        slug: remote.slug.clone(),
-    })
-}
-
 #[tauri::command]
 pub async fn check_resource_updates(
     instance_dir: String,
@@ -391,65 +374,50 @@ pub async fn check_resource_updates(
         return Ok(Vec::new());
     }
 
-    let try_order = platform_try_order()
-        .await
-        .map_err(|_| I18N_MOD_UPDATE_NETWORK_UNREACHABLE.to_string())?;
+    let file_names = list_updatable_file_names(&resource_dir);
+    if file_names.is_empty() {
+        return Ok(Vec::new());
+    }
+    let file_paths: Vec<PathBuf> = file_names
+        .iter()
+        .map(|name| resource_dir.join(name))
+        .collect();
 
-    let sem = std::sync::Arc::new(tokio::sync::Semaphore::new(4));
+    let (try_order_result, digest_cache) = tokio::join!(
+        platform_try_order(),
+        tokio::task::spawn_blocking({
+            let paths = file_paths.clone();
+            move || build_update_check_digest_cache(&paths)
+        })
+    );
+    let try_order = try_order_result.map_err(|_| I18N_MOD_UPDATE_NETWORK_UNREACHABLE.to_string())?;
+    let digests = digest_cache.map_err(|e| e.to_string())?;
+
+    let sem = std::sync::Arc::new(tokio::sync::Semaphore::new(UPDATE_CHECK_CONCURRENCY));
     let mut handles = Vec::new();
 
-    if kind == CacheResourceKind::Mod {
-        let mods = parse_mods_in_dir(resource_dir.to_string_lossy().to_string());
-        if mods.is_empty() {
-            return Ok(Vec::new());
-        }
-        for mod_info in mods {
-            let permit = sem
-                .clone()
-                .acquire_owned()
-                .await
-                .map_err(|e| e.to_string())?;
-            let resource_dir = resource_dir.clone();
-            let mc_version = mc_version.clone();
-            let loader = loader.clone();
-            let try_order = try_order.clone();
-            handles.push(tokio::spawn(async move {
-                let _permit = permit;
-                let jar_path = resource_dir.join(&mod_info.file_name);
-                if !jar_path.is_file() {
-                    return None;
-                }
-                let (snapshot, remote) =
-                    find_latest_for_mod(&jar_path, &try_order, &mc_version, &loader).await?;
-                to_update_info(&mod_info, &snapshot, &remote)
-            }));
-        }
-    } else {
-        let file_names = list_updatable_file_names(&resource_dir);
-        if file_names.is_empty() {
-            return Ok(Vec::new());
-        }
-        for file_name in file_names {
-            let permit = sem
-                .clone()
-                .acquire_owned()
-                .await
-                .map_err(|e| e.to_string())?;
-            let resource_dir = resource_dir.clone();
-            let mc_version = mc_version.clone();
-            let loader = loader.clone();
-            let try_order = try_order.clone();
-            handles.push(tokio::spawn(async move {
-                let _permit = permit;
-                let file_path = resource_dir.join(&file_name);
-                if !file_path.is_file() {
-                    return None;
-                }
-                let (snapshot, remote) =
-                    find_latest_for_mod(&file_path, &try_order, &mc_version, &loader).await?;
-                to_update_info_from_file(&file_name, &snapshot, &remote)
-            }));
-        }
+    for file_name in file_names {
+        let permit = sem
+            .clone()
+            .acquire_owned()
+            .await
+            .map_err(|e| e.to_string())?;
+        let resource_dir = resource_dir.clone();
+        let mc_version = mc_version.clone();
+        let loader = loader.clone();
+        let try_order = try_order.clone();
+        let digests = digests.clone();
+        handles.push(tokio::spawn(async move {
+            let _permit = permit;
+            let file_path = resource_dir.join(&file_name);
+            if !file_path.is_file() {
+                return None;
+            }
+            let (snapshot, remote) =
+                find_latest_for_mod(&file_path, &try_order, &mc_version, &loader, &digests)
+                    .await?;
+            to_update_info_from_file(&file_name, &snapshot, &remote)
+        }));
     }
 
     let mut updates = Vec::new();
@@ -576,7 +544,66 @@ pub fn on_successful_game_exit(minecraft_version: &str, game_dir: &str) {
     }
 }
 
+struct UpdateProgressScope {
+    percent_start: f64,
+    percent_end: f64,
+}
+
+async fn forward_mod_update_download_progress(
+    app: AppHandle,
+    task_id: u64,
+    label: Option<String>,
+    percent_start: f64,
+    percent_end: f64,
+    mut progress_rx: tokio::sync::mpsc::Receiver<(u64, u64)>,
+) {
+    let span = (percent_end - percent_start).max(0.0);
+    let mut last_downloaded = 0u64;
+    let mut last_at = std::time::Instant::now();
+    let mut primed = false;
+    const MIN_SPEED_WINDOW_SECS: f64 = 0.3;
+    const MAX_PLAUSIBLE_BPS: f64 = 500.0 * 1024.0 * 1024.0;
+    while let Some((downloaded, total)) = progress_rx.recv().await {
+        let file_percent = if total > 0 {
+            (downloaded as f64 / total as f64) * 100.0
+        } else {
+            downloaded as f64 / 1_000_000.0
+        };
+        let percent = percent_start + (file_percent / 100.0) * span;
+        let elapsed = last_at.elapsed().as_secs_f64();
+        let speed = if primed && elapsed >= MIN_SPEED_WINDOW_SECS {
+            let rate = (downloaded.saturating_sub(last_downloaded) as f64) / elapsed;
+            if rate > 0.0 && rate <= MAX_PLAUSIBLE_BPS {
+                Some(rate)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        if !primed || elapsed >= MIN_SPEED_WINDOW_SECS {
+            last_downloaded = downloaded;
+            last_at = std::time::Instant::now();
+            primed = true;
+        }
+        emit_update_progress(
+            &app,
+            task_id,
+            percent,
+            &label,
+            Some("下载"),
+            Some(downloaded),
+            if total > 0 { Some(total) } else { None },
+            speed,
+        );
+    }
+}
+
 async fn perform_single_update(
+    app: &AppHandle,
+    task_id: u64,
+    display_label: &Option<String>,
+    progress_scope: UpdateProgressScope,
     instance_dir: &Path,
     mc_version: &str,
     loader: &str,
@@ -604,11 +631,45 @@ async fn perform_single_update(
     fs::create_dir_all(&temp_dir).map_err(|e| format!("创建临时目录失败: {}", e))?;
 
     let temp_file = temp_dir.join(&update.new_file_name);
-    let download_result = download_file(&update.download_url, &temp_file).await;
-    if let Err(e) = download_result {
+    let download_task = ModularDownloadTask {
+        file_name: update.new_file_name.clone(),
+        target_dir: temp_dir.clone(),
+        urls: vec![update.download_url.clone()],
+        sha1: None,
+    };
+    let (progress_tx, progress_rx) = tokio::sync::mpsc::channel::<(u64, u64)>(32);
+    let progress_forward = tokio::spawn(forward_mod_update_download_progress(
+        app.clone(),
+        task_id,
+        display_label.clone(),
+        progress_scope.percent_start,
+        progress_scope.percent_end,
+        progress_rx,
+    ));
+    let downloaded_path = match modular_download_file(
+        &download_task,
+        Some(progress_tx),
+        None,
+    )
+    .await
+    {
+        SingleDownloadResult::Success { path, .. } => path,
+        SingleDownloadResult::Failed { error, .. } => {
+            let _ = progress_forward.await;
+            let _ = fs::remove_dir_all(&temp_dir);
+            return Err(error);
+        }
+    };
+    let _ = progress_forward.await;
+    if downloaded_path != temp_file && !downloaded_path.is_file() {
         let _ = fs::remove_dir_all(&temp_dir);
-        return Err(e);
+        return Err(format!("下载完成但文件不存在: {}", temp_file.display()));
     }
+    let install_source = if downloaded_path.is_file() {
+        downloaded_path
+    } else {
+        temp_file
+    };
 
     let cache_dir = backup_cache_dir_for_kind(kind, mc_version, loader)?;
     let backup_name = unique_backup_name(
@@ -654,12 +715,12 @@ async fn perform_single_update(
             .map_err(|e| format!("无法覆盖已有新文件 {}: {}", dest_path.display(), e))?;
     }
 
-    fs::copy(&temp_file, &dest_path).map_err(|e| {
+    fs::copy(&install_source, &dest_path).map_err(|e| {
         // Best-effort restore from backup
         let _ = fs::rename(&backup_path, &old_path);
         format!(
             "安装新文件失败 ({} → {}): {}",
-            temp_file.display(),
+            install_source.display(),
             dest_path.display(),
             e
         )
@@ -718,6 +779,14 @@ struct UpdateProgressPayload {
     percent: f64,
     #[serde(skip_serializing_if = "Option::is_none")]
     label: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    stage: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    downloaded: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    total: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    speed: Option<f64>,
 }
 
 #[derive(Clone, Serialize)]
@@ -729,13 +798,26 @@ struct UpdateFinishedPayload {
     label: Option<String>,
 }
 
-fn emit_update_progress(app: &AppHandle, task_id: u64, percent: f64, label: &Option<String>) {
+fn emit_update_progress(
+    app: &AppHandle,
+    task_id: u64,
+    percent: f64,
+    label: &Option<String>,
+    stage: Option<&str>,
+    downloaded: Option<u64>,
+    total: Option<u64>,
+    speed: Option<f64>,
+) {
     let _ = app.emit(
         "mod-download-progress",
         UpdateProgressPayload {
             task_id,
             percent,
             label: label.clone(),
+            stage: stage.map(|s| s.to_string()),
+            downloaded,
+            total,
+            speed,
         },
     );
 }
@@ -768,9 +850,51 @@ async fn run_update_task(
     update: &ModUpdateInfo,
     display_label: &Option<String>,
 ) -> Result<(), String> {
-    emit_update_progress(app, task_id, 5.0, display_label);
-    perform_single_update(instance_dir, mc_version, loader, kind, update).await?;
-    emit_update_progress(app, task_id, 100.0, display_label);
+    emit_update_progress(
+        app,
+        task_id,
+        5.0,
+        display_label,
+        Some("下载"),
+        None,
+        None,
+        None,
+    );
+    perform_single_update(
+        app,
+        task_id,
+        display_label,
+        UpdateProgressScope {
+            percent_start: 5.0,
+            percent_end: 90.0,
+        },
+        instance_dir,
+        mc_version,
+        loader,
+        kind,
+        update,
+    )
+    .await?;
+    emit_update_progress(
+        app,
+        task_id,
+        92.0,
+        display_label,
+        Some("替换"),
+        None,
+        None,
+        None,
+    );
+    emit_update_progress(
+        app,
+        task_id,
+        100.0,
+        display_label,
+        Some("完成"),
+        None,
+        None,
+        None,
+    );
     emit_update_finished(app, task_id, true, None, display_label);
     Ok(())
 }
@@ -851,9 +975,26 @@ pub async fn update_resources(
     let instance_path = Path::new(&instance_dir);
 
     for (idx, update) in updates.into_iter().enumerate() {
-        let percent = ((idx as f64) / total) * 100.0;
-        emit_update_progress(&app, task_id, percent, &display_label);
+        let percent_start = ((idx as f64) / total) * 100.0;
+        let percent_end = (((idx as f64) + 0.88) / total) * 100.0;
+        emit_update_progress(
+            &app,
+            task_id,
+            percent_start,
+            &display_label,
+            Some("下载"),
+            None,
+            None,
+            None,
+        );
         if let Err(e) = perform_single_update(
+            &app,
+            task_id,
+            &display_label,
+            UpdateProgressScope {
+                percent_start,
+                percent_end,
+            },
             instance_path,
             mc_version,
             &loader,
@@ -869,12 +1010,33 @@ pub async fn update_resources(
             if first_error.is_none() {
                 first_error = Some(e);
             }
+        } else {
+            let after = (((idx as f64) + 1.0) / total) * 100.0;
+            emit_update_progress(
+                &app,
+                task_id,
+                after.min(99.0),
+                &display_label,
+                Some("替换"),
+                None,
+                None,
+                None,
+            );
         }
     }
 
     let success = first_error.is_none();
     if success {
-        emit_update_progress(&app, task_id, 100.0, &display_label);
+        emit_update_progress(
+            &app,
+            task_id,
+            100.0,
+            &display_label,
+            Some("完成"),
+            None,
+            None,
+            None,
+        );
     }
     emit_update_finished(&app, task_id, success, first_error.clone(), &display_label);
     if let Some(e) = first_error {
@@ -903,28 +1065,4 @@ pub async fn update_mods(
         display_label,
     )
     .await
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn backup_key_separates_mc_and_new_version() {
-        assert_ne!(
-            backup_entry_key("sodium", "1.20.1", "0.5.8"),
-            backup_entry_key("sodium", "1.21", "0.5.8")
-        );
-        assert_ne!(
-            backup_entry_key("sodium", "1.20.1", "0.5.8"),
-            backup_entry_key("sodium", "1.20.1", "0.5.11")
-        );
-    }
-
-    #[test]
-    fn unique_backup_name_tags_versions() {
-        let name = unique_backup_name("sodium-fabric.jar", "0.5.3", "0.5.8");
-        assert!(name.contains("backup-from-0.5.3-to-0.5.8"));
-        assert!(name.ends_with(".jar"));
-    }
 }

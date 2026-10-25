@@ -8,20 +8,23 @@ import { PageTransition } from "@/components/page-transition";
 import { Sidebar } from "@/components/sidebar";
 import { TitleBar } from "@/components/title-bar";
 import type { CoreRouteId } from "@/lib/themes/protocol";
+import { normalizeAppPathname } from "@/lib/main-navigation-transition";
 import { ThemeRoute } from "./theme-route";
 import { ThemeRecoveryControl } from "./theme-recovery-control";
 import { useThemeRuntime } from "./theme-runtime-provider";
 import { ThemeSlot } from "./theme-slot";
 
 function routeIdFromPathname(pathname: string): CoreRouteId | undefined {
-  if (pathname === "/") return "core.home";
-  if (pathname === "/launch") return "core.launch";
-  if (pathname === "/download/detail") return "core.download.detail";
-  if (pathname === "/download") return "core.download";
-  if (pathname === "/tools") return "core.tools";
-  if (pathname === "/settings") return "core.settings";
-  if (pathname === "/game-settings") return "core.game-settings";
-  const instanceSection = pathname.match(
+  const path = normalizeAppPathname(pathname);
+  if (path === "/") return "core.home";
+  if (path === "/launch") return "core.launch";
+  if (path === "/download/detail") return "core.download.detail";
+  if (path === "/download") return "core.download";
+  if (path === "/process-list") return "core.process-list";
+  if (path === "/tools") return "core.tools";
+  if (path === "/settings") return "core.settings";
+  if (path === "/game-settings") return "core.game-settings";
+  const instanceSection = path.match(
     /^\/(?:game-settings|instance-settings)\/(mods|worlds|resources|shaders|screenshots|schematics)/,
   )?.[1];
   if (instanceSection) return `core.instance.${instanceSection}` as CoreRouteId;

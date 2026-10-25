@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
-use tauri::{AppHandle, Emitter};
+use tauri::AppHandle;
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ModpackDetectResult {
     pub format: String, 
@@ -219,137 +219,23 @@ pub fn list_cached_modpacks_cmd(
     Ok(results)
 }
 #[tauri::command]
-pub fn install_modpack_from_zip_cmd(app: AppHandle, path: String) -> Result<u64, String> {
-    let task_id = MODPACK_TASK_COUNTER.fetch_add(1, Ordering::SeqCst);
-    let minecraft_dir = get_minecraft_dir().map_err(|e| e.to_string())?;
-    let cancel = Arc::new(AtomicBool::new(false));
-    {
-        let mut tasks = active_tasks().lock().unwrap();
-        tasks.insert(
-            task_id,
-            ModpackActiveTask {
-                cancel: cancel.clone(),
-                _path: path.clone(),
-            },
-        );
-    }
-    let app_clone = app.clone();
-    let path_clone = path.clone();
-    let minecraft_dir_clone = minecraft_dir.clone();
-    tauri::async_runtime::spawn(async move {
-        println!("[Modpack] 开始安装任务 {}: {}", task_id, path_clone);
-        let _ = app_clone.emit(
-            "modpack-progress",
-            ModpackProgressPayload {
-                task_id,
-                percent: 0.0,
-                stage: "初始化".to_string(),
-                message: None,
-                total_files: 0,
-                downloaded_files: 0,
-                current_file: String::new(),
-            },
-        );
-        let (tx, mut rx) = tokio::sync::mpsc::channel::<(usize, usize, String, String)>(64);
-        let app_for_progress = app_clone.clone();
-        let progress_task = tokio::spawn(async move {
-            while let Some((downloaded, total, fname, stage)) = rx.recv().await {
-                let percent = if total <= 2 {
-                    (downloaded as f64 / 2.0) * 100.0
-                } else {
-                    let external_count = (total - 2) as f64;
-                    if downloaded == 0 {
-                        0.0
-                    } else if downloaded == 1 {
-                        50.0
-                    } else if downloaded == 2 {
-                        60.0
-                    } else {
-                        let k = (downloaded - 2) as f64;
-                        60.0 + (k / external_count) * 40.0
-                    }
-                };
-                let percent = percent.clamp(0.0, 100.0);
-                let message = if fname.is_empty() {
-                    None
-                } else {
-                    Some(fname.clone())
-                };
-                let _ = app_for_progress.emit(
-                    "modpack-progress",
-                    ModpackProgressPayload {
-                        task_id,
-                        percent,
-                        stage,
-                        message,
-                        total_files: total,
-                        downloaded_files: downloaded,
-                        current_file: fname,
-                    },
-                );
-            }
-        });
-        let result = modpack_installer::install_modpack_from_zip(
-            &PathBuf::from(&path_clone),
-            &PathBuf::from(&minecraft_dir_clone),
-            Some(tx),
-            None, 
-        )
-        .await;
-        progress_task.abort();
-        let result_payload = match result {
-            Ok((instance_name, file_count)) => {
-                println!(
-                    "[Modpack] 任务 {} 完成: 实例 {}, {} 个外部文件",
-                    task_id, instance_name, file_count
-                );
-                ModpackFinishedPayload {
-                    task_id,
-                    success: true,
-                    message: "整合包安装完成".to_string(),
-                    instance_name: Some(instance_name),
-                    file_count: Some(file_count),
-                }
-            }
-            Err(e) => {
-                println!("[Modpack] 任务 {} 失败: {}", task_id, e);
-                ModpackFinishedPayload {
-                    task_id,
-                    success: false,
-                    message: format!("安装失败: {}", e),
-                    instance_name: None,
-                    file_count: None,
-                }
-            }
-        };
-        let _ = app_clone.emit(
-            "modpack-progress",
-            ModpackProgressPayload {
-                task_id,
-                percent: 100.0,
-                stage: "完成".to_string(),
-                message: None,
-                total_files: 0,
-                downloaded_files: 0,
-                current_file: String::new(),
-            },
-        );
-        let _ = app_clone.emit("modpack-finished", result_payload);
-        {
-            let mut tasks = active_tasks().lock().unwrap();
-            tasks.remove(&task_id);
-        }
-    });
-    Ok(task_id)
+pub async fn install_modpack_from_zip_cmd(app: AppHandle, path: String) -> Result<u64, String> {
+    // Byte/file-weighted progress via version-install session (no 50/60 hardcode).
+    crate::downloader::version_install::start_modpack_legacy(app, path).await
 }
+
 #[tauri::command]
 pub fn cancel_modpack_install(taskId: u64) -> Result<(), String> {
-    let tasks = active_tasks().lock().unwrap();
-    if let Some(task) = tasks.get(&taskId) {
-        task.cancel.store(true, Ordering::SeqCst);
-        return Ok(());
+    match crate::downloader::version_install::cancel_by_task_id(taskId) {
+        Ok(()) => Ok(()),
+        Err(_) => {
+            let tasks = active_tasks().lock().unwrap();
+            if let Some(task) = tasks.get(&taskId) {
+                task.cancel.store(true, Ordering::SeqCst);
+            }
+            Ok(())
+        }
     }
-    Ok(())
 }
 #[tauri::command]
 pub fn delete_cached_modpack_cmd(full_path: String) -> Result<(), String> {

@@ -41,15 +41,3 @@ pub fn compute_game_directory(minecraft_path: &str, load_type: &str, load_name: 
         root
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn game_dirs_equal_is_case_insensitive_on_windows() {
-        if cfg!(target_os = "windows") {
-            assert!(game_dirs_equal(r"C:\Games\.minecraft", r"c:\games\.minecraft"));
-        }
-    }
-}

@@ -23,6 +23,21 @@ import { useI18n } from "@/components/i18n/use-i18n";
 import { ModRemoteVersionsSection } from "@/components/mods/mod-remote-versions-section";
 import { useInstanceResourceUpdates } from "@/hooks/use-instance-resource-updates";
 
+function normalizeModInfo(info: ModInfo, fileName: string): ModInfo {
+  const stem = fileName.replace(/\.(jar|litemod|zip)$/i, "");
+  return {
+    ...info,
+    file_name: info.file_name || fileName,
+    mod_id: info.mod_id || stem,
+    name: info.name || stem,
+    version: info.version || "unknown",
+    authors: info.authors ?? [],
+    dependencies: info.dependencies ?? [],
+    optional_dependencies: info.optional_dependencies ?? [],
+    incompatible_dependencies: info.incompatible_dependencies ?? [],
+  };
+}
+
 const MODS_CONFIG = {
   title: "panel.mods" as const,
   leftIcon: <Puzzle className="size-5 text-emerald-500" />,
@@ -55,6 +70,7 @@ function ModDetailPage({
   onBack: () => void;
   onRefresh: () => void;
 }) {
+  const safeInfo = normalizeModInfo(info, fileName);
   return (
     <motion.div
       variants={fadeSlideUp}
@@ -68,10 +84,10 @@ function ModDetailPage({
           <ArrowLeft className="size-4" />
         </Button>
         <div className="flex-1 min-w-0">
-          <h1 className="text-base font-semibold truncate">{info.name}</h1>
+          <h1 className="text-base font-semibold truncate">{safeInfo.name}</h1>
           <p className="text-xs text-muted-foreground truncate">
-            {info.mod_id} · v{info.version}
-            {info.mod_loader && ` · ${info.mod_loader}`}
+            {safeInfo.mod_id} · v{safeInfo.version}
+            {safeInfo.mod_loader && ` · ${safeInfo.mod_loader}`}
           </p>
         </div>
         <Badge variant="secondary" className="shrink-0 text-xs">模组详情</Badge>
@@ -91,28 +107,28 @@ function ModDetailPage({
               <Package className="size-7 text-emerald-500" />
             </div>
             <div className="flex-1 min-w-0">
-              <h2 className="text-2xl font-bold truncate">{info.name}</h2>
+              <h2 className="text-2xl font-bold truncate">{safeInfo.name}</h2>
               <p className="mt-1.5 text-sm text-muted-foreground truncate">
-                {info.mod_id} · v{info.version}
-                {info.mod_loader && ` · ${info.mod_loader}`}
+                {safeInfo.mod_id} · v{safeInfo.version}
+                {safeInfo.mod_loader && ` · ${safeInfo.mod_loader}`}
               </p>
-              {info.authors.length > 0 && (
+              {safeInfo.authors.length > 0 && (
                 <p className="mt-1 text-xs text-muted-foreground">
-                  作者: {info.authors.join(", ")}
+                  作者: {safeInfo.authors.join(", ")}
                 </p>
               )}
             </div>
           </div>
 
           {/* 描述 */}
-          {info.description && (
+          {safeInfo.description && (
             <div>
               <div className="flex items-center gap-2 mb-2">
                 <BookOpen className="size-4 text-muted-foreground" />
                 <h3 className="text-sm font-semibold">描述</h3>
               </div>
               <p className="text-sm text-muted-foreground leading-relaxed whitespace-pre-wrap">
-                {info.description}
+                {safeInfo.description}
               </p>
             </div>
           )}
@@ -124,16 +140,16 @@ function ModDetailPage({
               <h3 className="text-sm font-semibold">基本信息</h3>
             </div>
             <div className="grid grid-cols-2 gap-3">
-              {info.license && (
+              {safeInfo.license && (
                 <div className="rounded-lg border p-3">
                   <p className="text-xs text-muted-foreground">协议</p>
-                  <p className="text-sm font-medium mt-0.5">{info.license}</p>
+                  <p className="text-sm font-medium mt-0.5">{safeInfo.license}</p>
                 </div>
               )}
-              {info.minecraft_version && (
+              {safeInfo.minecraft_version && (
                 <div className="rounded-lg border p-3">
                   <p className="text-xs text-muted-foreground">MC 版本</p>
-                  <p className="text-sm font-medium mt-0.5">{info.minecraft_version}</p>
+                  <p className="text-sm font-medium mt-0.5">{safeInfo.minecraft_version}</p>
                 </div>
               )}
               <div className="rounded-lg border p-3">
@@ -144,22 +160,22 @@ function ModDetailPage({
               </div>
               <div className="rounded-lg border p-3">
                 <p className="text-xs text-muted-foreground">Mod ID</p>
-                <p className="text-sm font-medium mt-0.5">{info.mod_id}</p>
+                <p className="text-sm font-medium mt-0.5">{safeInfo.mod_id}</p>
               </div>
             </div>
           </div>
 
           {/* 链接 */}
-          {(info.homepage || info.source || info.issues) && (
+          {(safeInfo.homepage || safeInfo.source || safeInfo.issues) && (
             <div>
               <div className="flex items-center gap-2 mb-2">
                 <LinkIcon className="size-4 text-muted-foreground" />
                 <h3 className="text-sm font-semibold">链接</h3>
               </div>
               <div className="space-y-2">
-                {info.homepage && (
+                {safeInfo.homepage && (
                   <a
-                    href={info.homepage}
+                    href={safeInfo.homepage}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="flex items-center gap-2 text-sm text-primary hover:underline"
@@ -168,9 +184,9 @@ function ModDetailPage({
                     主页
                   </a>
                 )}
-                {info.source && (
+                {safeInfo.source && (
                   <a
-                    href={info.source}
+                    href={safeInfo.source}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="flex items-center gap-2 text-sm text-primary hover:underline"
@@ -179,9 +195,9 @@ function ModDetailPage({
                     源代码
                   </a>
                 )}
-                {info.issues && (
+                {safeInfo.issues && (
                   <a
-                    href={info.issues}
+                    href={safeInfo.issues}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="flex items-center gap-2 text-sm text-primary hover:underline"
@@ -195,14 +211,14 @@ function ModDetailPage({
           )}
 
           {/* 必需依赖 */}
-          {info.dependencies.length > 0 && (
+          {safeInfo.dependencies.length > 0 && (
             <div>
               <div className="flex items-center gap-2 mb-2">
                 <Package className="size-4 text-muted-foreground" />
-                <h3 className="text-sm font-semibold">必需依赖 ({info.dependencies.length})</h3>
+                <h3 className="text-sm font-semibold">必需依赖 ({safeInfo.dependencies.length})</h3>
               </div>
               <div className="space-y-2">
-                {info.dependencies.map((dep) => (
+                {safeInfo.dependencies.map((dep) => (
                   <div key={dep.mod_id} className="rounded-lg border p-3 flex items-center gap-3">
                     <div className="size-2 rounded-full bg-destructive shrink-0" />
                     <div className="flex-1 min-w-0">
@@ -223,14 +239,14 @@ function ModDetailPage({
           )}
 
           {/* 可选依赖 */}
-          {info.optional_dependencies.length > 0 && (
+          {safeInfo.optional_dependencies.length > 0 && (
             <div>
               <div className="flex items-center gap-2 mb-2">
                 <Users className="size-4 text-muted-foreground" />
-                <h3 className="text-sm font-semibold">可选/推荐 ({info.optional_dependencies.length})</h3>
+                <h3 className="text-sm font-semibold">可选/推荐 ({safeInfo.optional_dependencies.length})</h3>
               </div>
               <div className="space-y-2">
-                {info.optional_dependencies.map((dep) => (
+                {safeInfo.optional_dependencies.map((dep) => (
                   <div key={dep.mod_id} className="rounded-lg border p-3 flex items-center gap-3">
                     <div className="size-2 rounded-full bg-amber-500 shrink-0" />
                     <div className="flex-1 min-w-0">
@@ -251,14 +267,14 @@ function ModDetailPage({
           )}
 
           {/* 不兼容依赖 */}
-          {info.incompatible_dependencies.length > 0 && (
+          {safeInfo.incompatible_dependencies.length > 0 && (
             <div>
               <div className="flex items-center gap-2 mb-2">
                 <AlertTriangle className="size-4 text-red-500" />
-                <h3 className="text-sm font-semibold text-red-500">不兼容 ({info.incompatible_dependencies.length})</h3>
+                <h3 className="text-sm font-semibold text-red-500">不兼容 ({safeInfo.incompatible_dependencies.length})</h3>
               </div>
               <div className="space-y-2">
-                {info.incompatible_dependencies.map((dep) => (
+                {safeInfo.incompatible_dependencies.map((dep) => (
                   <div key={dep.mod_id} className="rounded-lg border border-red-200 p-3 flex items-center gap-3 bg-red-50">
                     <div className="size-2 rounded-full bg-red-500 shrink-0" />
                     <div className="flex-1 min-w-0">
@@ -274,7 +290,7 @@ function ModDetailPage({
           )}
 
           {/* 若无依赖信息 */}
-          {info.dependencies.length === 0 && info.optional_dependencies.length === 0 && info.incompatible_dependencies.length === 0 && (
+          {safeInfo.dependencies.length === 0 && safeInfo.optional_dependencies.length === 0 && safeInfo.incompatible_dependencies.length === 0 && (
             <div>
               <div className="flex items-center gap-2 mb-2">
                 <Package className="size-4 text-muted-foreground" />
@@ -286,7 +302,7 @@ function ModDetailPage({
 
           <ModRemoteVersionsSection
             fileName={fileName}
-            info={info}
+            info={safeInfo}
             instanceDir={instanceDir}
             mcVersion={mcVersion}
             modLoader={modLoader}

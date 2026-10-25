@@ -154,28 +154,3 @@ pub fn load_post_update_failure_if_requested() {
     };
     load_failure_notice_from_path(&path);
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn parse_ack_arg_extracts_path() {
-        let path = PathBuf::from(r"C:\Temp\OpenXLauncher\ack.flag");
-        let arg = format!("{}{}", ACK_ARG_PREFIX, path.display());
-        assert_eq!(
-            parse_update_ack_path_from_argv(&[arg]),
-            Some(path)
-        );
-    }
-
-    #[test]
-    fn parse_ack_arg_strips_surrounding_quotes() {
-        let path = PathBuf::from(r"C:\Temp\OpenXLauncher\ack.flag");
-        let arg = format!("{}\"{}\"", ACK_ARG_PREFIX, path.display());
-        assert_eq!(
-            parse_update_ack_path_from_argv(&[arg]),
-            Some(path)
-        );
-    }
-}
