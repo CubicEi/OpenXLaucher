@@ -557,6 +557,17 @@ fn recommend_fabric_loader_version(mc_version: &str, requested_version: &str) ->
     requested_version.to_string()
 }
 
+/// Which portion of the modpack pipeline to run (dual-task session uses Download then Install).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ModpackPhase {
+    /// Vanilla + external resources only.
+    DownloadOnly,
+    /// Loader install, merge, options (after download).
+    InstallOnly,
+    /// Legacy single-task flow.
+    Full,
+}
+
 pub async fn install_modpack_from_zip(
     zip_path: &Path,
     minecraft_path: &Path,
@@ -574,15 +585,49 @@ pub async fn install_modpack_from_zip(
         parsed.external_files.len(),
         parsed.extracted_files.len()
     );
-    install_parsed_modpack(&parsed, minecraft_path, progress_tx, java_path).await
+    install_parsed_modpack(&parsed, minecraft_path, progress_tx, java_path, ModpackPhase::Full).await
 }
+
+pub async fn download_modpack_from_zip(
+    zip_path: &Path,
+    minecraft_path: &Path,
+    progress_tx: Option<tokio::sync::mpsc::Sender<(usize, usize, String, String)>>,
+) -> Result<(String, usize)> {
+    let parsed = parse_modpack_from_zip(zip_path)?;
+    install_parsed_modpack(&parsed, minecraft_path, progress_tx, None, ModpackPhase::DownloadOnly)
+        .await
+}
+
+pub async fn install_modpack_after_download(
+    zip_path: &Path,
+    minecraft_path: &Path,
+    java_path: Option<&str>,
+) -> Result<(String, usize)> {
+    let parsed = parse_modpack_from_zip(zip_path)?;
+    install_parsed_modpack(&parsed, minecraft_path, None, java_path, ModpackPhase::InstallOnly)
+        .await
+}
+
 pub async fn install_parsed_modpack(
     parsed: &ParsedModpack,
     minecraft_path: &Path,
     progress_tx: Option<tokio::sync::mpsc::Sender<(usize, usize, String, String)>>,
     java_path: Option<&str>,
+    phase: ModpackPhase,
 ) -> Result<(String, usize)> {
     let instance_name = sanitize_instance_name(&format!("{}-{}", parsed.name, parsed.mc_version));
+
+    if phase == ModpackPhase::InstallOnly {
+        return finalize_modpack_instance(
+            parsed,
+            &instance_name,
+            minecraft_path,
+            java_path,
+            progress_tx,
+        )
+        .await;
+    }
+
     let version_dir = minecraft_path.join("versions").join(&instance_name);
     fs::create_dir_all(&version_dir)
         .with_context(|| format!("创建版本目录失败: {:?}", version_dir))?;
@@ -686,7 +731,12 @@ pub async fn install_parsed_modpack(
     let parsed_loader_ver = parsed.loader_version.clone();
     let parsed_mc = parsed.mc_version.clone();
     let java_path_str = java_path.unwrap_or("").to_string();
-    let loader_task: tokio::task::JoinHandle<std::result::Result<(String, String), anyhow::Error>> = {
+    let loader_task: Option<
+        tokio::task::JoinHandle<std::result::Result<(String, String), anyhow::Error>>,
+    > = if phase == ModpackPhase::DownloadOnly {
+        None
+    } else {
+        Some({
         let mc_dir_str = mc_dir.to_string_lossy().to_string();
         let tx_clone = progress_tx.clone();
         tokio::spawn(async move {
@@ -848,6 +898,7 @@ pub async fn install_parsed_modpack(
                     Ok((parsed_mc.clone(), String::new()))
                 }
             }
+        })
         })
     };
     let external_files = parsed.external_files.clone();
@@ -1070,6 +1121,64 @@ pub async fn install_parsed_modpack(
     if let Err(e) = mc_task.await {
         println!("[Modpack] 警告: 原版 Minecraft 下载任务失败: {}", e);
     }
+    if let Err(e) = external_task.await {
+        println!("[Modpack] 警告: 外部资源下载任务失败: {}", e);
+    }
+    if phase == ModpackPhase::DownloadOnly {
+        println!("[Modpack] 下载阶段完成: {}", instance_name);
+        return Ok((instance_name, task_count));
+    }
+    let (final_version_name, loader_type_hint) = match loader_task
+        .expect("loader task must exist for Full install")
+        .await
+    {
+        Ok(Ok(result)) => result,
+        Ok(Err(e)) => {
+            println!("[Modpack] 错误: ModLoader 安装失败: {}", e);
+            return Err(e.context("整合包安装失败：ModLoader 安装失败"));
+        }
+        Err(e) => {
+            println!("[Modpack] 错误: ModLoader 安装任务崩溃: {}", e);
+            return Err(anyhow!("整合包安装失败：ModLoader 安装任务崩溃: {}", e));
+        }
+    };
+    merge_modpack_instance(
+        parsed,
+        &instance_name,
+        minecraft_path,
+        &final_version_name,
+        &loader_type_hint,
+        progress_tx.as_ref(),
+        total_files,
+    )?;
+    println!(
+        "[Modpack] 整合包安装完成: {} (版本名: {})",
+        parsed.name, instance_name
+    );
+    Ok((instance_name, task_count))
+}
+
+async fn finalize_modpack_instance(
+    parsed: &ParsedModpack,
+    instance_name: &str,
+    minecraft_path: &Path,
+    java_path: Option<&str>,
+    progress_tx: Option<tokio::sync::mpsc::Sender<(usize, usize, String, String)>>,
+) -> Result<(String, usize)> {
+    let task_count: usize = parsed
+        .external_files
+        .iter()
+        .filter(|f| !f.urls.is_empty())
+        .count();
+    let total_files: usize = 2 + task_count;
+    let mc_dir = minecraft_path.to_path_buf();
+    let loader_task = spawn_modpack_loader_task(
+        parsed,
+        &mc_dir,
+        java_path,
+        progress_tx.clone(),
+        total_files,
+    );
     let (final_version_name, loader_type_hint) = match loader_task.await {
         Ok(Ok(result)) => result,
         Ok(Err(e)) => {
@@ -1081,27 +1190,49 @@ pub async fn install_parsed_modpack(
             return Err(anyhow!("整合包安装失败：ModLoader 安装任务崩溃: {}", e));
         }
     };
-    if let Err(e) = external_task.await {
-        println!("[Modpack] 警告: 外部资源下载任务失败: {}", e);
-    }
+    merge_modpack_instance(
+        parsed,
+        instance_name,
+        minecraft_path,
+        &final_version_name,
+        &loader_type_hint,
+        progress_tx.as_ref(),
+        total_files,
+    )?;
+    println!(
+        "[Modpack] 整合包安装阶段完成: {} (版本名: {})",
+        parsed.name, instance_name
+    );
+    Ok((instance_name.to_string(), task_count))
+}
+
+fn merge_modpack_instance(
+    parsed: &ParsedModpack,
+    instance_name: &str,
+    minecraft_path: &Path,
+    final_version_name: &str,
+    loader_type_hint: &str,
+    progress_tx: Option<&tokio::sync::mpsc::Sender<(usize, usize, String, String)>>,
+    total_files: usize,
+) -> Result<()> {
     println!("[Modpack] 所有并行任务完成，开始合并 version.json");
     let effective_loader_name = if matches!(parsed.loader_type, ModpackLoaderType::Vanilla) {
         parsed.mc_version.clone()
     } else {
-        final_version_name.clone()
+        final_version_name.to_string()
     };
     if let Err(e) = merge_version_jsons_for_modpack(
-        &instance_name,
+        instance_name,
         &parsed.mc_version,
         &effective_loader_name,
-        &loader_type_hint,
+        loader_type_hint,
         minecraft_path,
     ) {
         println!(
             "[Modpack] 警告: 合并 version.json 失败 ({}), 回退到简单 inherits 模式",
             e
         );
-        let version_dir = minecraft_path.join("versions").join(&instance_name);
+        let version_dir = minecraft_path.join("versions").join(instance_name);
         fs::create_dir_all(&version_dir).ok();
         let json_path = version_dir.join(format!("{}.json", instance_name));
         if !json_path.exists() {
@@ -1132,7 +1263,7 @@ pub async fn install_parsed_modpack(
             let _ = fs::create_dir_all(version_dir.join(sub));
         }
     }
-    if let Some(tx) = &progress_tx {
+    if let Some(tx) = progress_tx {
         let _ = tx.try_send((
             total_files,
             total_files,
@@ -1140,8 +1271,7 @@ pub async fn install_parsed_modpack(
             "完成".to_string(),
         ));
     }
-    // 确保 options.txt 存在并设置语言为中文
-    let versions_dir = minecraft_path.join("versions").join(&instance_name);
+    let versions_dir = minecraft_path.join("versions").join(instance_name);
     let options_path = versions_dir.join("options.txt");
     if options_path.exists() {
         let content = fs::read_to_string(&options_path)?;
@@ -1164,13 +1294,122 @@ pub async fn install_parsed_modpack(
     } else {
         fs::write(&options_path, "lang:zh_cn")?;
     }
-    
-    println!(
-        "[Modpack] 整合包安装完成: {} (版本名: {})",
-        parsed.name, instance_name
-    );
-    Ok((instance_name, task_count))
+    Ok(())
 }
+
+fn spawn_modpack_loader_task(
+    parsed: &ParsedModpack,
+    mc_dir: &Path,
+    java_path: Option<&str>,
+    progress_tx: Option<tokio::sync::mpsc::Sender<(usize, usize, String, String)>>,
+    total_files: usize,
+) -> tokio::task::JoinHandle<std::result::Result<(String, String), anyhow::Error>> {
+    let parsed_loader = parsed.loader_type.clone();
+    let parsed_loader_ver = parsed.loader_version.clone();
+    let parsed_mc = parsed.mc_version.clone();
+    let java_path_str = java_path.unwrap_or("").to_string();
+    let mc_dir_str = mc_dir.to_string_lossy().to_string();
+    tokio::spawn(async move {
+        if let Some(ref t) = progress_tx {
+            let _ = t.try_send((
+                1,
+                total_files,
+                String::new(),
+                "安装 ModLoader".to_string(),
+            ));
+        }
+        let result = match parsed_loader {
+            ModpackLoaderType::Vanilla => Ok((parsed_mc.clone(), String::new())),
+            ModpackLoaderType::Forge => {
+                let forge_ver = parsed_loader_ver.unwrap_or_else(|| "latest".to_string());
+                let version_id = crate::downloader::forge_installer::install_forge(
+                    &parsed_mc,
+                    &forge_ver,
+                    &mc_dir_str,
+                    &java_path_str,
+                    None,
+                    None,
+                    None,
+                )
+                .await
+                .map_err(|e| anyhow!("Forge 安装失败: {}", e))?;
+                Ok((version_id, "forge".to_string()))
+            }
+            ModpackLoaderType::Neoforge => {
+                let neo_ver = parsed_loader_ver.unwrap_or_else(|| "latest".to_string());
+                let version_id = crate::downloader::neoforge_installer::install_neoforge(
+                    &parsed_mc,
+                    &neo_ver,
+                    &mc_dir_str,
+                    &java_path_str,
+                    None,
+                    None,
+                    None,
+                )
+                .await
+                .map_err(|e| anyhow!("NeoForge 安装失败: {}", e))?;
+                Ok((version_id, "neoforge".to_string()))
+            }
+            ModpackLoaderType::Fabric => {
+                let mut fabric_ver = parsed_loader_ver.unwrap_or_else(|| "latest".to_string());
+                if fabric_ver != "latest" {
+                    let recommended_ver = recommend_fabric_loader_version(&parsed_mc, &fabric_ver);
+                    if recommended_ver != fabric_ver {
+                        fabric_ver = recommended_ver;
+                    }
+                }
+                let version_id = crate::downloader::fabric_installer::install_fabric_loader(
+                    &parsed_mc,
+                    &fabric_ver,
+                    &mc_dir_str,
+                    true,
+                    None,
+                    None,
+                )
+                .await
+                .map_err(|e| anyhow!("Fabric 安装失败: {}", e))?;
+                Ok((version_id, "fabric".to_string()))
+            }
+            ModpackLoaderType::Quilt => {
+                let quilt_ver = parsed_loader_ver.unwrap_or_else(|| "latest".to_string());
+                let version_id = crate::downloader::quilt_installer::install_quilt_loader(
+                    &parsed_mc,
+                    &quilt_ver,
+                    &mc_dir_str,
+                    None,
+                    None,
+                )
+                .await
+                .map_err(|e| anyhow!("Quilt 安装失败: {}", e))?;
+                Ok((version_id, "quilt".to_string()))
+            }
+            ModpackLoaderType::LiteLoader => {
+                let ll_ver = parsed_loader_ver.unwrap_or_else(|| parsed_mc.clone());
+                let version_id = crate::downloader::liteloader_installer::install_liteloader(
+                    &parsed_mc,
+                    &ll_ver,
+                    &mc_dir_str,
+                    &java_path_str,
+                    None,
+                )
+                .await
+                .map_err(|e| anyhow!("LiteLoader 安装失败: {}", e))?;
+                Ok((version_id, "liteloader".to_string()))
+            }
+            ModpackLoaderType::Optifine => Ok((parsed_mc.clone(), String::new())),
+        };
+        if let Some(ref t) = progress_tx {
+            let _ = t.try_send((
+                2,
+                total_files,
+                String::new(),
+                "ModLoader 安装完成".to_string(),
+            ));
+        }
+        result
+    })
+}
+
 fn sanitize_instance_name(raw: &str) -> String {
     let mut out = String::with_capacity(raw.len());
     for ch in raw.chars() {

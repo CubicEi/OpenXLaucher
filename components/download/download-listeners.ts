@@ -217,6 +217,17 @@ function applyProgressFields(
   bytesDownloaded: number | undefined,
   isCompleted?: boolean
 ): DownloadTask {
+  if (task.role === "install" || task.progressMode === "indeterminate") {
+    return {
+      ...task,
+      progress: undefined,
+      speedBps: undefined,
+      progressMode: "indeterminate",
+      role: "install",
+      ...(payloadLabel ? { label: payloadLabel } : {}),
+      ...(stage ? { stage, detail: detail ?? stage } : {}),
+    };
+  }
   const stageChanged =
     stage != null && stage.length > 0 && stage !== (task.stage?.trim() ?? "");
   const resolvedSpeed =
@@ -317,6 +328,9 @@ function dedupeSameTaskId(tasks: DownloadTask[], taskId: number): DownloadTask[]
       error: t.error ?? acc.error,
       failedCount: t.failedCount ?? acc.failedCount,
       label: acc.label || t.label,
+      role: acc.role ?? t.role,
+      progressMode: acc.progressMode ?? t.progressMode,
+      sessionId: acc.sessionId ?? t.sessionId,
     };
   }, keeper);
   return tasks.flatMap((t) => {
@@ -368,6 +382,9 @@ function makeProgressHandler(
       if (existing) {
         return deduped.map((task) => {
           if (task.taskId !== task_id) return task;
+          if (task.role === "install" || task.progressMode === "indeterminate") {
+            return task;
+          }
           if (
             task.status === "cancelled" ||
             task.status === "success" ||
@@ -872,10 +889,12 @@ export async function setupAllDownloadListeners(
         const deduped = dedupeSameTaskId(prev, taskId);
         const existing = deduped.find((t) => t.taskId === taskId);
         if (!existing) return deduped;
-        return deduped.map((task) => {
+        const sessionId = payload.session_id || existing.sessionId;
+        const success = payload.success;
+        const cancelled =
+          !success && (payload.error === "已取消" || payload.error === "cancelled");
+        const next = deduped.map((task) => {
           if (task.taskId !== taskId || task.status === "cancelled") return task;
-          const success = payload.success;
-          const cancelled = !success && (payload.error === "已取消" || payload.error === "cancelled");
           return {
             ...task,
             status: (cancelled
@@ -885,7 +904,9 @@ export async function setupAllDownloadListeners(
                 : "error") as DownloadTaskStatus,
             progress:
               payload.role === "install"
-                ? undefined
+                ? success
+                  ? 100
+                  : 0
                 : success
                   ? 100
                   : task.progress,
@@ -893,12 +914,33 @@ export async function setupAllDownloadListeners(
             speedBps: undefined,
             sessionId: payload.session_id || task.sessionId,
             role: payload.role,
-            progressMode: payload.role === "install" ? "indeterminate" : "percent",
+            progressMode: (payload.role === "install"
+              ? "indeterminate"
+              : "percent") as DownloadTask["progressMode"],
             ...(payload.instance_name
               ? { targetInstanceName: payload.instance_name }
               : {}),
           };
         });
+        // Download finished → kick install row (e.g. modpack waits on download task).
+        if (payload.role === "download" && success && sessionId) {
+          return next.map((task) => {
+            if (
+              task.sessionId === sessionId &&
+              task.role === "install" &&
+              task.status === "queued"
+            ) {
+              return {
+                ...task,
+                status: "downloading" as const,
+                progressMode: "indeterminate" as const,
+                progress: undefined,
+              };
+            }
+            return task;
+          });
+        }
+        return next;
       });
     })
   );

@@ -4,9 +4,29 @@ const DOWNLOAD_STAGE_RE =
   /下载|download|拉取|fetch|获取文件|下载mod加载器|下载附加组件/i;
 const REPLACE_STAGE_RE = /替换|replace|安装|install|合并|解压|extract|写入|校验|verify/i;
 
+const INSTALL_TERMINAL = new Set([
+  "success",
+  "warning",
+  "error",
+  "cancelled",
+]);
+
+/** Install-session row (dual-task install leg or label heuristic). */
+export function isInstallTask(task: DownloadTask): boolean {
+  if (task.role === "install" || task.progressMode === "indeterminate") return true;
+  const label = task.label?.trim() ?? "";
+  // 「安装 xxx」/「安装xxx」
+  return /^安装\s*\S/.test(label);
+}
+
+/** Waiting or running install — always show the sliding indeterminate bar. */
+export function isInstallTaskActive(task: DownloadTask): boolean {
+  return isInstallTask(task) && !INSTALL_TERMINAL.has(task.status);
+}
+
 /** Active download-role tasks that contribute to overall % / speed. */
 export function isDownloadMeterTask(task: DownloadTask): boolean {
-  if (task.role === "install" || task.progressMode === "indeterminate") return false;
+  if (isInstallTask(task)) return false;
   return true;
 }
 
@@ -47,7 +67,7 @@ export function resolveTaskStage(task: DownloadTask): string {
     if (p < 80) return "download";
     return "replace";
   }
-  if (task.progressMode === "indeterminate" || task.role === "install") {
+  if (isInstallTask(task)) {
     return "preparing";
   }
   if (task.progress === undefined) return "preparing";
@@ -73,11 +93,7 @@ export function averageActiveProgress(tasks: DownloadTask[]): number {
   }
 
   // Download finished but install still running → overall meter stays at 100.
-  const hasActiveInstall = tasks.some(
-    (t) =>
-      (t.status === "downloading" || t.status === "queued") &&
-      (t.role === "install" || t.progressMode === "indeterminate")
-  );
+  const hasActiveInstall = tasks.some((t) => isInstallTaskActive(t));
   const downloadTasks = tasks.filter((t) => isDownloadMeterTask(t));
   if (
     hasActiveInstall &&

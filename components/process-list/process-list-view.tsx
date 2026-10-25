@@ -1,5 +1,6 @@
 "use client";
 
+import type { ReactNode } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import {
   AlertCircle,
@@ -22,6 +23,8 @@ import { fadeSlideUp, staggerContainer, staggerItem } from "@/lib/motion";
 import {
   averageActiveProgress,
   formatSpeedBps,
+  isInstallTask,
+  isInstallTaskActive,
   resolveTaskStage,
   sumDownloadSpeeds,
   taskShowsDownloadSpeed,
@@ -59,7 +62,12 @@ function stageLabel(
   }
 }
 
-/** Accelerate-stretch → decelerate-shrink bar that drifts right (install tasks). */
+/**
+ * Install-task indeterminate bar.
+ * Pure CSS — do NOT use framer-motion here: parent TaskCard is a motion node with
+ * staggerItem variants (`animate="animate"`), which inherits into child motion.div
+ * and silently kills left/width keyframe animations.
+ */
 function IndeterminateProgressBar({ className }: { className?: string }) {
   return (
     <div
@@ -67,20 +75,7 @@ function IndeterminateProgressBar({ className }: { className?: string }) {
       role="progressbar"
       aria-valuetext="indeterminate"
     >
-      <motion.div
-        className="absolute inset-y-0 left-0 rounded-full bg-primary"
-        initial={{ left: "-20%", width: "18%" }}
-        animate={{
-          left: ["-20%", "15%", "55%", "105%"],
-          width: ["18%", "48%", "32%", "12%"],
-        }}
-        transition={{
-          duration: 1.65,
-          ease: [0.4, 0.0, 0.2, 1],
-          repeat: Infinity,
-          times: [0, 0.35, 0.7, 1],
-        }}
-      />
+      <div className="install-progress-indeterminate-bar" aria-hidden />
     </div>
   );
 }
@@ -114,24 +109,49 @@ function TaskCard({
   onCancel: () => void;
 }) {
   const { t } = useI18n();
-  const isIndeterminate =
-    task.progressMode === "indeterminate" || task.role === "install";
-  const showSpeed = !isIndeterminate && taskShowsDownloadSpeed(task);
+  // Progress branch (strict order):
+  // 1) install waiting/running → sliding indeterminate bar (never Progress)
+  // 2) install terminal → full (success/warning) or empty (error/cancelled)
+  // 3) download / other → percent Progress
+  const install = isInstallTask(task);
+  const installActive = isInstallTaskActive(task);
+  const showSpeed = !install && taskShowsDownloadSpeed(task);
   const speedText = showSpeed ? formatSpeedBps(task.speedBps) : null;
-  const percentText = isIndeterminate
+  const percentText = install
     ? null
     : task.progress !== undefined
       ? `${task.progress.toFixed(1)}%`
       : "—";
   const canCancel = task.status === "queued" || task.status === "downloading";
   const canRemove = !canCancel;
-  const showIndeterminateBar =
-    isIndeterminate &&
-    (task.status === "downloading" || task.status === "queued");
+
+  let progressRow: ReactNode;
+  if (install && installActive) {
+    progressRow = <IndeterminateProgressBar />;
+  } else if (install) {
+    progressRow = (
+      <Progress
+        value={
+          task.status === "success" || task.status === "warning" ? 100 : 0
+        }
+        className="h-1.5"
+      />
+    );
+  } else {
+    progressRow = (
+      <Progress
+        value={
+          task.status === "success" || task.status === "warning"
+            ? 100
+            : task.progress
+        }
+        className="h-1.5"
+      />
+    );
+  }
 
   return (
     <motion.div
-      layout
       variants={staggerItem}
       initial="initial"
       animate="animate"
@@ -178,20 +198,7 @@ function TaskCard({
       </p>
 
       {/* Row 3: progress */}
-      <div className="mt-2 pl-5">
-        {showIndeterminateBar ? (
-          <IndeterminateProgressBar />
-        ) : (
-          <Progress
-            value={
-              task.status === "success" || task.status === "warning"
-                ? 100
-                : task.progress
-            }
-            className="h-1.5"
-          />
-        )}
-      </div>
+      <div className="mt-2 pl-5">{progressRow}</div>
     </motion.div>
   );
 }

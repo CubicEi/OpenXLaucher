@@ -506,12 +506,11 @@ async fn download_modpack_files(
     });
 
     let minecraft_dir = session.minecraft_path.clone();
-    let java = session.java_path.as_deref();
-    let result = modpack_installer::install_modpack_from_zip(
+    let _java = session.java_path.as_deref();
+    let result = modpack_installer::download_modpack_from_zip(
         Path::new(zip_path),
         &minecraft_dir,
         Some(tx),
-        java,
     )
     .await
     .map_err(|e| e.to_string());
@@ -568,23 +567,53 @@ async fn run_install_worker(
             .wait(ArtifactKind::ModpackFiles, &cancel)
             .await?;
         ensure_not_cancelled(&cancel)?;
+        let zip_path = session
+            .plan
+            .modpack_zip_path()
+            .ok_or_else(|| "缺少整合包路径".to_string())?;
         emit_install_progress(
             &app,
             &session.session_id,
             session.install_task_id,
-            STAGE_CLEANUP,
+            STAGE_LOADER,
             None,
         );
-        let name = std::fs::read_to_string(session.staging_root.join("modpack_instance_name.txt"))
-            .ok();
-        emit_install_progress(
-            &app,
-            &session.session_id,
-            session.install_task_id,
-            STAGE_DONE,
-            None,
-        );
-        return Ok(name);
+        let java = session.java_path.as_deref();
+        let install_result = modpack_installer::install_modpack_after_download(
+            Path::new(zip_path),
+            &session.minecraft_path,
+            java,
+        )
+        .await
+        .map_err(|e| e.to_string());
+        ensure_not_cancelled(&cancel)?;
+        return match install_result {
+            Ok((instance_name, _)) => {
+                emit_install_progress(
+                    &app,
+                    &session.session_id,
+                    session.install_task_id,
+                    STAGE_MERGE,
+                    None,
+                );
+                emit_install_progress(
+                    &app,
+                    &session.session_id,
+                    session.install_task_id,
+                    STAGE_CLEANUP,
+                    None,
+                );
+                emit_install_progress(
+                    &app,
+                    &session.session_id,
+                    session.install_task_id,
+                    STAGE_DONE,
+                    None,
+                );
+                Ok(Some(instance_name))
+            }
+            Err(e) => Err(e),
+        };
     }
 
     emit_install_progress(

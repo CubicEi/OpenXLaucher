@@ -40,7 +40,7 @@ pub async fn cancel_combined_download(taskId: u64) -> Result<(), String> {
                 "[Combined] 取消时未找到会话任务 {}（可能已结束）",
                 taskId
             );
-            Ok(())
+        Ok(())
         }
     }
 }

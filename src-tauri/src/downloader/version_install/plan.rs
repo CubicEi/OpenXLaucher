@@ -198,6 +198,13 @@ impl InstallPlan {
         }
     }
 
+    pub fn modpack_zip_path(&self) -> Option<&str> {
+        match self {
+            Self::Modpack { zip_path } => Some(zip_path.as_str()),
+            _ => None,
+        }
+    }
+
     pub fn display_name(&self) -> String {
         match self {
             Self::Combined {

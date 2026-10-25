@@ -344,3 +344,52 @@ input[type="range"]:disabled {
    （旧页淡出 → 路由切换 → 新页首次 mutation 后淡入）
    ============================================================ */
 
+/* 任务队列 — 安装任务不定进度：右移 + 加速拉长再减速缩短；首尾同宽、linear 关键帧避免循环跳变 */
+@keyframes install-progress-indeterminate {
+  0% {
+    left: -22%;
+    width: 22%;
+  }
+  18% {
+    left: 2%;
+    width: 34%;
+  }
+  36% {
+    left: 18%;
+    width: 48%;
+  }
+  52% {
+    left: 36%;
+    width: 42%;
+  }
+  70% {
+    left: 56%;
+    width: 30%;
+  }
+  86% {
+    left: 78%;
+    width: 24%;
+  }
+  100% {
+    left: 108%;
+    width: 22%;
+  }
+}
+
+.install-progress-indeterminate-bar {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -22%;
+  width: 22%;
+  border-radius: 9999px;
+  background-color: var(--primary);
+  will-change: left, width;
+  animation: install-progress-indeterminate 1.85s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .install-progress-indeterminate-bar {
+    animation-duration: 2s;
+  }
+}
