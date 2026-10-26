@@ -412,6 +412,7 @@ export function LaunchProvider({ children }: { children: React.ReactNode }) {
         setSelectedLogPid(pid);
         launchInFlightRef.current = false;
         statusHintRef.current = "launching";
+        setStatus("launching");
       },
     ).then((fn) => { unlisten = fn; });
     return () => { unlisten?.(); };
@@ -555,20 +556,56 @@ export function LaunchProvider({ children }: { children: React.ReactNode }) {
         // 进程真正移除由 game-exited 驱动；若尚无登记则立即清 in-flight
         if (targetPid == null) {
           launchInFlightRef.current = false;
-          statusHintRef.current = "idle";
+          statusHintRef.current = "stopped";
           setProgress(null);
           setLaunchEndedAt(now);
           setLastExitCode(0);
+          setStatus("stopped");
           syncStatus(instancesRef.current);
         }
       } catch (e) {
         setErrorMessage(e instanceof Error ? e.message : String(e));
         launchInFlightRef.current = false;
+        if (instancesRef.current.length === 0) {
+          statusHintRef.current = "stopped";
+          setStatus("stopped");
+        }
         setProgress(null);
         syncStatus(instancesRef.current);
       }
     },
     [status, selectedLogPid, pushLogToPid, syncStatus],
+  );
+
+  const beginLaunchUi = useCallback(() => {
+    setErrorMessage(null);
+    setProgress(null);
+    log4jParser.reset();
+    const now = Date.now();
+    setLaunchStartedAt(now);
+    setLaunchEndedAt(null);
+    setLastExitCode(null);
+    launchInFlightRef.current = true;
+    statusHintRef.current = "preparing";
+    // 同步写入 React state，点击后立即切换启动中图标
+    setStatus("preparing");
+  }, []);
+
+  const failLaunchUi = useCallback(
+    (msg: string) => {
+      setLaunchEndedAt(Date.now());
+      launchInFlightRef.current = false;
+      statusHintRef.current =
+        instancesRef.current.length > 0 ? null : "error";
+      if (instancesRef.current.length === 0) {
+        setStatus("error");
+      } else {
+        syncStatus(instancesRef.current);
+      }
+      setErrorMessage(msg);
+      setProgress(null);
+    },
+    [syncStatus],
   );
 
   const launchGame = useCallback(
@@ -592,33 +629,28 @@ export function LaunchProvider({ children }: { children: React.ReactNode }) {
         return;
       }
 
+      // 校验通过后立刻进入「正在启动」，再做微软刷新 / 内存探测等耗时步骤
+      beginLaunchUi();
+      addPendingOrSelectedLog("info", t("launch.provider.preparingLaunchArguments"));
+
       let microsoftAccessToken: string | null = null;
       if (selectedProfile.authType === "microsoft") {
         const prep = await prepareMicrosoftAccountForLaunch(selectedProfile);
         if (!prep.ok) {
-          if (prep.reason === "network") {
-            setErrorMessage("无法连接微软服务器以刷新登录令牌，请检查网络后重试。");
-          } else if (prep.reason === "credentials") {
-            setErrorMessage("当前正版账号缺少有效登录令牌，请在账户中重新登录微软账号。");
-          } else if (prep.reason === "cancelled") {
-            setErrorMessage("已取消微软登录，游戏未启动。");
-          }
+          const msg =
+            prep.reason === "network"
+              ? "无法连接微软服务器以刷新登录令牌，请检查网络后重试。"
+              : prep.reason === "credentials"
+                ? "当前正版账号缺少有效登录令牌，请在账户中重新登录微软账号。"
+                : prep.reason === "cancelled"
+                  ? "已取消微软登录，游戏未启动。"
+                  : "微软账号准备失败，游戏未启动。";
+          failLaunchUi(msg);
+          addPendingOrSelectedLog("error", `${t("launch.provider.launchFailed")}: ${msg}`);
           return;
         }
         microsoftAccessToken = prep.accessToken;
       }
-
-      setErrorMessage(null);
-      setProgress(null);
-      log4jParser.reset();
-      const now = Date.now();
-      setLaunchStartedAt(now);
-      setLaunchEndedAt(null);
-      setLastExitCode(null);
-      launchInFlightRef.current = true;
-      statusHintRef.current = "preparing";
-      syncStatus(instancesRef.current);
-      addPendingOrSelectedLog("info", t("launch.provider.preparingLaunchArguments"));
 
       try {
         let launchMaxMemory = merged.maxMemory;
@@ -635,7 +667,7 @@ export function LaunchProvider({ children }: { children: React.ReactNode }) {
         }
 
         statusHintRef.current = "launching";
-        syncStatus(instancesRef.current);
+        setStatus("launching");
         addPendingOrSelectedLog(
           "info",
           t("launch.provider.launchVersionVersionName", { versionName: merged.versionName }),
@@ -689,8 +721,9 @@ export function LaunchProvider({ children }: { children: React.ReactNode }) {
         });
 
         setLastCommandArgs(result);
+        // invoke 成功后立即恢复就绪，可再次启动；进程列表由后续事件维护
         launchInFlightRef.current = false;
-        statusHintRef.current = "launching";
+        statusHintRef.current = null;
         syncStatus(instancesRef.current);
         addPendingOrSelectedLog("info", t("launch.provider.gameLaunched"));
       } catch (err) {
@@ -698,17 +731,7 @@ export function LaunchProvider({ children }: { children: React.ReactNode }) {
         const msg = raw.includes("模组正在更新")
           ? t("launch.provider.modUpdateInProgress")
           : raw;
-        const endedAt = Date.now();
-        setLaunchEndedAt(endedAt);
-        launchInFlightRef.current = false;
-        statusHintRef.current =
-          instancesRef.current.length > 0 ? null : "error";
-        if (instancesRef.current.length === 0) {
-          setStatus("error");
-        } else {
-          syncStatus(instancesRef.current);
-        }
-        setErrorMessage(msg);
+        failLaunchUi(msg);
         addPendingOrSelectedLog("error", `${t("launch.provider.launchFailed")}: ${msg}`);
       }
     },
@@ -718,6 +741,8 @@ export function LaunchProvider({ children }: { children: React.ReactNode }) {
       addPendingOrSelectedLog,
       t,
       updateConfig,
+      beginLaunchUi,
+      failLaunchUi,
       syncStatus,
       prepareMicrosoftAccountForLaunch,
     ],

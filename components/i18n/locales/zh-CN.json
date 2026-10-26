@@ -29,7 +29,7 @@
     "addToInstance": "加入实例",
     "removeFromInstance": "移出实例",
     "openFolder": "打开目录 {name}",
-    "deleteConfirm": "确定删除“{name}”吗？",
+    "deleteConfirm": "确定将“{name}”移入系统回收站吗？可从回收站恢复。",
     "deleteConfirmTitle": "确认删除",
     "openInstanceFolder": "在资源管理器中打开文件夹",
     "clearCacheLibrary": "清空缓存库",
@@ -386,7 +386,7 @@
       "remove": "移除",
       "recoverBuiltIn": "恢复内置主题",
       "trustWarning": "此主题可以运行本地代码并调用启动器接口。仅在你信任主题作者时启用。",
-      "removeWarning": "移除此主题并返回内置界面吗？",
+      "removeWarning": "将此主题移入回收站并返回内置界面吗？可从回收站恢复。",
       "switchFailed": "主题无法启用。当前主题保持不变。"
     },
     "sidebarConfig": {
@@ -637,7 +637,7 @@
     "giveYourModpackANameYouCanChangeIt": "给你的整合包取个名字，之后可随时修改。",
     "startCreating": "开始制作",
     "deleteThisModpack": "确认删除？",
-    "thisWillBePermanentlyRemovedFromDisk": "将从磁盘永久删除："
+    "thisWillBePermanentlyRemovedFromDisk": "将移入系统回收站："
   },
   "gameSettings": {
     "addRemoveAndManageMods": "添加、移除、管理模组",
@@ -651,8 +651,8 @@
     "viewScreenshotsSavedInGame": "浏览游戏内保存的截图",
     "clickToSelectVersion": "点击选择版本",
     "pleaseSelectAVersionToDeleteFirst": "请先选择要删除的版本",
-    "confirmDeletionOfGameVersionDirectoryEffectiveVersionDir": "确认删除游戏版本目录「{effectiveVersionDirName}」？\n\n将删除：{minecraftPath}\\versions\\{effectiveVersionDirName2}\n\n此操作不可撤销。",
-    "deletedVersionDirectoryEffectiveVersionDirName": "已删除版本目录：{effectiveVersionDirName}",
+    "confirmDeletionOfGameVersionDirectoryEffectiveVersionDir": "确认将游戏版本目录「{effectiveVersionDirName}」移入回收站？\n\n路径：{minecraftPath}\\versions\\{effectiveVersionDirName2}\n\n可从系统回收站恢复。",
+    "deletedVersionDirectoryEffectiveVersionDirName": "版本目录已移入回收站：{effectiveVersionDirName}",
     "clickToSelectGameVersion": "点击选择游戏版本",
     "vanillaNoModLoaderClickTitleToSelectVersion": "原版 · 无 ModLoader · 点击标题选择版本",
     "deleteCurrentlySelectedGameVersionDirectory": "删除当前选中的游戏版本目录",
@@ -668,7 +668,21 @@
     "renameVersionDialogTitle": "修改版本文件夹名称",
     "renameVersionDialogHint": "输入新的版本文件夹名称，留空则保持当前名称：",
     "renameVersionConfirm": "确认修改",
-    "renameVersionSuccess": "版本文件夹已重命名为：{newName}"
+    "renameVersionSuccess": "版本文件夹已重命名为：{newName}",
+    "retargetVersion": "修改游戏版本与加载器",
+    "retargetVersionHint": "保留模组、存档等数据，更换 MC 版本或加载器",
+    "retargetVersionStart": "开始修改",
+    "retargetPageTitle": "修改版本",
+    "retargetBanner": "正在修改实例「{folder}」（当前 {mc} · {loader}）",
+    "retargetWarningTitle": "确认继续修改？",
+    "retargetWarningBody": "目标 MC 版本低于当前，或加载器类型发生变化，可能导致模组不兼容或存档异常。请确认已备份重要数据。",
+    "retargetWarningDowngrade": "目标 Minecraft 版本低于当前版本，可能导致模组不兼容或存档异常。请确认已备份重要数据。",
+    "retargetWarningLoader": "加载器类型将发生变化，可能导致现有模组无法使用。请确认已备份重要数据。",
+    "retargetWarningContinue": "仍要继续",
+    "retargetInstanceNameTitle": "目标版本文件夹",
+    "retargetInstanceNameHint": "安装将写入 versions/ 下的文件夹名，留空则使用默认：",
+    "retargetStartInstall": "开始修改",
+    "retargetInstallLabel": "修改版本 · Minecraft {version}"
   },
   "checkUpdate": {
     "title": "检查更新",

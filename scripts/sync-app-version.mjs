@@ -14,6 +14,23 @@ if (!version || typeof version !== "string") {
   process.exit(1);
 }
 
+// Tauri `tauri.conf.json > version` 使用严格 SemVer 2.0（不可带前缀 v，不可用下划线）
+// 合法示例: 1.0.0 / 1.0.0-pre.1 / 1.0.0-beta.2 / 0.4.2-beta
+const SEMVER_RE =
+  /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\.(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\+([0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*))?$/;
+if (!SEMVER_RE.test(version)) {
+  console.error(
+    `[verify-app-version] package.json "version" must be SemVer 2.0 for Tauri, got ${JSON.stringify(version)}`,
+  );
+  console.error(
+    "  Valid: \"1.0.0-pre.1\"  \"1.0.0-beta.1\"  \"0.4.2-beta\"",
+  );
+  console.error(
+    "  Invalid: \"v1.0.0-pre1\" (leading v), \"1.0.0_pre1\" (underscore)",
+  );
+  process.exit(1);
+}
+
 let failed = false;
 
 const tauriConf = JSON.parse(readFileSync(join(root, "src-tauri/tauri.conf.json"), "utf8"));

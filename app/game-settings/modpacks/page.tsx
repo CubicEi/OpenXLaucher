@@ -300,7 +300,10 @@ export default function ModpackManagementPage() {
     try {
       setDeletingCached(true);
       await invoke("delete_cached_modpack_cmd", { fullPath: pendingDeleteEntry.full_path });
-      setMessage({ type: "success", text: `已删除 ${pendingDeleteEntry.file_name}` });
+      setMessage({
+        type: "success",
+        text: `已移入回收站：${pendingDeleteEntry.file_name}`,
+      });
       setPendingDeleteEntry(null);
       await refreshCache();
     } catch (err) {
@@ -658,7 +661,7 @@ export default function ModpackManagementPage() {
             <AlertDialogTitle>确认删除</AlertDialogTitle>
             <AlertDialogDescription>
               {pendingDeleteEntry
-                ? `确认删除缓存整合包「${pendingDeleteEntry.file_name}」？\n\n此操作不可撤销。`
+                ? `确认将缓存整合包「${pendingDeleteEntry.file_name}」移入回收站？\n\n可从系统回收站恢复。`
                 : ""}
             </AlertDialogDescription>
           </AlertDialogHeader>

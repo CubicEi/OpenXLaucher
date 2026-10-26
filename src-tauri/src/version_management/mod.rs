@@ -36,7 +36,118 @@ pub fn ensure_instance_dirs(instance_dir: &Path) -> Result<(), String> {
     Ok(())
 }
 
-/// 前端调用命令：确保指定实例目录具备完整的标准子目录结构
+fn copy_file_if_missing(src: &Path, dst: &Path) -> Result<(), String> {
+    if !src.is_file() {
+        return Ok(());
+    }
+    if dst.exists() {
+        return Ok(());
+    }
+    if let Some(parent) = dst.parent() {
+        fs::create_dir_all(parent).map_err(|e| format!("创建目录失败: {}", e))?;
+    }
+    fs::copy(src, dst).map_err(|e| format!("复制文件失败 {}: {}", src.display(), e))?;
+    Ok(())
+}
+
+fn copy_dir_merge(src: &Path, dst: &Path) -> Result<(), String> {
+    if !src.is_dir() {
+        return Ok(());
+    }
+    fs::create_dir_all(dst).map_err(|e| format!("创建目录失败: {}", e))?;
+    for entry in fs::read_dir(src).map_err(|e| format!("读取目录失败: {}", e))? {
+        let entry = entry.map_err(|e| e.to_string())?;
+        let from_path = entry.path();
+        let to_path = dst.join(entry.file_name());
+        if from_path.is_dir() {
+            copy_dir_merge(&from_path, &to_path)?;
+        } else if from_path.is_file() && !to_path.exists() {
+            if let Some(parent) = to_path.parent() {
+                fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+            }
+            fs::copy(&from_path, &to_path)
+                .map_err(|e| format!("复制文件失败: {}", e))?;
+        }
+    }
+    Ok(())
+}
+
+/// 版本引擎产物目录：转移用户数据时跳过（由新安装写入）。
+fn is_version_engine_dir(name: &str) -> bool {
+    name.to_lowercase().ends_with("-natives")
+}
+
+/// 将用户数据从原实例目录合并到目标实例目录（不覆盖目标已有文件）。
+///
+/// - 拷贝标准子目录与源目录下其它未知文件夹（跳过 `*-natives`）
+/// - 根目录已知文件 + 其它非引擎文件（跳过 `*.jar` / 版本 `*.json`）
+pub fn copy_instance_user_data(
+    minecraft_path: &Path,
+    from_folder: &str,
+    to_folder: &str,
+) -> Result<(), String> {
+    if from_folder.trim().is_empty() || to_folder.trim().is_empty() {
+        return Err("实例文件夹名不能为空".to_string());
+    }
+    if from_folder == to_folder {
+        return Ok(());
+    }
+    let versions_root = minecraft_path.join("versions");
+    let from_dir = versions_root.join(from_folder);
+    let to_dir = versions_root.join(to_folder);
+    ensure_version_dir_in_versions_root(&versions_root, &from_dir)?;
+    ensure_version_dir_in_versions_root(&versions_root, &to_dir)?;
+
+    let from_json = format!("{}.json", from_folder);
+    let to_json = format!("{}.json", to_folder);
+
+    for entry in fs::read_dir(&from_dir).map_err(|e| format!("读取实例目录失败: {}", e))? {
+        let entry = entry.map_err(|e| e.to_string())?;
+        let name = entry.file_name();
+        let name_str = name.to_string_lossy();
+        let from_path = entry.path();
+        let to_path = to_dir.join(&name);
+
+        if from_path.is_dir() {
+            if is_version_engine_dir(name_str.as_ref()) {
+                continue;
+            }
+            copy_dir_merge(&from_path, &to_path)?;
+            continue;
+        }
+
+        if !from_path.is_file() {
+            continue;
+        }
+        let lower = name_str.to_lowercase();
+        if lower.ends_with(".jar") {
+            continue;
+        }
+        // 跳过版本定义 JSON（新安装已写入目标）
+        if lower.ends_with(".json")
+            && (name_str.eq_ignore_ascii_case(&from_json)
+                || name_str.eq_ignore_ascii_case(&to_json))
+        {
+            continue;
+        }
+        copy_file_if_missing(&from_path, &to_path)?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn vm_copy_instance_user_data(
+    minecraft_path: String,
+    from_folder: String,
+    to_folder: String,
+) -> Result<(), String> {
+    copy_instance_user_data(
+        Path::new(&minecraft_path),
+        from_folder.trim(),
+        to_folder.trim(),
+    )
+}
+
 #[tauri::command]
 pub async fn vm_ensure_instance_dirs(instance_dir: String) -> Result<(), String> {
     let path = Path::new(&instance_dir);
@@ -812,7 +923,15 @@ pub async fn vm_list_dir(
     Ok(result)
 }
 
-/// 删除实例目录中的指定文件
+/// 将路径移入系统回收站（用户确认删除的统一实现）。
+pub fn move_path_to_trash(path: &Path) -> Result<(), String> {
+    if !path.exists() {
+        return Err(format!("路径不存在: {}", path.display()));
+    }
+    trash::delete(path).map_err(|e| format!("移入回收站失败: {} ({})", path.display(), e))
+}
+
+/// 删除实例目录中的指定文件（移入回收站）
 ///
 /// - `dir_path`: 文件所在的目录绝对路径
 /// - `file_name`: 要删除的文件名
@@ -820,15 +939,7 @@ pub async fn vm_list_dir(
 pub async fn vm_delete_file(dir_path: String, file_name: String) -> Result<(), String> {
     let dir = Path::new(&dir_path);
     let file_path = dir.join(&file_name);
-    if !file_path.exists() {
-        return Err(format!("文件不存在: {}", file_path.display()));
-    }
-    if file_path.is_dir() {
-        std::fs::remove_dir_all(&file_path).map_err(|e| format!("删除目录失败: {}", e))?;
-    } else {
-        std::fs::remove_file(&file_path).map_err(|e| format!("删除文件失败: {}", e))?;
-    }
-    Ok(())
+    move_path_to_trash(&file_path)
 }
 
 fn validate_version_folder_name(name: &str) -> Result<(), String> {
@@ -1125,7 +1236,7 @@ pub async fn vm_write_file_base64(
     Ok(())
 }
 
-/// 从 cache 中删除文件（彻底删除，不再移入实例）
+/// 从 cache 中删除文件（移入回收站）
 ///
 /// - `kind`: 资源类型（mod, resourcepack, world, shaderpack, datapack, schematic, screenshot）
 /// - `mc_version`: Minecraft 版本号
@@ -1154,15 +1265,7 @@ pub async fn vm_delete_cached_file(
     };
 
     let file_path = cache_dir.join(&file_name);
-    if !file_path.exists() {
-        return Err(format!("文件不存在: {}", file_path.display()));
-    }
-    if file_path.is_dir() {
-        std::fs::remove_dir_all(&file_path).map_err(|e| format!("删除目录失败: {}", e))?;
-    } else {
-        std::fs::remove_file(&file_path).map_err(|e| format!("删除文件失败: {}", e))?;
-    }
-    Ok(())
+    move_path_to_trash(&file_path)
 }
 
 /// Move all entries in the version-specific cache directory to the system trash/recycle bin.
@@ -1196,7 +1299,7 @@ pub async fn vm_clear_version_cache(
     for entry in entries {
         let entry = entry.map_err(|e| format!("读取缓存条目失败: {}", e))?;
         let path = entry.path();
-        trash::delete(&path).map_err(|e| format!("移入回收站失败: {} ({})", path.display(), e))?;
+        move_path_to_trash(&path)?;
         removed += 1;
     }
     Ok(removed)

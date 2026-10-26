@@ -27,8 +27,14 @@ pub async fn start_version_install_session(
     app: AppHandle,
     plan: VersionInstallPlanInput,
 ) -> Result<VersionInstallSessionStart, String> {
-    let install_plan = InstallPlan::from_input(plan)?;
-    start_with_plan(app, install_plan, LegacyEventFamily::None).await
+    let resolved = InstallPlan::from_input(plan)?;
+    start_with_plan(
+        app,
+        resolved.plan,
+        resolved.retarget_source_instance,
+        LegacyEventFamily::None,
+    )
+    .await
 }
 
 #[tauri::command]
@@ -44,6 +50,7 @@ pub fn cancel_by_task_id(task_id: u64) -> Result<(), String> {
 async fn start_with_plan(
     app: AppHandle,
     plan: InstallPlan,
+    retarget_source_instance: Option<String>,
     legacy: LegacyEventFamily,
 ) -> Result<VersionInstallSessionStart, String> {
     let java_path = if plan.needs_java() {
@@ -62,7 +69,13 @@ async fn start_with_plan(
     let minecraft_path = get_minecraft_dir()?;
     std::fs::create_dir_all(&minecraft_path).map_err(|e| format!("创建目录失败: {}", e))?;
 
-    let session = build_session(plan, minecraft_path, java_path, legacy)?;
+    let session = build_session(
+        plan,
+        retarget_source_instance,
+        minecraft_path,
+        java_path,
+        legacy,
+    )?;
     Ok(spawn_session(app, session))
 }
 
@@ -72,7 +85,7 @@ pub async fn start_legacy(
     plan: InstallPlan,
     legacy: LegacyEventFamily,
 ) -> Result<u64, String> {
-    let start = start_with_plan(app, plan, legacy).await?;
+    let start = start_with_plan(app, plan, None, legacy).await?;
     Ok(start.download_task_id)
 }
 

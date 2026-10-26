@@ -114,6 +114,8 @@ pub struct InstallSession {
     pub download_task_id: u64,
     pub install_task_id: u64,
     pub plan: InstallPlan,
+    /// 版本修改：原 instances 文件夹名（与目标名不同时安装阶段会转移用户数据）
+    pub retarget_source_instance: Option<String>,
     pub cancel: Arc<AtomicBool>,
     pub artifacts: ArtifactStore,
     pub ledger: Arc<RollbackLedger>,
@@ -226,6 +228,7 @@ pub fn session_temp_root(session_id: &str) -> PathBuf {
 
 pub fn build_session(
     plan: InstallPlan,
+    retarget_source_instance: Option<String>,
     minecraft_path: PathBuf,
     java_path: Option<String>,
     legacy: LegacyEventFamily,
@@ -249,6 +252,7 @@ pub fn build_session(
         download_task_id,
         install_task_id,
         plan,
+        retarget_source_instance,
         cancel: Arc::new(AtomicBool::new(false)),
         artifacts,
         ledger,

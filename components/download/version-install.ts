@@ -19,11 +19,13 @@ export type VersionInstallPlanInput =
       mcVersion: string;
       selections: CombinedSelectionInput[];
       instanceName?: string | null;
+      retargetSourceInstance?: string | null;
     }
   | {
       kind: "vanillaOnly";
       mcVersion: string;
       instanceName?: string | null;
+      retargetSourceInstance?: string | null;
     }
   | {
       kind: "singleLoader";
@@ -32,6 +34,7 @@ export type VersionInstallPlanInput =
       loaderVersion: string;
       apiVersion?: string | null;
       instanceName?: string | null;
+      retargetSourceInstance?: string | null;
     }
   | {
       kind: "modpack";

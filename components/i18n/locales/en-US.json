@@ -29,7 +29,7 @@
     "addToInstance": "Add to instance",
     "removeFromInstance": "Remove from instance",
     "openFolder": "Open folder {name}",
-    "deleteConfirm": "Delete “{name}”?",
+    "deleteConfirm": "Move “{name}” to the Recycle Bin? You can restore it later.",
     "deleteConfirmTitle": "Confirm delete",
     "openInstanceFolder": "Open folder in file explorer",
     "clearCacheLibrary": "Clear cache library",
@@ -386,7 +386,7 @@
       "remove": "Remove",
       "recoverBuiltIn": "Restore the built-in theme",
       "trustWarning": "This theme can run local code and call launcher APIs. Activate it only if you trust its author.",
-      "removeWarning": "Remove this theme and return to the built-in interface?",
+      "removeWarning": "Move this theme to the Recycle Bin and return to the built-in interface? You can restore it later.",
       "switchFailed": "The theme could not be activated. The previous theme is still active."
     },
     "sidebarConfig": {
@@ -637,7 +637,7 @@
     "giveYourModpackANameYouCanChangeIt": "Give your modpack a name. You can change it later.",
     "startCreating": "Start creating",
     "deleteThisModpack": "Delete this modpack?",
-    "thisWillBePermanentlyRemovedFromDisk": "This will be permanently removed from disk:"
+    "thisWillBePermanentlyRemovedFromDisk": "This will be moved to the Recycle Bin:"
   },
   "gameSettings": {
     "addRemoveAndManageMods": "Add, remove, and manage mods",
@@ -651,8 +651,8 @@
     "viewScreenshotsSavedInGame": "View screenshots saved in-game",
     "clickToSelectVersion": "Click to select version",
     "pleaseSelectAVersionToDeleteFirst": "Please select a version to delete first",
-    "confirmDeletionOfGameVersionDirectoryEffectiveVersionDir": "Confirm deletion of game version directory \"{effectiveVersionDirName}\"?\n\nThis will delete: {minecraftPath}\\versions\\{effectiveVersionDirName2}\n\nThis action cannot be undone.",
-    "deletedVersionDirectoryEffectiveVersionDirName": "Deleted version directory: {effectiveVersionDirName}",
+    "confirmDeletionOfGameVersionDirectoryEffectiveVersionDir": "Move game version directory \"{effectiveVersionDirName}\" to the Recycle Bin?\n\nPath: {minecraftPath}\\versions\\{effectiveVersionDirName2}\n\nYou can restore it from the Recycle Bin later.",
+    "deletedVersionDirectoryEffectiveVersionDirName": "Version directory moved to Recycle Bin: {effectiveVersionDirName}",
     "clickToSelectGameVersion": "Click to select game version",
     "vanillaNoModLoaderClickTitleToSelectVersion": "Vanilla · No ModLoader · Click title to select version",
     "deleteCurrentlySelectedGameVersionDirectory": "Delete currently selected game version directory",
@@ -668,7 +668,21 @@
     "renameVersionDialogTitle": "Rename version folder",
     "renameVersionDialogHint": "Enter a new folder name under versions/. Leave empty to keep the current name:",
     "renameVersionConfirm": "Apply",
-    "renameVersionSuccess": "Version folder renamed to: {newName}"
+    "renameVersionSuccess": "Version folder renamed to: {newName}",
+    "retargetVersion": "Change game version & loader",
+    "retargetVersionHint": "Keep mods, saves, and other data while switching MC or mod loader",
+    "retargetVersionStart": "Get started",
+    "retargetPageTitle": "Modify version",
+    "retargetBanner": "Retargeting instance \"{folder}\" (current {mc} · {loader})",
+    "retargetWarningTitle": "Continue with this change?",
+    "retargetWarningBody": "The target Minecraft version is older than the current one, or the mod loader family is changing. Mods or worlds may break. Back up important data first.",
+    "retargetWarningDowngrade": "The target Minecraft version is older than the current one. Mods or worlds may break. Back up important data first.",
+    "retargetWarningLoader": "The mod loader family is changing. Existing mods may stop working. Back up important data first.",
+    "retargetWarningContinue": "Continue anyway",
+    "retargetInstanceNameTitle": "Target version folder",
+    "retargetInstanceNameHint": "Files will be installed under versions/. Leave empty for the default:",
+    "retargetStartInstall": "Start modify",
+    "retargetInstallLabel": "Retarget · Minecraft {version}"
   },
   "checkUpdate": {
     "title": "Check for Updates",

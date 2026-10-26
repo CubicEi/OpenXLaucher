@@ -22,6 +22,7 @@ import {
 } from "@/lib/launcher-update-session";
 import { isUpdateCheckTimeoutError } from "@/lib/update-check";
 import { LauncherUpdateProgressBar } from "@/components/settings/launcher-update-progress-bar";
+import { ChangelogMarkdown } from "@/components/settings/changelog-markdown";
 
 /**
  * 自动更新组件 — 提供共享更新状态、主页提示和手动更新操作。
@@ -242,9 +243,7 @@ export function AppUpdateButton({
 
             <div className="px-5 py-4">
               {state.notes ? (
-                <pre className="max-h-52 overflow-auto whitespace-pre-wrap break-words rounded-md bg-muted p-3 text-xs leading-relaxed text-foreground/80">
-                  {state.notes}
-                </pre>
+                <ChangelogMarkdown content={state.notes} className="max-h-52" />
               ) : (
                 <span className="text-sm text-muted-foreground">{t("settings.appUpdater.noReleaseNotesAvailable")}</span>
               )}
@@ -351,9 +350,7 @@ function AppUpdateDialogTrigger({
 
           <div className="px-5 py-4">
             {notes ? (
-              <pre className="max-h-52 overflow-auto whitespace-pre-wrap break-words rounded-md bg-muted p-3 text-xs leading-relaxed text-foreground/80">
-                {notes}
-              </pre>
+              <ChangelogMarkdown content={notes} className="max-h-52" />
             ) : (
               <span className="text-sm text-muted-foreground">{t("settings.appUpdater.noReleaseNotesAvailable")}</span>
             )}

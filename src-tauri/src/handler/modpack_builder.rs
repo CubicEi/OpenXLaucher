@@ -887,7 +887,7 @@ pub fn delete_modpack_instance(name: String, minecraft_path: Option<String>) -> 
     if !file.exists() {
         return Err(format!("整合包不存在: {}", trimmed));
     }
-    fs::remove_file(&file).map_err(|e| e.to_string())
+    crate::version_management::move_path_to_trash(&file)
 }
 #[tauri::command]
 pub fn rename_modpack_instance(

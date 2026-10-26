@@ -27,6 +27,7 @@ import {
   shouldSkipAutomaticUpdateCheck,
 } from "@/lib/launcher-update-session";
 import { isUpdateCheckTimeoutError } from "@/lib/update-check";
+import { ChangelogMarkdown } from "@/components/settings/changelog-markdown";
 
 type UpdateStatus =
   | "idle"
@@ -426,9 +427,10 @@ export default function CheckUpdatePage() {
                     {t("checkUpdate.releaseNotes")}
                   </p>
                   {info.changelog ? (
-                    <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-words text-xs leading-relaxed text-foreground/80">
-                      {info.changelog}
-                    </pre>
+                    <ChangelogMarkdown
+                      content={info.changelog}
+                      className="bg-transparent p-0"
+                    />
                   ) : (
                     <p className="text-xs text-muted-foreground">
                       {t("checkUpdate.noReleaseNotesAvailable")}

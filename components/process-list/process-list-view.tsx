@@ -1,9 +1,11 @@
 "use client";
 
 import type { ReactNode } from "react";
+import { useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "framer-motion";
 import {
   AlertCircle,
+  ArrowLeft,
   Ban,
   CheckCircle2,
   Clock,
@@ -204,6 +206,7 @@ function TaskCard({
 }
 
 export function ProcessListView() {
+  const router = useRouter();
   const { t } = useI18n();
   const { tasks, clearFinished, removeTask, cancelDownload } = useDownloadManager();
 
@@ -226,13 +229,26 @@ export function ProcessListView() {
         />
 
         <div className="relative z-10 flex h-full flex-col gap-4 p-5">
-          <div>
-            <h1 className="text-lg font-semibold tracking-tight">
-              {t("processList.title")}
-            </h1>
-            <p className="mt-1 text-xs text-muted-foreground">
-              {t("processList.subtitle")}
-            </p>
+          <div className="flex items-start gap-2">
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              className="mt-0.5 shrink-0"
+              onClick={() => router.back()}
+              aria-label={t("common.back")}
+              title={t("common.back")}
+            >
+              <ArrowLeft className="size-4" />
+            </Button>
+            <div className="min-w-0">
+              <h1 className="text-lg font-semibold tracking-tight">
+                {t("processList.title")}
+              </h1>
+              <p className="mt-1 text-xs text-muted-foreground">
+                {t("processList.subtitle")}
+              </p>
+            </div>
           </div>
 
           <div className="mt-auto space-y-4 rounded-xl border border-border bg-card/80 p-4 shadow-sm">

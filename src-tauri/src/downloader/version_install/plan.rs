@@ -23,6 +23,8 @@ pub enum VersionInstallPlanInput {
         selections: Vec<CombinedSelectionInput>,
         #[serde(default, rename = "instanceName", alias = "instance_name")]
         instance_name: Option<String>,
+        #[serde(default, rename = "retargetSourceInstance", alias = "retarget_source_instance")]
+        retarget_source_instance: Option<String>,
     },
     #[serde(rename = "vanillaOnly")]
     VanillaOnly {
@@ -30,6 +32,8 @@ pub enum VersionInstallPlanInput {
         mc_version: String,
         #[serde(default, rename = "instanceName", alias = "instance_name")]
         instance_name: Option<String>,
+        #[serde(default, rename = "retargetSourceInstance", alias = "retarget_source_instance")]
+        retarget_source_instance: Option<String>,
     },
     #[serde(rename = "singleLoader")]
     SingleLoader {
@@ -43,6 +47,8 @@ pub enum VersionInstallPlanInput {
         api_version: Option<String>,
         #[serde(default, rename = "instanceName", alias = "instance_name")]
         instance_name: Option<String>,
+        #[serde(default, rename = "retargetSourceInstance", alias = "retarget_source_instance")]
+        retarget_source_instance: Option<String>,
     },
     #[serde(rename = "modpack")]
     Modpack {
@@ -68,6 +74,12 @@ pub struct LoaderSelection {
 }
 
 #[derive(Debug, Clone)]
+pub struct ResolvedInstallPlan {
+    pub plan: InstallPlan,
+    pub retarget_source_instance: Option<String>,
+}
+
+#[derive(Debug, Clone)]
 pub enum InstallPlan {
     Combined {
         mc_version: String,
@@ -90,13 +102,19 @@ pub enum InstallPlan {
     },
 }
 
+fn normalize_retarget(s: Option<String>) -> Option<String> {
+    s.map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
+}
+
 impl InstallPlan {
-    pub fn from_input(input: VersionInstallPlanInput) -> Result<Self, String> {
+    pub fn from_input(input: VersionInstallPlanInput) -> Result<ResolvedInstallPlan, String> {
         match input {
             VersionInstallPlanInput::Combined {
                 mc_version,
                 selections,
                 instance_name,
+                retarget_source_instance,
             } => {
                 let sels: Vec<LoaderSelection> = selections
                     .into_iter()
@@ -106,18 +124,25 @@ impl InstallPlan {
                     })
                     .collect();
                 validate_selections(&sels)?;
-                Ok(Self::Combined {
-                    mc_version,
-                    selections: sels,
-                    instance_name,
+                Ok(ResolvedInstallPlan {
+                    plan: Self::Combined {
+                        mc_version,
+                        selections: sels,
+                        instance_name,
+                    },
+                    retarget_source_instance: normalize_retarget(retarget_source_instance),
                 })
             }
             VersionInstallPlanInput::VanillaOnly {
                 mc_version,
                 instance_name,
-            } => Ok(Self::VanillaOnly {
-                mc_version,
-                instance_name,
+                retarget_source_instance,
+            } => Ok(ResolvedInstallPlan {
+                plan: Self::VanillaOnly {
+                    mc_version,
+                    instance_name,
+                },
+                retarget_source_instance: normalize_retarget(retarget_source_instance),
             }),
             VersionInstallPlanInput::SingleLoader {
                 loader_type,
@@ -125,23 +150,30 @@ impl InstallPlan {
                 loader_version,
                 api_version,
                 instance_name,
+                retarget_source_instance,
             } => {
                 if !is_known_loader(&loader_type) {
                     return Err(format!("未知加载器类型: {}", loader_type));
                 }
-                Ok(Self::SingleLoader {
-                    loader_type,
-                    mc_version,
-                    loader_version,
-                    api_version,
-                    instance_name,
+                Ok(ResolvedInstallPlan {
+                    plan: Self::SingleLoader {
+                        loader_type,
+                        mc_version,
+                        loader_version,
+                        api_version,
+                        instance_name,
+                    },
+                    retarget_source_instance: normalize_retarget(retarget_source_instance),
                 })
             }
             VersionInstallPlanInput::Modpack { zip_path } => {
                 if zip_path.trim().is_empty() {
                     return Err("整合包路径为空".to_string());
                 }
-                Ok(Self::Modpack { zip_path })
+                Ok(ResolvedInstallPlan {
+                    plan: Self::Modpack { zip_path },
+                    retarget_source_instance: None,
+                })
             }
         }
     }

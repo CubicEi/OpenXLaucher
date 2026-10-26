@@ -270,7 +270,12 @@ impl ThemeStore {
             if !package.development {
                 let path = self.package_root(package);
                 if path.is_dir() {
-                    fs::remove_dir_all(path).map_err(store_io)?;
+                    trash::delete(&path).map_err(|e| {
+                        ThemeStoreError::new(
+                            "THEME_TRASH_FAILED",
+                            format!("Failed to move theme to trash: {e}"),
+                        )
+                    })?;
                 }
             }
         }

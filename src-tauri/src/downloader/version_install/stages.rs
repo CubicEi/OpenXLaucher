@@ -9,6 +9,7 @@ pub const STAGE_LOADER: &str = "loader";
 pub const STAGE_OPTIFINE: &str = "optifine";
 pub const STAGE_MERGE: &str = "merge";
 pub const STAGE_RESOURCES: &str = "resources";
+pub const STAGE_TRANSFER: &str = "transfer_data";
 pub const STAGE_CLEANUP: &str = "cleanup";
 pub const STAGE_DONE: &str = "done";
 pub const STAGE_CANCELLED: &str = "cancelled";
@@ -24,6 +25,7 @@ pub fn stage_label(stage: &str) -> String {
         STAGE_OPTIFINE => "安装 OptiFine".to_string(),
         STAGE_MERGE => "合并游戏版本文件夹".to_string(),
         STAGE_RESOURCES => "安装社区资源".to_string(),
+        STAGE_TRANSFER => "转移数据".to_string(),
         STAGE_CLEANUP => "清理与登记".to_string(),
         STAGE_DONE => "安装完成".to_string(),
         STAGE_CANCELLED => "已取消".to_string(),

@@ -44,6 +44,12 @@ import {
   createInAppLinkHandler,
   onInAppLinkPointerDown,
 } from "@/lib/main-navigation-transition";
+import { useDownloadManager } from "@/components/download/download-provider";
+import {
+  extractMcVersion,
+  inferLoaderFamilyFromFolder,
+} from "@/lib/instance-name";
+import { setRetargetContext } from "@/lib/retarget-version";
 
 const FEATURE_META: Record<
   (typeof GAME_SETTINGS_FEATURE_NAV)[number]["href"],
@@ -91,6 +97,7 @@ const SETTING_ENTRIES = GAME_SETTINGS_FEATURE_NAV.map((item) => ({
 export default function GameSettings() {
   const router = useRouter();
   const { config, updateConfig } = useLaunchContext();
+  const { tasks } = useDownloadManager();
   const { t } = useI18n();
   const [versionDialogOpen, setVersionDialogOpen] = useState(false);
   const [deleteVersionOpen, setDeleteVersionOpen] = useState(false);
@@ -111,6 +118,31 @@ export default function GameSettings() {
     config.loadType !== "0" && config.loadName
       ? config.loadName
       : config.versionName;
+
+  const versionInstallBusy = tasks.some(
+    (task) =>
+      (task.status === "downloading" || task.status === "queued") &&
+      (task.role === "download" || task.role === "install") &&
+      Boolean(task.sessionId)
+  );
+
+  function handleStartRetarget() {
+    if (!effectiveVersionDirName) return;
+    const loaderHint =
+      config.loadType !== "0" && config.loadName
+        ? config.loadName
+        : effectiveVersionDirName;
+    const rawMc =
+      config.minecraftVersion?.trim() ||
+      config.versionName ||
+      effectiveVersionDirName;
+    setRetargetContext({
+      sourceFolderName: effectiveVersionDirName,
+      currentMcVersion: extractMcVersion(rawMc),
+      currentLoaderFamily: inferLoaderFamilyFromFolder(loaderHint),
+    });
+    router.push("/game-settings/retarget");
+  }
 
   function handleDeleteVersionClick(e: React.MouseEvent) {
     e.stopPropagation();
@@ -302,6 +334,24 @@ export default function GameSettings() {
                           <Loader2 className="size-3.5 animate-spin" />
                         ) : null}
                         {t("gameSettings.startRenameVersion")}
+                      </Button>
+                    </li>
+                    <li className="flex items-center gap-3 px-4 py-3">
+                      <div className="min-w-0 flex-1">
+                        <span className="block text-sm font-medium">
+                          {t("gameSettings.retargetVersion")}
+                        </span>
+                        <span className="mt-0.5 block text-xs text-muted-foreground">
+                          {t("gameSettings.retargetVersionHint")}
+                        </span>
+                      </div>
+                      <Button
+                        size="sm"
+                        className="shrink-0"
+                        disabled={!isConfigured || versionInstallBusy}
+                        onClick={handleStartRetarget}
+                      >
+                        {t("gameSettings.retargetVersionStart")}
                       </Button>
                     </li>
                   </ul>

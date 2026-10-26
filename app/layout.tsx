@@ -5,6 +5,7 @@ import { SettingsProvider } from "@/components/settings/settings-provider";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { AccountProvider } from "@/components/accounts/account-provider";
 import { DownloadProvider } from "@/components/download/download-provider";
+import { RetargetInstallListener } from "@/components/download/retarget-install-listener";
 import { FlyToProcessListOverlay } from "@/components/process-list/fly-to-process-list";
 import { LaunchProvider } from "@/components/launch/launch-provider";
 import { DeferredGlobalFeatures } from "@/components/global/deferred-global-features";
@@ -41,6 +42,7 @@ export default function RootLayout({
               <AccountProvider>
                 <LaunchProvider>
                     <DownloadProvider>
+                      <RetargetInstallListener />
                       <TooltipProvider>
                         <ThemeRuntimeProvider>
                           {/* 非关键全局能力在首屏可交互后再加载 */}

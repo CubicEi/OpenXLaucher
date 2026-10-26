@@ -251,8 +251,8 @@ pub fn delete_cached_modpack_cmd(full_path: String) -> Result<(), String> {
     if !normalized_target.starts_with(&normalized_root) {
         return Err(format!("拒绝删除：文件不在整合包缓存目录内"));
     }
-    std::fs::remove_file(&p).map_err(|e| format!("删除文件失败: {}", e))?;
-    println!("[Modpack] 已删除缓存整合包: {}", full_path);
+    crate::version_management::move_path_to_trash(&p)?;
+    println!("[Modpack] 已将缓存整合包移入回收站: {}", full_path);
     Ok(())
 }
 #[tauri::command]
@@ -278,8 +278,8 @@ pub fn delete_version_dir_cmd(minecraft_path: String, version_name: String) -> R
     if !normalized_target.starts_with(&normalized_root) {
         return Err("拒绝删除：目录不在 versions 目录内".to_string());
     }
-    std::fs::remove_dir_all(&version_dir).map_err(|e| format!("删除版本目录失败: {}", e))?;
-    println!("[Version] 已删除版本目录: {}", version_dir.display());
+    crate::version_management::move_path_to_trash(&version_dir)?;
+    println!("[Version] 已将版本目录移入回收站: {}", version_dir.display());
     Ok(())
 }
 fn chrono_now() -> String {

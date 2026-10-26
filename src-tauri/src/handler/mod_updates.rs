@@ -237,19 +237,30 @@ async fn find_latest_for_mod(
     loader: &str,
     digests: &UpdateCheckDigestCache,
 ) -> Option<(InstalledFileSnapshot, ModSearchResult)> {
+    // 遍历全部平台：Modrinth 先命中但无更新时，仍继续查 CurseForge
+    let mut best: Option<(InstalledFileSnapshot, ModSearchResult)> = None;
     for kind in try_order {
         let Some(snapshot) =
             resolve_installed_file_on_platform(jar_path, *kind, Some(digests)).await
         else {
             continue;
         };
-        if let Some(remote) =
+        let Some(remote) =
             pick_update_if_newer(jar_path, &snapshot, mc_version, loader, Some(digests)).await
-        {
-            return Some((snapshot, remote));
+        else {
+            continue;
+        };
+        let better = match &best {
+            None => true,
+            Some((_, prev)) => {
+                prev.published_at.unwrap_or(0) < remote.published_at.unwrap_or(0)
+            }
+        };
+        if better {
+            best = Some((snapshot, remote));
         }
     }
-    None
+    best
 }
 
 async fn list_remote_versions_impl(
@@ -275,6 +286,7 @@ async fn list_remote_versions_impl(
             source: snapshot.source.clone(),
             slug: snapshot.slug.clone(),
             title: snapshot.title.clone(),
+            project_id: snapshot.project_id.clone(),
         };
         let versions = list_compatible_versions(&platform, mc_version, loader).await;
         let empty = versions.is_empty();

@@ -18,6 +18,7 @@ import {
   shouldShowStartupUpdatePrompt,
 } from "@/lib/launcher-update-session";
 import { isUpdateCheckTimeoutError } from "@/lib/update-check";
+import { ChangelogMarkdown } from "@/components/settings/changelog-markdown";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -170,9 +171,7 @@ export function StartupUpdateNotifier({ delayMs = 1500 }: { delayMs?: number }) 
 
           <div className="space-y-3 px-5 py-4">
             {availableUpdate?.changelog ? (
-              <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-words rounded-md bg-muted p-3 text-xs leading-relaxed text-foreground/80">
-                {availableUpdate.changelog}
-              </pre>
+              <ChangelogMarkdown content={availableUpdate.changelog} />
             ) : (
               <p className="text-sm text-muted-foreground">
                 {t("settings.appUpdater.noReleaseNotesAvailable")}

@@ -325,12 +325,35 @@ export async function msSilentRefreshAccount(
  */
 export function isMicrosoftTokenTransientError(message: string): boolean {
   if (!message) return false;
+  const lower = message.toLowerCase();
   if (message.includes("TIMEOUT") || message.includes("_TIMEOUT")) return true;
-  if (message.includes("网络连接失败") || message.includes("请检查您的网络")) return true;
+  if (
+    message.includes("网络连接失败") ||
+    message.includes("网络连接异常") ||
+    message.includes("请检查您的网络") ||
+    message.includes("请检查网络")
+  ) {
+    return true;
+  }
   if (message.includes("获取皮肤资料失败")) return true;
   if (/http\s*429/i.test(message) || /too many requests/i.test(message)) return true;
   if (/http\s*408/i.test(message)) return true;
   if (/http\s*5\d{2}/i.test(message)) return true;
+  if (
+    lower.includes("connect") ||
+    lower.includes("connection") ||
+    lower.includes("timed out") ||
+    lower.includes("timeout") ||
+    lower.includes("dns") ||
+    lower.includes("network") ||
+    lower.includes("unreachable") ||
+    lower.includes("econnrefused") ||
+    lower.includes("enotfound") ||
+    lower.includes("fetch failed") ||
+    lower.includes("failed to fetch")
+  ) {
+    return true;
+  }
   return false;
 }
 

@@ -138,7 +138,9 @@ export function AccountProvider({ children }: { children: React.ReactNode }) {
   // 使得后续的 .then/.catch 回调不更新状态（避免关闭对话框后仍显示"登录中"）
   const msLoginVersionRef = React.useRef<number>(0);
   /** 以正版启动游戏时，等待重新登录完成或用户关闭弹窗 */
-  const microsoftLaunchGateRef = React.useRef<((accessToken: string | null) => void) | null>(null);
+  const microsoftLaunchGateRef = React.useRef<
+    ((result: { accessToken: string | null; network?: boolean }) => void) | null
+  >(null);
 
   const applyMicrosoftRefresh = useCallback(
     async (
@@ -183,39 +185,52 @@ export function AccountProvider({ children }: { children: React.ReactNode }) {
   );
 
   const runForcedMicrosoftRelogin = useCallback(
-    (pName: string, tokenErrorMsg: string): Promise<string | null> => {
+    (
+      pName: string,
+      tokenErrorMsg: string
+    ): Promise<{ accessToken: string | null; network?: boolean }> => {
       return new Promise((resolve) => {
-        const finish = (accessToken: string | null) => {
+        const finish = (accessToken: string | null, network = false) => {
           if (microsoftLaunchGateRef.current) {
             microsoftLaunchGateRef.current = null;
           }
-          resolve(accessToken);
+          resolve({ accessToken, network: network || undefined });
         };
-        microsoftLaunchGateRef.current = finish;
+        microsoftLaunchGateRef.current = ({ accessToken, network }) =>
+          finish(accessToken, Boolean(network));
 
         void (async () => {
           try {
             const currentVersion = ++msLoginVersionRef.current;
             setLoginState("loading");
             setLoginError(null);
-            setForcedMicrosoftLoginMode(true);
-            setForcedMicrosoftLoginMessage(
-              `检测到你的微软正版账号「${pName}」无法获取 Minecraft 登录令牌（${tokenErrorMsg || "凭据已失效"}）。` +
-                `请完成下方的微软正版登录后再启动游戏；也可先关闭此窗口。`
-            );
             setForcedMicrosoftDeviceCode(null);
 
+            // 先请求验证码：网络失败则不弹出「重新登录正版」窗口
             let codeInfo: DeviceCodeInfo | null = null;
             try {
               codeInfo = await withTimeout(msRequestDeviceCode(), 10000, "DEVICE_CODE_REQUEST");
             } catch (reqErr) {
               const msg = reqErr instanceof Error ? reqErr.message : String(reqErr);
-              if (msLoginVersionRef.current === currentVersion) {
-                setLoginError(
-                  `获取验证码失败（${msg.includes("TIMEOUT") ? "网络超时" : msg}），请检查网络连接或稍后重试。`
-                );
-                setLoginState("error");
+              if (msLoginVersionRef.current !== currentVersion) {
+                finish(null);
+                return;
               }
+              if (isMicrosoftTokenTransientError(msg)) {
+                setLoginState("idle");
+                setLoginError(null);
+                finish(null, true);
+                return;
+              }
+              setForcedMicrosoftLoginMode(true);
+              setForcedMicrosoftLoginMessage(
+                `检测到你的微软正版账号「${pName}」无法获取 Minecraft 登录令牌（${tokenErrorMsg || "凭据已失效"}）。` +
+                  `请完成下方的微软正版登录后再启动游戏；也可先关闭此窗口。`
+              );
+              setLoginError(
+                `获取验证码失败（${msg}），请稍后重试。`
+              );
+              setLoginState("error");
               finish(null);
               return;
             }
@@ -224,6 +239,12 @@ export function AccountProvider({ children }: { children: React.ReactNode }) {
               finish(null);
               return;
             }
+
+            setForcedMicrosoftLoginMode(true);
+            setForcedMicrosoftLoginMessage(
+              `检测到你的微软正版账号「${pName}」无法获取 Minecraft 登录令牌（${tokenErrorMsg || "凭据已失效"}）。` +
+                `请完成下方的微软正版登录后再启动游戏；也可先关闭此窗口。`
+            );
             setForcedMicrosoftDeviceCode(codeInfo);
 
             try {
@@ -272,6 +293,15 @@ export function AccountProvider({ children }: { children: React.ReactNode }) {
                 return;
               }
               const msg = e instanceof Error ? e.message : String(e);
+              if (isMicrosoftTokenTransientError(msg)) {
+                setForcedMicrosoftLoginMode(false);
+                setForcedMicrosoftLoginMessage(null);
+                setForcedMicrosoftDeviceCode(null);
+                setLoginState("idle");
+                setLoginError(null);
+                finish(null, true);
+                return;
+              }
               if (!msg.includes("已取消登录")) {
                 setLoginError(msg);
                 setLoginState("error");
@@ -283,6 +313,15 @@ export function AccountProvider({ children }: { children: React.ReactNode }) {
             }
           } catch (e: unknown) {
             const msg = e instanceof Error ? e.message : String(e);
+            if (isMicrosoftTokenTransientError(msg)) {
+              setForcedMicrosoftLoginMode(false);
+              setForcedMicrosoftLoginMessage(null);
+              setForcedMicrosoftDeviceCode(null);
+              setLoginState("idle");
+              setLoginError(null);
+              finish(null, true);
+              return;
+            }
             setLoginError(msg);
             setLoginState("error");
             finish(null);
@@ -322,9 +361,12 @@ export function AccountProvider({ children }: { children: React.ReactNode }) {
         return { ok: true, accessToken: profile.accessToken.trim() };
       }
 
-      const newToken = await runForcedMicrosoftRelogin(profile.name, tokenErrorMsg);
-      if (newToken) {
-        return { ok: true, accessToken: newToken };
+      const relogin = await runForcedMicrosoftRelogin(profile.name, tokenErrorMsg);
+      if (relogin.network) {
+        return { ok: false, reason: "network" };
+      }
+      if (relogin.accessToken) {
+        return { ok: true, accessToken: relogin.accessToken };
       }
       return { ok: false, reason: "cancelled" };
     },
@@ -810,7 +852,7 @@ export function AccountProvider({ children }: { children: React.ReactNode }) {
     if (microsoftLaunchGateRef.current) {
       const gate = microsoftLaunchGateRef.current;
       microsoftLaunchGateRef.current = null;
-      gate(null);
+      gate({ accessToken: null });
     }
     // 设置状态恢复为 idle，不再显示"登录中"
     setLoginState("idle");

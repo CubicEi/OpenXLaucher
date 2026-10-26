@@ -23,6 +23,12 @@ pub struct InstalledFileSnapshot {
     pub slug: String,
     pub title: String,
     pub source: String,
+    /// CurseForge mod id / Modrinth project id（用于直接拉文件列表，避免 slug 搜索失败）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_id: Option<String>,
+    /// CurseForge file id（用于比时间戳更可靠的“是否有新文件”）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file_id: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -31,6 +37,8 @@ pub struct ResolvedPlatform {
     pub source: String,
     pub slug: String,
     pub title: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -44,6 +52,8 @@ pub struct RemoteModVersion {
     pub source: String,
     /// Unix seconds for ordering; missing timestamps sort last.
     pub published_at: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file_id: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -318,6 +328,17 @@ fn curseforge_file_download_url(file: &serde_json::Value) -> Option<String> {
     ))
 }
 
+fn curseforge_loader_tag_matches(tagged: &str, instance_loader: &str) -> bool {
+    if tagged == instance_loader {
+        return true;
+    }
+    // CF 上不少库/模组只打 Forge 标签，NeoForge 实例也应视为兼容
+    if instance_loader == "neoforge" && tagged == "forge" {
+        return true;
+    }
+    false
+}
+
 fn curseforge_file_supports(file: &serde_json::Value, mc_version: &str, mod_loader: &str) -> bool {
     let Some(game_versions) = file.get("gameVersions").and_then(|v| v.as_array()) else {
         return false;
@@ -336,7 +357,7 @@ fn curseforge_file_supports(file: &serde_json::Value, mc_version: &str, mod_load
         .map(|s| s.to_ascii_lowercase())
         .filter(|s| known.contains(&s.as_str()))
         .collect();
-    tagged.is_empty() || tagged.iter().any(|t| t == &loader)
+    tagged.is_empty() || tagged.iter().any(|t| curseforge_loader_tag_matches(t, &loader))
 }
 
 async fn get_modrinth_json(client: &reqwest::Client, url: &str) -> Option<serde_json::Value> {
@@ -386,21 +407,59 @@ async fn modrinth_project_exists(client: &reqwest::Client, slug_or_id: &str) -> 
 }
 
 async fn curseforge_project_by_slug(client: &reqwest::Client, slug: &str) -> Option<serde_json::Value> {
-    let url = format!(
-        "https://api.curseforge.com/v1/mods/search?gameId=432&classId=6&searchFilter={}",
-        urlencoding::encode(slug)
-    );
-    let json = get_curseforge_json(client, &url).await?;
-    json.get("data")
-        .and_then(|d| d.as_array())
-        .and_then(|arr| {
-            arr.iter().find(|p| {
-                json_str(p, "slug")
-                    .map(|s| s.eq_ignore_ascii_case(slug))
-                    .unwrap_or(false)
+    // classId=6 仅覆盖 Mods；部分项目搜索首屏可能漏掉，先精确 slug 再放宽
+    for url in [
+        format!(
+            "https://api.curseforge.com/v1/mods/search?gameId=432&classId=6&slug={}",
+            urlencoding::encode(slug)
+        ),
+        format!(
+            "https://api.curseforge.com/v1/mods/search?gameId=432&classId=6&searchFilter={}",
+            urlencoding::encode(slug)
+        ),
+        format!(
+            "https://api.curseforge.com/v1/mods/search?gameId=432&searchFilter={}",
+            urlencoding::encode(slug)
+        ),
+    ] {
+        let Some(json) = get_curseforge_json(client, &url).await else {
+            continue;
+        };
+        if let Some(found) = json
+            .get("data")
+            .and_then(|d| d.as_array())
+            .and_then(|arr| {
+                arr.iter().find(|p| {
+                    json_str(p, "slug")
+                        .map(|s| s.eq_ignore_ascii_case(slug))
+                        .unwrap_or(false)
+                })
             })
-        })
-        .cloned()
+            .cloned()
+        {
+            return Some(found);
+        }
+    }
+    None
+}
+
+async fn curseforge_resolve_mod_id(
+    client: &reqwest::Client,
+    platform: &ResolvedPlatform,
+) -> Option<i64> {
+    if let Some(id) = platform
+        .project_id
+        .as_deref()
+        .and_then(|s| s.trim().parse::<i64>().ok())
+    {
+        return Some(id);
+    }
+    // slug 碰巧是数字 id
+    if let Ok(id) = platform.slug.trim().parse::<i64>() {
+        return Some(id);
+    }
+    let search = curseforge_project_by_slug(client, &platform.slug).await?;
+    search.get("id").and_then(|v| v.as_i64())
 }
 
 fn curseforge_exact_match_file(data: &serde_json::Value) -> Option<&serde_json::Value> {
@@ -452,6 +511,8 @@ async fn modrinth_installed_snapshot(
         slug,
         title,
         source: "modrinth".to_string(),
+        project_id: Some(project_id),
+        file_id: None,
     })
 }
 
@@ -486,6 +547,7 @@ async fn curseforge_snapshot_from_fingerprint(
         })?;
     let file = file_obj.get("file").unwrap_or(file_obj);
     let file_name = json_str(file, "fileName")?;
+    let file_id = file.get("id").and_then(|v| v.as_i64());
     let version_number = json_str(file, "displayName")
         .or_else(|| json_str(file, "fileName"))
         .unwrap_or_default();
@@ -505,6 +567,8 @@ async fn curseforge_snapshot_from_fingerprint(
         slug,
         title,
         source: "curseforge".to_string(),
+        project_id: Some(mod_id.to_string()),
+        file_id,
     })
 }
 
@@ -524,6 +588,7 @@ fn snapshot_to_resolved(snapshot: &InstalledFileSnapshot) -> ResolvedPlatform {
         source: snapshot.source.clone(),
         slug: snapshot.slug.clone(),
         title: snapshot.title.clone(),
+        project_id: snapshot.project_id.clone(),
     }
 }
 
@@ -664,23 +729,51 @@ fn sort_versions_newest_first(versions: &mut [RemoteModVersion]) {
 }
 
 fn pick_best_candidate(versions: &[RemoteModVersion]) -> Option<&RemoteModVersion> {
-    versions
-        .iter()
-        .max_by_key(|v| v.published_at.unwrap_or(0))
+    versions.iter().max_by(|a, b| {
+        let ta = a.published_at.unwrap_or(0);
+        let tb = b.published_at.unwrap_or(0);
+        ta.cmp(&tb)
+            .then_with(|| a.file_id.unwrap_or(0).cmp(&b.file_id.unwrap_or(0)))
+    })
 }
 
-/// Whether a newer compatible release exists vs the installed file (publish time only).
+/// Whether a newer compatible release exists vs the installed file.
+/// Prefer CurseForge file id, then publish time; avoid rejecting when timestamps are missing.
 pub fn should_offer_update_by_time<'a>(
     installed_published_at: Option<i64>,
+    installed_file_id: Option<i64>,
+    installed_file_name: &str,
     versions: &'a [RemoteModVersion],
 ) -> Option<&'a RemoteModVersion> {
-    let baseline_ts = installed_published_at.unwrap_or(0);
     let candidate = pick_best_candidate(versions)?;
-    let candidate_ts = candidate.published_at.unwrap_or(0);
-    if candidate_ts <= baseline_ts || candidate_ts == 0 {
-        return None;
+
+    if let (Some(base_id), Some(cand_id)) = (installed_file_id, candidate.file_id) {
+        if cand_id > base_id {
+            return Some(candidate);
+        }
+        // Same or older CF file id → no update
+        if cand_id <= base_id {
+            return None;
+        }
     }
-    Some(candidate)
+
+    let baseline_ts = installed_published_at.unwrap_or(0);
+    let candidate_ts = candidate.published_at.unwrap_or(0);
+    if candidate_ts > 0 && candidate_ts > baseline_ts {
+        return Some(candidate);
+    }
+
+    // 时间戳缺失时：远程文件名与本地不同，且候选并非显然更旧
+    if candidate_ts == 0
+        && !candidate.file_name.is_empty()
+        && !candidate
+            .file_name
+            .eq_ignore_ascii_case(installed_file_name)
+    {
+        return Some(candidate);
+    }
+
+    None
 }
 
 /// Pick an update candidate from filtered compatible versions.
@@ -688,6 +781,8 @@ pub fn should_offer_update_by_time<'a>(
 /// version counts as an update (ignore publish time).
 pub fn pick_update_candidate<'a>(
     installed_published_at: Option<i64>,
+    installed_file_id: Option<i64>,
+    installed_file_name: &str,
     versions: &'a [RemoteModVersion],
     installed_supports_instance: bool,
 ) -> Option<&'a RemoteModVersion> {
@@ -697,7 +792,12 @@ pub fn pick_update_candidate<'a>(
     if !installed_supports_instance {
         return pick_best_candidate(versions);
     }
-    should_offer_update_by_time(installed_published_at, versions)
+    should_offer_update_by_time(
+        installed_published_at,
+        installed_file_id,
+        installed_file_name,
+        versions,
+    )
 }
 
 fn remote_version_to_search_result(
@@ -739,7 +839,13 @@ pub async fn pick_update_if_newer(
         digests,
     )
     .await;
-    let pick = pick_update_candidate(snapshot.published_at, &versions, supports_instance)?;
+    let pick = pick_update_candidate(
+        snapshot.published_at,
+        snapshot.file_id,
+        &snapshot.file_name,
+        &versions,
+        supports_instance,
+    )?;
     Some(remote_version_to_search_result(&platform, pick, mc_version))
 }
 
@@ -791,16 +897,63 @@ fn curseforge_mod_loader_type_param(loader: &str) -> Option<&'static str> {
     }
 }
 
-fn curseforge_files_list_url(mod_id: i64, mc_version: &str, loader: &str) -> String {
+fn curseforge_files_list_url(
+    mod_id: i64,
+    mc_version: &str,
+    loader: &str,
+    index: usize,
+) -> String {
     let mut url = format!(
-        "https://api.curseforge.com/v1/mods/{}/files?gameVersion={}&pageSize=50",
+        "https://api.curseforge.com/v1/mods/{}/files?gameVersion={}&pageSize=50&index={}",
         mod_id,
         urlencoding::encode(mc_version.trim()),
+        index,
     );
-    if let Some(loader_type) = curseforge_mod_loader_type_param(loader) {
-        url.push_str(&format!("&modLoaderType={}", loader_type));
+    let loader_l = loader.trim().to_ascii_lowercase();
+    // NeoForge：不按 modLoaderType 过滤，以便纳入仅标记 Forge 的文件；客户端再筛
+    if loader_l != "neoforge" {
+        if let Some(loader_type) = curseforge_mod_loader_type_param(loader) {
+            url.push_str(&format!("&modLoaderType={}", loader_type));
+        }
     }
     url
+}
+
+async fn curseforge_fetch_filtered_files(
+    client: &reqwest::Client,
+    mod_id: i64,
+    mc_version: &str,
+    loader: &str,
+) -> Vec<serde_json::Value> {
+    let mut all = Vec::new();
+    let mut index = 0usize;
+    // 最多翻 20 页，避免极端项目拖垮检查
+    for _ in 0..20 {
+        let files_url = curseforge_files_list_url(mod_id, mc_version, loader, index);
+        let Some(files_json) = get_curseforge_json(client, &files_url).await else {
+            break;
+        };
+        let files = files_json
+            .get("data")
+            .and_then(|d| d.as_array())
+            .cloned()
+            .unwrap_or_default();
+        let batch = files.len();
+        if batch == 0 {
+            break;
+        }
+        all.extend(files);
+        index += batch;
+        let total = files_json
+            .get("pagination")
+            .and_then(|p| p.get("totalCount"))
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0) as usize;
+        if batch < 50 || (total > 0 && index >= total) {
+            break;
+        }
+    }
+    all
 }
 
 pub async fn list_compatible_versions(
@@ -834,6 +987,7 @@ pub async fn list_compatible_versions(
                 loaders: modrinth_loaders(version),
                 source: "modrinth".to_string(),
                 published_at: modrinth_version_published_at(version),
+                file_id: None,
             });
         }
         sort_versions_newest_first(&mut out);
@@ -842,21 +996,10 @@ pub async fn list_compatible_versions(
 
     if platform.source == "curseforge" {
         let client = curseforge_client().await;
-        let Some(search) = curseforge_project_by_slug(&client, &platform.slug).await else {
+        let Some(mod_id) = curseforge_resolve_mod_id(&client, platform).await else {
             return Vec::new();
         };
-        let Some(mod_id) = search.get("id").and_then(|v| v.as_i64()) else {
-            return Vec::new();
-        };
-        let files_url = curseforge_files_list_url(mod_id, mc_version, loader);
-        let Some(files_json) = get_curseforge_json(&client, &files_url).await else {
-            return Vec::new();
-        };
-        let files = files_json
-            .get("data")
-            .and_then(|d| d.as_array())
-            .cloned()
-            .unwrap_or_default();
+        let files = curseforge_fetch_filtered_files(&client, mod_id, mc_version, loader).await;
         let mut out = Vec::new();
         for file in files {
             if !curseforge_file_supports(&file, mc_version, loader) {
@@ -884,6 +1027,7 @@ pub async fn list_compatible_versions(
                 loaders: vec![loader.to_string()],
                 source: "curseforge".to_string(),
                 published_at: curseforge_file_published_at(&file),
+                file_id: file.get("id").and_then(|v| v.as_i64()),
             });
         }
         sort_versions_newest_first(&mut out);

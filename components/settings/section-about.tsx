@@ -17,6 +17,7 @@ import {
   shouldSkipAutomaticUpdateCheck,
 } from "@/lib/launcher-update-session";
 import { isUpdateCheckTimeoutError } from "@/lib/update-check";
+import { ChangelogMarkdown } from "@/components/settings/changelog-markdown";
 
 type UpdateState =
   | { kind: "idle" }
@@ -167,9 +168,10 @@ export function AboutSection() {
           )}
 
           {state.kind === "available" && state.notes && (
-            <pre className="max-h-56 overflow-auto whitespace-pre-wrap break-words rounded-lg border border-border bg-muted/30 p-3 text-xs leading-relaxed text-foreground/80">
-              {state.notes}
-            </pre>
+            <ChangelogMarkdown
+              content={state.notes}
+              className="max-h-56 rounded-lg border border-border bg-muted/30"
+            />
           )}
 
           {state.kind === "error" && (

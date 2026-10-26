@@ -1389,19 +1389,49 @@ fn build_http_client() -> Result<Client, String> {
         .map_err(|e| format!("无法创建 HTTP 客户端: {}", e))
 }
 
+/// 判断是否为网络/连通性类错误（超时、DNS、连接被拒等）
+fn is_network_error_message(msg: &str) -> bool {
+    let lower = msg.to_lowercase();
+    lower.contains("connect")
+        || lower.contains("connection")
+        || lower.contains("timed out")
+        || lower.contains("timeout")
+        || lower.contains("dns")
+        || lower.contains("resolve")
+        || lower.contains("network")
+        || lower.contains("unreachable")
+        || lower.contains("failed to lookup")
+        || lower.contains("name or service not known")
+        || lower.contains("no internet")
+        || lower.contains("ssl")
+        || lower.contains("tls")
+        || lower.contains("certificate")
+        || lower.contains("broken pipe")
+        || lower.contains("reset by peer")
+        || lower.contains("eof while")
+        || msg.contains("网络连接失败")
+        || msg.contains("网络连接异常")
+}
+
 /// 将 reqwest 网络错误转换为对用户友好的中文提示
 fn friendly_net_err(e: impl std::fmt::Display) -> String {
     let msg = e.to_string();
-    if msg.contains("connect")
-        || msg.contains("connection")
-        || msg.contains("timed out")
-        || msg.contains("timeout")
-        || msg.contains("dns")
-        || msg.contains("resolve")
-    {
+    if is_network_error_message(&msg) {
         format!("网络连接失败，请检查您的网络后重试（{}）", msg)
     } else {
         msg
+    }
+}
+
+/// 静默刷新失败：网络问题保留可读错误（前端不弹重新登录）；凭据失效等仍返回 REFRESH_FAILED
+fn map_silent_refresh_err(context: &str, e: impl std::fmt::Display) -> String {
+    let msg = e.to_string();
+    if is_network_error_message(&msg) {
+        eprintln!("[正版检测] 步骤3：✗ {}（网络）: {}", context, msg);
+        friendly_net_err(msg)
+    } else {
+        eprintln!("[正版检测] 步骤3：✗ {}: {}", context, msg);
+        "REFRESH_FAILED".to_string()
     }
 }
 
@@ -1968,28 +1998,19 @@ pub async fn ms_silent_refresh_account(uuid: String) -> Result<AccountInfo, Stri
     // 2) 调用 Microsoft token endpoint 刷新 access_token
     let refreshed = refresh_access_token(&client, CLIENT_ID, &db_refresh_token)
         .await
-        .map_err(|_| {
-            eprintln!("[正版检测] 步骤3：✗ refresh_token 已失效，Microsoft Token 接口返回失败");
-            "REFRESH_FAILED".to_string()
-        })?;
+        .map_err(|e| map_silent_refresh_err("Microsoft Token 刷新失败", e))?;
     eprintln!("[正版检测] 步骤3：✓ Microsoft Token 刷新成功，新 access_token 长度={}", refreshed.access_token.len());
 
     eprintln!("[正版检测] 步骤3：正在走 Xbox Live / XSTS / Minecraft 完整认证链...");
     // 3) 走一遍 Xbox Live / XSTS / Minecraft 登录链条，拿到 Minecraft access_token
     let xbox_token = authenticate_with_xbox_live(&client, &refreshed.access_token)
         .await
-        .map_err(|_| {
-            eprintln!("[正版检测] 步骤3：✗ Xbox Live 认证失败");
-            "REFRESH_FAILED".to_string()
-        })?;
+        .map_err(|e| map_silent_refresh_err("Xbox Live 认证失败", e))?;
     eprintln!("[正版检测] 步骤3：✓ Xbox Live 认证成功");
 
     let xsts_token = get_xsts_token(&client, &xbox_token.token)
         .await
-        .map_err(|_| {
-            eprintln!("[正版检测] 步骤3：✗ XSTS 认证失败");
-            "REFRESH_FAILED".to_string()
-        })?;
+        .map_err(|e| map_silent_refresh_err("XSTS 认证失败", e))?;
     eprintln!("[正版检测] 步骤3：✓ XSTS 认证成功");
 
     let mc_login = authenticate_with_minecraft(
@@ -1998,19 +2019,13 @@ pub async fn ms_silent_refresh_account(uuid: String) -> Result<AccountInfo, Stri
         &xsts_token.token,
     )
     .await
-    .map_err(|_| {
-        eprintln!("[正版检测] 步骤3：✗ Minecraft 认证失败");
-        "REFRESH_FAILED".to_string()
-    })?;
+    .map_err(|e| map_silent_refresh_err("Minecraft 认证失败", e))?;
     eprintln!("[正版检测] 步骤3：✓ Minecraft 认证成功，新 Minecraft access_token 长度={}", mc_login.access_token.len());
 
     // 4) 取得玩家资料（玩家名、皮肤等）
     let mc_profile = get_minecraft_profile(&client, &mc_login.access_token)
         .await
-        .map_err(|_| {
-            eprintln!("[正版检测] 步骤3：✗ 获取 Minecraft 个人资料失败");
-            "REFRESH_FAILED".to_string()
-        })?;
+        .map_err(|e| map_silent_refresh_err("获取 Minecraft 个人资料失败", e))?;
     eprintln!("[正版检测] 步骤3：✓ 获取个人资料成功，玩家名={}", mc_profile.name);
 
     // 5) 把新 token 存回数据库（再次单独开连接，同步块，不跨 await）

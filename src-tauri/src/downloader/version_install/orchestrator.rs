@@ -20,6 +20,7 @@ use crate::downloader::shared_utils::{
     scrub_vanilla_staging_dir,
 };
 use crate::downloader::modpack_installer;
+use crate::version_management::copy_instance_user_data;
 
 use super::events::{
     emit_download_progress, emit_install_progress, emit_session_started, emit_task_finished,
@@ -35,7 +36,7 @@ use super::session::{
 };
 use super::stages::{
     STAGE_CLEANUP, STAGE_COMMUNITY, STAGE_DONE, STAGE_LOADER, STAGE_LOADER_INSTALLER, STAGE_MERGE,
-    STAGE_OPTIFINE, STAGE_PREP, STAGE_RESOURCES, STAGE_VANILLA, STAGE_WAITING,
+    STAGE_OPTIFINE, STAGE_PREP, STAGE_RESOURCES, STAGE_TRANSFER, STAGE_VANILLA, STAGE_WAITING,
 };
 
 fn ensure_not_cancelled(cancel: &AtomicBool) -> Result<(), String> {
@@ -725,6 +726,21 @@ async fn run_install_worker(
     {
         if loader_type == "fabric" || loader_type == "quilt" {
             copy_version_mods_to_instance(&instance_name, &mc_version, &minecraft_path);
+        }
+    }
+
+    ensure_not_cancelled(&cancel)?;
+    if let Some(source) = session.retarget_source_instance.as_deref() {
+        if source != instance_name {
+            emit_install_progress(
+                &app,
+                &session.session_id,
+                session.install_task_id,
+                STAGE_TRANSFER,
+                None,
+            );
+            copy_instance_user_data(&minecraft_path, source, &instance_name)
+                .map_err(|e| format!("转移用户数据失败: {}", e))?;
         }
     }
 

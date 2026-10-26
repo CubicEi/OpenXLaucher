@@ -110,7 +110,11 @@ interface DownloadContextValue {
     label: string,
     mcVersion: string,
     selections: { loader: string; version: string }[],
-    instanceName: string
+    instanceName: string,
+    options?: {
+      retargetSourceInstance?: string;
+      onSessionStarted?: (start: VersionInstallSessionStart) => void;
+    }
   ) => Promise<number>;
   /** Mod 文件下载 */
   startModDownload: (
@@ -352,6 +356,7 @@ function DownloadProviderInner({ children }: { children: React.ReactNode }) {
       localDownloadId?: number;
       localInstallId?: number;
       placeholdersExist?: boolean;
+      onSessionStarted?: (start: VersionInstallSessionStart) => void;
     }): Promise<number> => {
       await ensureDownloadListenersRef.current();
       const {
@@ -421,6 +426,7 @@ function DownloadProviderInner({ children }: { children: React.ReactNode }) {
           "start_version_install_session",
           { plan }
         );
+        opts.onSessionStarted?.(start);
         setTasks((prev) =>
           bindVersionInstallPair(
             prev,
@@ -818,9 +824,14 @@ function DownloadProviderInner({ children }: { children: React.ReactNode }) {
       label: string,
       mcVersion: string,
       selections: { loader: string; version: string }[],
-      instanceName: string
+      instanceName: string,
+      options?: {
+        retargetSourceInstance?: string;
+        onSessionStarted?: (start: VersionInstallSessionStart) => void;
+      }
     ) => {
       try {
+        const retargetSource = options?.retargetSourceInstance?.trim();
         return await startVersionInstallSession({
           plan: {
             kind: "combined",
@@ -830,10 +841,14 @@ function DownloadProviderInner({ children }: { children: React.ReactNode }) {
               version: s.version,
             })),
             instanceName: instanceName || null,
+            ...(retargetSource
+              ? { retargetSourceInstance: retargetSource }
+              : {}),
           },
           displayName: instanceName.trim() || label || mcVersion,
           mcVersion,
           instanceName,
+          onSessionStarted: options?.onSessionStarted,
         });
       } catch (e) {
         if (String(e).includes("JAVA_PRECHECK_FAILED")) return -1;

@@ -120,9 +120,10 @@ use updater::handler::{
     get_update_status, install_update,
 };
 use version_management::{
-    vm_clear_version_cache, vm_delete_cached_file, vm_delete_file, vm_ensure_instance_dirs,
-    vm_find_resource_packs, vm_list_dir, vm_modify_game_rule, vm_parse_level_dat, vm_rename_file,
-    vm_rename_version_dir, vm_scan_instances, vm_write_file_base64,
+    vm_clear_version_cache, vm_copy_instance_user_data, vm_delete_cached_file, vm_delete_file,
+    vm_ensure_instance_dirs, vm_find_resource_packs, vm_list_dir, vm_modify_game_rule,
+    vm_parse_level_dat, vm_rename_file, vm_rename_version_dir, vm_scan_instances,
+    vm_write_file_base64,
 };
 
 use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
@@ -199,6 +200,7 @@ pub fn run() {
             vm_modify_game_rule,
             vm_list_dir,
             vm_ensure_instance_dirs,
+            vm_copy_instance_user_data,
             vm_delete_file,
             vm_rename_file,
             vm_rename_version_dir,

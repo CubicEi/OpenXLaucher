@@ -219,7 +219,7 @@ export function AccountSwitcher({
                 </CardHeader>
                 <CardContent className="space-y-4">
                   <p className="text-sm text-muted-foreground">
-                    确定要删除账户 <span className="font-medium text-foreground">{deleteTarget.name}</span> 吗？此操作不可撤销。
+                    确定要删除账户 <span className="font-medium text-foreground">{deleteTarget.name}</span> 吗？仅移除启动器内记录，不会删除游戏存档。
                   </p>
                   <div className="flex gap-2 justify-end">
                     <Button
