@@ -9,20 +9,18 @@ use std::time::{Duration, Instant};
 use tokio::io::AsyncWriteExt;
 use tokio::sync::{mpsc, Semaphore};
 
+use super::download_runtime_config;
+
 pub const MAX_CONCURRENT_FILES: usize = 24;
 pub const THROTTLE_MS_AFTER_FILE: u64 = 0;
-pub const MAX_TOTAL_CONNECTIONS: usize = 32;
 const SMART_INITIAL_CONCURRENCY: usize = 5;
 const SMART_MIN_CONCURRENCY: usize = 2;
-const SMART_MAX_CONCURRENCY: usize = 12;
+pub(crate) const SMART_MAX_CONCURRENCY: usize = 12;
 const SMART_ADJUST_BATCH: usize = 8;
 const CHUNKED_THRESHOLD: u64 = 256 * 1024;
 const SMALL_CHUNK: u64 = 256 * 1024;
 const MEDIUM_CHUNK: u64 = 1 * 1024 * 1024;
 const LARGE_CHUNK: u64 = 4 * 1024 * 1024;
-const MIN_WORKERS_PER_FILE: usize = 1;
-const MAX_WORKERS_PER_FILE: usize = 1;
-const MAX_TOTAL_WORKERS_PER_FILE: usize = 1;
 const LAST_MILE_THRESHOLD: f64 = 0.5;
 const FINAL_SPRINT_THRESHOLD: f64 = 0.8;
 const STALL_BYTES_PER_SEC: u64 = 30 * 1024;
@@ -32,10 +30,8 @@ const MAX_RETRIES_PER_CHUNK: u32 = 5;
 const CHUNK_TIMEOUT_BASE: Duration = Duration::from_secs(15);
 const OVERALL_TIMEOUT_SECONDS: u64 = 600;
 
-fn workers_for_size(_size: u64) -> usize {
-    // 每个文件内部只开 1 个 worker，串行下载
-    // 并发由外层 smart_batch_download 管理（文件级并发）
-    1
+fn workers_for_size(size: u64) -> usize {
+    download_runtime_config::workers_for_file_size(size, CHUNKED_THRESHOLD)
 }
 
 fn chunk_size_for(size: u64) -> u64 {
@@ -1231,7 +1227,8 @@ async fn try_download_to_temp(
             
             // 早期阶段也主动增加 worker
             if ratio < 0.2 && in_flight > 0 {
-                if current_worker_count < (MAX_TOTAL_WORKERS_PER_FILE as u64) / 2 {
+                let max_workers = download_runtime_config::max_workers_per_file_cap() as u64;
+                if current_worker_count < max_workers / 2 {
                     num_new = 4;
                     should_spawn = true;
                 }
@@ -1254,7 +1251,7 @@ async fn try_download_to_temp(
             }
             
             if should_spawn && last_add.elapsed() > Duration::from_secs(2) {
-                let max_total = MAX_TOTAL_WORKERS_PER_FILE as u64;
+                let max_total = download_runtime_config::max_workers_per_file_cap() as u64;
                 let can_add = max_total.saturating_sub(current_worker_count);
                 let actual_add = num_new.min(can_add);
                 
@@ -1329,7 +1326,9 @@ async fn worker_loop(
     writer: mpsc::UnboundedSender<(u64, Vec<u8>)>,
 ) {
     let start = Instant::now();
-    let hard_timeout = Duration::from_secs(120);
+    let size_mb = (state.total_size as f64 / (1024.0 * 1024.0)).max(1.0);
+    let hard_timeout_secs = (120.0 + size_mb * 8.0).min(3600.0) as u64;
+    let hard_timeout = Duration::from_secs(hard_timeout_secs);
     let mut tick_counter: u64 = 0;
     
     loop {
@@ -1437,6 +1436,11 @@ async fn download_chunk(
     state: &SharedDownloadState,
     chunk: &ChunkTask,
 ) -> Result<()> {
+    let _worker_permit = download_runtime_config::worker_semaphore()
+        .acquire_owned()
+        .await
+        .map_err(|_| anyhow!("下载 worker 池已关闭"))?;
+
     let range_header = format!("bytes={}-{}", range.start, range.end);
     let size_mb = (range.size() as f64 / (1024.0 * 1024.0)).max(0.1);
     let req_timeout = Duration::from_secs_f64((30.0 + size_mb * 10.0).min(120.0));
@@ -2261,9 +2265,7 @@ async fn spawn_adaptive_tuner(sem: AdaptiveSemaphore) {
 }
 
 fn global_connection_semaphore() -> Arc<Semaphore> {
-    static SEM: std::sync::OnceLock<Arc<Semaphore>> = std::sync::OnceLock::new();
-    SEM.get_or_init(|| Arc::new(Semaphore::new(MAX_TOTAL_CONNECTIONS)))
-        .clone()
+    download_runtime_config::file_connection_semaphore()
 }
 
 fn is_server_overload_error(err: &str) -> bool {

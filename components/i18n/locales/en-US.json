@@ -372,8 +372,8 @@
       "full": "Full",
       "simpleLayoutOnlyAccountRelatedContentIsShown": "Simple layout: only account-related content is shown.",
       "fullLayoutAllFeatureSectionsAreShown": "Full layout: all feature sections are shown.",
-      "appearance": "Appearance",
-      "themeColorFontSizeAndPageBackground": "Theme, color, font size, and page background"
+      "appearance": "Theme",
+      "themeColorFontSizeAndPageBackground": "Color, font size, and page background"
     },
     "themeManager": {
       "selectTheme": "Frontend theme",
@@ -417,7 +417,12 @@
       "configureModDownloadBehavior": "Configure mod download behavior.",
       "downloadRequiredDependencies": "Download required dependencies",
       "whenDownloadingModrinthOrCurseForgeModsAutomaticallyResolve": "When downloading Modrinth or CurseForge mods, automatically resolve and download compatible required dependencies. Optional dependencies are skipped.",
-      "toggleRequiredDependencyDownloads": "Toggle required dependency downloads"
+      "toggleRequiredDependencyDownloads": "Toggle required dependency downloads",
+      "workersPerFile": "Connections per file",
+      "workersPerFileDescription": "Applies to direct URLs that support HTTP Range. Modrinth/CurseForge resources stay single-connection (1–32).",
+      "maxTotalWorkers": "Total connection limit",
+      "maxTotalWorkersDescription": "Shared across all active chunked downloads (1–256). Slide past 256 for unlimited.",
+      "unlimited": "Unlimited"
     },
     "about": {
       "updates": "Updates",
@@ -430,10 +435,17 @@
       "installing": "Installing",
       "theLauncherIsUpToDate": "The launcher is up to date."
     },
+    "general": {
+      "updateDescription": "Check for updates, read release notes, and install new versions.",
+      "manageUpdates": "Manage updates"
+    },
     "page": {
-      "title": "Settings",
-      "description": "Global settings — appearance, theme, and version information",
+      "title": "Launcher settings",
+      "description": "General, download, and appearance options",
       "categories": "Categories",
+      "general": "General",
+      "download": "Downloads",
+      "appearance": "Appearance",
       "end": "— End of settings —"
     },
     "languageSection": {
@@ -442,9 +454,7 @@
       "systemLanguage": "The system language is used automatically on first launch.",
       "chinese": "Chinese",
       "english": "English"
-    },
-    "language": "Language",
-    "sidebar": "Sidebar"
+    }
   },
   "sidebar": {
     "home": "Home",
@@ -454,7 +464,7 @@
     "downloads": "Downloads",
     "multiplayer": "Multiplayer",
     "tools": "Tools",
-    "settings": "Settings"
+    "settings": "Launcher settings"
   },
   "diagnostics": {
     "title": "Diagnostics Report",
@@ -594,6 +604,21 @@
     "deleteFailed": "Delete failed",
     "tools": "Tools",
     "createAndManageModpacks": "Create and manage modpacks",
+    "customDownload": {
+      "title": "Custom download",
+      "description": "Enter a direct URL and choose a folder. Uses the launcher download engine (Range multi-connection when supported).",
+      "url": "Download URL",
+      "urlPlaceholder": "https://…",
+      "saveDirectory": "Save to",
+      "browse": "Browse",
+      "fileName": "File name",
+      "fileNamePlaceholder": "Leave empty to infer from the URL",
+      "start": "Start download",
+      "downloading": "Downloading…",
+      "invalidUrl": "Enter a valid http or https URL",
+      "pickDirectoryFirst": "Choose a save folder first",
+      "startFailed": "Could not start download"
+    },
     "createAModrinthModpack": "Create a Modrinth modpack",
     "searchAndAddFilesWithTheModrinthApiCollects": "Search and add files with the Modrinth API. Collects path, sha1, sha256, fileSize, and downloadUrl, with client/server dependency settings per file.",
     "newModrinthModpack": "New Modrinth modpack",

@@ -57,7 +57,7 @@ export function toAppHref(href: string) {
   return `${href}/`;
 }
 
-const SHARED_LAYOUT_PREFIXES = ["/game-settings", "/instance-settings"];
+const SHARED_LAYOUT_PREFIXES = ["/game-settings", "/instance-settings", "/settings"];
 
 /** Tab / sub-route navigation inside the same Next.js layout (no full-page fade). */
 export function isSharedLayoutRoute(path: string) {

@@ -21,7 +21,7 @@ interface LoginDialogProps {
   forcedDeviceCode?: DeviceCodeInfo | null;
   /** 当强制登录 DeviceCode 展示完成（登录成功/取消/关闭）后调用，清理外部状态 */
   onForcedDeviceCodeConsumed?: () => void;
-  /** 是否为强制登录模式：不能关闭弹窗、不能切换 tab，必须完成微软登录才会消失 */
+  /** 正版启动游戏前 Minecraft 令牌失效提示：锁定正版 tab，仍可关闭弹窗 */
   forcedMode?: boolean;
   /** 强制登录的原因提示（显示在顶部警告条） */
   forcedMessage?: string | null;
@@ -49,9 +49,7 @@ export function LoginDialog({
     clearForcedMicrosoftDeviceCode,
   } = useAccountContext();
 
-  // 包装 onClose：如果是强制登录模式，禁止关闭（但如果 DeviceCode 完成登录还是会关闭）
   const handleClose = () => {
-    if (forcedMode) return; // <-- 强制登录：不允许关闭！
     cancelMicrosoftLogin();
     onForcedDeviceCodeConsumed?.();
     clearForcedMicrosoftDeviceCode?.();
@@ -243,10 +241,7 @@ export function LoginDialog({
               "absolute inset-0 backdrop-blur-sm",
               forcedMode ? "bg-black/80" : "bg-black/50"
             )}
-            // 强制登录模式：点遮罩不允许关闭！
-            onClick={() => {
-              if (!forcedMode) handleClose();
-            }}
+            onClick={() => handleClose()}
           />
 
           <motion.div
@@ -269,12 +264,9 @@ export function LoginDialog({
                     {forcedMode ? "需要重新登录正版账号" : "添加账户"}
                   </CardTitle>
                 </div>
-                {/* 强制登录模式下隐藏关闭 X 按钮！ */}
-                {!forcedMode && (
-                  <Button variant="ghost" size="icon-sm" onClick={handleClose}>
-                    <X className="size-4" />
-                  </Button>
-                )}
+                <Button variant="ghost" size="icon-sm" onClick={handleClose} aria-label="关闭">
+                  <X className="size-4" />
+                </Button>
               </CardHeader>
 
               <CardContent className="space-y-4">
@@ -285,12 +277,9 @@ export function LoginDialog({
                       <AlertCircle className="size-4 text-amber-500 shrink-0 mt-0.5" />
                       <p className="text-sm text-amber-700 dark:text-amber-400 leading-relaxed">
                         {forcedMessage ||
-                          "检测到你的微软正版账号已在其他地点登录，或登录凭据已长时间未使用而失效。为了账号安全，必须完成微软账号重新登录后才能继续使用。"}
+                          "无法获取 Minecraft 登录令牌，登录凭据可能已失效。请完成下方的正版登录，或关闭窗口稍后再试。"}
                       </p>
                     </div>
-                    <p className="mt-2 text-xs text-amber-600/90 dark:text-amber-400/80 font-medium">
-                      此弹窗无法关闭，请完成下方的正版登录授权。
-                    </p>
                   </div>
                 )}
 
@@ -370,7 +359,7 @@ export function LoginDialog({
                             <div className="rounded-lg border border-destructive/40 bg-destructive/5 p-4 space-y-3">
                               <p className="text-sm text-destructive">{loginError}</p>
                               <p className="text-xs text-muted-foreground">
-                                此弹窗无法关闭，请确保网络连接正常后重启启动器重试。
+                                可关闭窗口后检查网络，或稍后从账户菜单重新登录。
                               </p>
                             </div>
                           )}

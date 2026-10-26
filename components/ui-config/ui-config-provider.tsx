@@ -17,7 +17,7 @@ const DEFAULT_SIDEBAR_TABS: SidebarTabConfig[] = [
   { id: "launch", name: "启动", visible: true, canHide: false, order: 2 },
   { id: "download", name: "下载", visible: true, canHide: true, order: 3 },
   { id: "tools", name: "工具", visible: true, canHide: true, order: 4 },
-  { id: "settings", name: "设置", visible: true, canHide: false, order: 5 },
+  { id: "settings", name: "启动器设置", visible: true, canHide: false, order: 5 },
 ];
 
 /** 默认UI配置 */

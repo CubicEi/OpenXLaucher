@@ -1,4 +1,5 @@
 pub mod cache_paths;
+pub mod custom_download;
 pub mod runtime_dependencies;
 pub mod runtime_log;
 pub mod config;

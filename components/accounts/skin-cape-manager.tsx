@@ -74,8 +74,7 @@ export function SkinCapeManager({ account: initialAccount, onClose }: SkinCapeMa
     });
   };
 
-  // 加载皮肤/披风列表 —— 调用【公共函数 microsoftProbeAccountLogin】
-  // 保证和 AccountProvider 启动时的账号有效性检测逻辑 100% 一致
+  // 加载皮肤/披风列表（仅本弹窗使用，不触发启动器强制登录）
   const loadProfile = async (retryWithRefresh = true) => {
     setLoading(true);
     setErrorMsg(null);

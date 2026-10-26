@@ -12,6 +12,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { type UnlistenFn } from "@tauri-apps/api/event";
 import { dismissTaskIds, isTaskDismissed } from "./download-dismissed-tasks";
 import {
+  bindBackendTaskId,
   bindVersionInstallPair,
   makeStartDownloadFn,
 } from "./download-event-utils";
@@ -136,6 +137,12 @@ interface DownloadContextValue {
   ) => Promise<number>;
   /** 整合包安装（异步） */
   startModpackDownload: (modpackName: string, path: string) => Promise<number>;
+  /** 工具中心：自定义 URL 下载 */
+  startCustomDownload: (opts: {
+    url: string;
+    directory: string;
+    fileName?: string | null;
+  }) => Promise<number>;
   /** 单个模组更新（下载到临时目录后替换，进度走 mod-download 事件） */
   startModUpdate: (
     instanceDir: string,
@@ -925,6 +932,76 @@ function DownloadProviderInner({ children }: { children: React.ReactNode }) {
     [startModLoaderDownload]
   );
 
+  const startCustomDownload = useCallback(
+    async (opts: { url: string; directory: string; fileName?: string | null }) => {
+      await ensureDownloadListeners();
+      const localTaskId = taskIdCounterRef.current++;
+      const trimmedName = opts.fileName?.trim() ?? "";
+      let displayName = trimmedName;
+      if (!displayName) {
+        try {
+          const segment = new URL(opts.url.trim()).pathname.split("/").filter(Boolean).pop();
+          displayName = segment && segment.length > 0 ? segment : "download.bin";
+        } catch {
+          displayName = "download.bin";
+        }
+      }
+      const label = `自定义下载: ${displayName}`;
+
+      setTasks((prev) => {
+        const task: DownloadTask = {
+          clientId: `client-${localTaskId}`,
+          taskId: localTaskId,
+          label,
+          mcVersion: "—",
+          status: "downloading",
+          detail: "准备中…",
+          startedAt: Date.now(),
+        };
+        return [task, ...prev];
+      });
+
+      flyToProcessList();
+
+      try {
+        const returnedTaskId = await invoke<number>("start_custom_download", {
+          url: opts.url.trim(),
+          directory: opts.directory.trim(),
+          fileName: trimmedName.length > 0 ? trimmedName : null,
+        });
+        if (returnedTaskId !== localTaskId) {
+          setTasks((prev) => bindBackendTaskId(prev, localTaskId, returnedTaskId));
+        }
+        const effectiveId = returnedTaskId;
+        if (cancelledLocalIdsRef.current.has(localTaskId)) {
+          cancelledLocalIdsRef.current.delete(localTaskId);
+          cancelledLocalIdsRef.current.add(effectiveId);
+          if (isTaskDismissed(localTaskId)) {
+            dismissTaskIds(effectiveId);
+          } else {
+            setTasks((prev) =>
+              prev.map((t) =>
+                t.taskId === effectiveId
+                  ? { ...t, status: "cancelled" as const, error: "已取消" }
+                  : t
+              )
+            );
+          }
+        }
+        return returnedTaskId;
+      } catch (err) {
+        console.error("启动自定义下载失败:", err);
+        setTasks((prev) =>
+          prev.map((t) =>
+            t.taskId === localTaskId ? { ...t, status: "error", error: String(err) } : t
+          )
+        );
+        throw err;
+      }
+    },
+    [ensureDownloadListeners]
+  );
+
   /** ========== 取消与清理 ========== */
   const cancelDownload = useCallback(
     async (taskId: number) => {
@@ -1002,6 +1079,7 @@ function DownloadProviderInner({ children }: { children: React.ReactNode }) {
               invoke("cancel_modpack_install", { taskId: id }),
             ]),
             invoke("cancel_mod_download", { taskId }),
+            invoke("cancel_custom_download", { taskId }),
             invoke("cancel_java_download", { taskId }),
           ]);
         }
@@ -1052,6 +1130,7 @@ function DownloadProviderInner({ children }: { children: React.ReactNode }) {
         startModDownload,
         startResourceDownload,
         startModpackDownload,
+        startCustomDownload,
         startModUpdate,
         startModUpdateAll,
         cancelDownload,

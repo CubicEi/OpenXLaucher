@@ -321,6 +321,20 @@ export async function msSilentRefreshAccount(
 }
 
 /**
+ * 启动时刷新 Minecraft 令牌失败：是否为网络/限流等暂态问题（不应弹出强制重新登录）。
+ */
+export function isMicrosoftTokenTransientError(message: string): boolean {
+  if (!message) return false;
+  if (message.includes("TIMEOUT") || message.includes("_TIMEOUT")) return true;
+  if (message.includes("网络连接失败") || message.includes("请检查您的网络")) return true;
+  if (message.includes("获取皮肤资料失败")) return true;
+  if (/http\s*429/i.test(message) || /too many requests/i.test(message)) return true;
+  if (/http\s*408/i.test(message)) return true;
+  if (/http\s*5\d{2}/i.test(message)) return true;
+  return false;
+}
+
+/**
  * 检查 official.rs 数据库中是否存在某个 uuid 的微软账号（有 refresh_token 记录）
  */
 export async function msHasAccountInDb(uuid: string): Promise<boolean> {
@@ -339,15 +353,8 @@ export async function deleteCachedSkin(uuid: string): Promise<number> {
 }
 
 /**
- * 检查微软正版账号是否可以正常登录 —— 与【皮肤与披风】模块使用的探测逻辑完全一致。
- *
- * 探测步骤（和 skin-cape-manager.tsx 的 loadProfile 一模一样）：
- *   1. 若本地 accessToken 为空 → 立刻返回失败，错误消息为 "账户 access_token 不存在，请重新登录"
- *      （这一步纯本地判断，零网络开销，和用户手动点进"皮肤与披风"看到的快速错误提示完全一致）
- *   2. 否则调用 ms_get_skins_and_capes 去微软服务器拉皮肤/披风列表
- *      - 成功 return { ok: true, profile } 表示 token 仍然有效
- *      - 失败 return { ok: false, error: string }，error 就是原封不动的后端错误消息
- *        （比如 HTTP 401、网络错误、token 过期等）
+ * 在【皮肤与披风】界面探测 access_token 是否仍能访问 Minecraft Services 皮肤 API。
+ * 启动器不会在打开时或此处决定是否弹登录窗；正版启动游戏前使用 `prepareMicrosoftAccountForLaunch`（内部走 `msSilentRefreshAccount`）。
  *
  * @param accessToken 当前账号的 access_token
  */

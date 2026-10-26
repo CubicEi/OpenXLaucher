@@ -8,8 +8,6 @@ import { Loader2, Play, Users, UserPlus, Square } from "lucide-react";
 import type { Account } from "@/types";
 import { useLaunchContext } from "@/components/launch/launch-provider";
 import { VersionSelectorDialog } from "@/components/launch/version-selector-dialog";
-import { AppUpdateSection } from "@/components/settings/app-updater";
-
 type ProfileCardProps = {
   selectedProfile: Account | null;
   onOpenProfileSelector: () => void;
@@ -116,9 +114,6 @@ export function ProfileCard({
             )}
             <VersionSelectorDialog />
           </div>
-
-          {/* 更新检查 */}
-          <AppUpdateSection />
         </CardContent>
       </Card>
     </motion.div>

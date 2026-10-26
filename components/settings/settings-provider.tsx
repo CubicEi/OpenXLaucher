@@ -36,10 +36,27 @@ export interface GeneralSettings {
   autoDownloadModDependencies: boolean;
 }
 
+export interface DownloadSettings {
+  /** 单文件 Range 下载连接数（默认 16，最大 32） */
+  workersPerFile: number;
+  /** 全局连接上限：1–256；0 表示无限制 */
+  maxTotalWorkers: number;
+}
+
 export interface LauncherSettings {
   general: GeneralSettings;
+  download: DownloadSettings;
   appearance: AppearanceSettings;
 }
+
+export const DOWNLOAD_WORKERS_PER_FILE_MIN = 1;
+export const DOWNLOAD_WORKERS_PER_FILE_MAX = 32;
+/** 0 = 无限制 */
+export const DOWNLOAD_MAX_TOTAL_WORKERS_UNLIMITED = 0;
+export const DOWNLOAD_MAX_TOTAL_WORKERS_MIN = 1;
+export const DOWNLOAD_MAX_TOTAL_WORKERS_MAX = 256;
+/** 滑动条在 256 之后再拉一格即为无限制 */
+export const DOWNLOAD_TOTAL_WORKERS_SLIDER_UNLIMITED = 257;
 
 // ============================================================
 // 预设自定义主题色（调色盘快选按钮）
@@ -68,6 +85,10 @@ export const DEFAULT_SETTINGS: LauncherSettings = {
   general: {
     language: "zh-CN",
     autoDownloadModDependencies: true,
+  },
+  download: {
+    workersPerFile: 16,
+    maxTotalWorkers: 64,
   },
   appearance: {
     themeId: "builtin.default",
@@ -103,8 +124,29 @@ const LEGACY_STORAGE_KEYS = [
 
 type LegacySettings = {
   general?: Partial<GeneralSettings>;
+  download?: Partial<DownloadSettings>;
   appearance?: Partial<Omit<AppearanceSettings, "themeId">>;
 };
+
+export function clampDownloadSettings(download: Partial<DownloadSettings> | undefined): DownloadSettings {
+  let workersPerFile = download?.workersPerFile ?? DEFAULT_SETTINGS.download.workersPerFile;
+  let maxTotalWorkers = download?.maxTotalWorkers ?? DEFAULT_SETTINGS.download.maxTotalWorkers;
+  workersPerFile = Math.min(
+    DOWNLOAD_WORKERS_PER_FILE_MAX,
+    Math.max(DOWNLOAD_WORKERS_PER_FILE_MIN, Math.round(workersPerFile)),
+  );
+  if (maxTotalWorkers === DOWNLOAD_MAX_TOTAL_WORKERS_UNLIMITED) {
+    return { workersPerFile, maxTotalWorkers: DOWNLOAD_MAX_TOTAL_WORKERS_UNLIMITED };
+  }
+  maxTotalWorkers = Math.min(
+    DOWNLOAD_MAX_TOTAL_WORKERS_MAX,
+    Math.max(DOWNLOAD_MAX_TOTAL_WORKERS_MIN, Math.round(maxTotalWorkers)),
+  );
+  if (maxTotalWorkers < workersPerFile) {
+    maxTotalWorkers = workersPerFile;
+  }
+  return { workersPerFile, maxTotalWorkers };
+}
 
 export function migrateSettingsV3(settings: LegacySettings): Partial<LauncherSettings> {
   return {
@@ -380,6 +422,7 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
         ...DEFAULT_SETTINGS.general,
         language: detectSystemLanguage(),
       },
+      download: { ...DEFAULT_SETTINGS.download },
       appearance: {
         ...DEFAULT_SETTINGS.appearance,
         background: { ...DEFAULT_SETTINGS.appearance.background },
@@ -414,6 +457,7 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
               ? parsed.general.language
               : detectSystemLanguage(),
           },
+          download: clampDownloadSettings(parsed.download),
           appearance: {
             ...DEFAULT_SETTINGS.appearance,
             ...parsed.appearance,
@@ -458,6 +502,18 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
       console.warn("[settings] 写入失败", e);
     }
   }, [settings, ready]);
+
+  React.useEffect(() => {
+    if (!ready) return;
+    const { workersPerFile, maxTotalWorkers } = settings.download;
+    void import("@tauri-apps/api/core")
+      .then(({ invoke }) =>
+        invoke("set_download_worker_config", { workersPerFile, maxTotalWorkers }),
+      )
+      .catch(() => {
+        /* 浏览器预览或无 Tauri 时忽略 */
+      });
+  }, [ready, settings.download]);
 
   // 监听 html 上的 .dark class 变化（与 next-themes / mode-toggle 协作）
   React.useEffect(() => {

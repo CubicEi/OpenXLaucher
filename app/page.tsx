@@ -8,7 +8,6 @@ import {
   ArrowRight,
   Boxes,
   Loader2,
-  Package,
   Play,
   Shirt,
   User,
@@ -129,20 +128,7 @@ export default function Home() {
                 {t("home.manageYourGameVersionsResourcesAndLaunchStatusHere")}
               </p>
             </div>
-            <div className="flex items-center gap-2">
-              <Button
-                variant="ghost"
-                size="icon"
-                asChild
-                className="size-8"
-                title={t("checkUpdate.checkUpdateButton")}
-              >
-                <Link href="/check-update">
-                  <Package className="size-4" />
-                </Link>
-              </Button>
-              <LaunchStatusBadge status={status} className="mt-1" />
-            </div>
+            <LaunchStatusBadge status={status} className="mt-1" />
           </header>
         )}
 
@@ -204,17 +190,6 @@ export default function Home() {
                           {t("home.skinsAndCapes")}
                         </Button>
                       )}
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="w-full gap-2"
-                        asChild
-                      >
-                        <Link href="/check-update">
-                          <Package className="size-3.5" />
-                          {t("checkUpdate.checkUpdateButton")}
-                        </Link>
-                      </Button>
                     </div>
                   </CardContent>
                 </div>
@@ -420,17 +395,6 @@ export default function Home() {
                           {t("home.skinsAndCapes")}
                         </Button>
                       )}
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="w-full gap-2"
-                        asChild
-                      >
-                        <Link href="/check-update">
-                          <Package className="size-3.5" />
-                          {t("checkUpdate.checkUpdateButton")}
-                        </Link>
-                      </Button>
                     </div>
                   </CardContent>
                 </div>

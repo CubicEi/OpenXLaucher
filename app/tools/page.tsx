@@ -27,6 +27,7 @@ import {
 } from "@/components/modpack/modpack-api";
 import { useI18n } from "@/components/i18n/use-i18n";
 import type { AppLanguage } from "@/components/settings/settings-provider";
+import { CustomDownloadCard } from "@/components/tools/custom-download-card";
 
 interface NewPackDialogState {
   open: boolean;
@@ -116,6 +117,7 @@ export default function ToolsPage() {
 
       <div className="flex-1 p-4 md:p-6">
         <div className="max-w-4xl mx-auto space-y-6">
+          <CustomDownloadCard />
           {/* 两个整合包制作大卡片 */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {/* Modrinth */}

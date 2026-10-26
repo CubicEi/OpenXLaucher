@@ -271,7 +271,7 @@ export function LaunchProvider({ children }: { children: React.ReactNode }) {
     };
   }, [syncStatus]);
 
-  const { selectedProfile } = useAccountContext();
+  const { selectedProfile, prepareMicrosoftAccountForLaunch } = useAccountContext();
 
   useEffect(() => {
     selectedLogPidRef.current = selectedLogPid;
@@ -592,6 +592,22 @@ export function LaunchProvider({ children }: { children: React.ReactNode }) {
         return;
       }
 
+      let microsoftAccessToken: string | null = null;
+      if (selectedProfile.authType === "microsoft") {
+        const prep = await prepareMicrosoftAccountForLaunch(selectedProfile);
+        if (!prep.ok) {
+          if (prep.reason === "network") {
+            setErrorMessage("无法连接微软服务器以刷新登录令牌，请检查网络后重试。");
+          } else if (prep.reason === "credentials") {
+            setErrorMessage("当前正版账号缺少有效登录令牌，请在账户中重新登录微软账号。");
+          } else if (prep.reason === "cancelled") {
+            setErrorMessage("已取消微软登录，游戏未启动。");
+          }
+          return;
+        }
+        microsoftAccessToken = prep.accessToken;
+      }
+
       setErrorMessage(null);
       setProgress(null);
       log4jParser.reset();
@@ -647,7 +663,7 @@ export function LaunchProvider({ children }: { children: React.ReactNode }) {
         const accountAuthToken =
           selectedProfile.authType === "offline"
             ? "0"
-            : selectedProfile.accessToken || "";
+            : microsoftAccessToken ?? selectedProfile.accessToken ?? "";
         const accountYggdrasilApi = isYggdrasilAccount
           ? selectedProfile.yggdrasilUrl || merged.yggdrasilApi || ""
           : "";
@@ -696,7 +712,15 @@ export function LaunchProvider({ children }: { children: React.ReactNode }) {
         addPendingOrSelectedLog("error", `${t("launch.provider.launchFailed")}: ${msg}`);
       }
     },
-    [config, selectedProfile, addPendingOrSelectedLog, t, updateConfig, syncStatus],
+    [
+      config,
+      selectedProfile,
+      addPendingOrSelectedLog,
+      t,
+      updateConfig,
+      syncStatus,
+      prepareMicrosoftAccountForLaunch,
+    ],
   );
 
   const generateReport = useCallback<() => LaunchAnalysisReport>(

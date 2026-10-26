@@ -14,7 +14,7 @@ import {
   msSilentRefreshAccount,
   msHasAccountInDb,
   deleteCachedSkin,
-  microsoftProbeAccountLogin,
+  isMicrosoftTokenTransientError,
   normalizeSkinVariant,
   type LittleSkinAccount,
   type ThirdPartyAccountList,
@@ -61,14 +61,9 @@ type AccountContextType = {
   cancelMicrosoftLogin: () => void;
   loginState: LoginState;
   loginError: string | null;
-  /**
-   * 自动弹出的强制微软登录 DeviceCode。
-   * 启动器打开时，如果数据库有正版账号且 access_token 失效、refresh_token 也无法刷新，
-   * 会自动发起一次微软正版登录流程，并将 DeviceCode 信息存于此状态，UI 层应自动弹出登录对话框展示。
-   * UI 使用后应调用 clearForcedMicrosoftDeviceCode() 清理。
-   */
+  /** 以正版启动游戏时触发的微软设备码登录（见 prepareMicrosoftAccountForLaunch） */
   forcedMicrosoftDeviceCode: DeviceCodeInfo | null;
-  /** 是否进入"强制登录"模式：弹窗不可关闭、不可切换 tab，必须完成微软登录 */
+  /** 启动游戏前无法取得 Minecraft 令牌时提示重新登录（可关闭，默认锁定正版 tab） */
   forcedMicrosoftLoginMode: boolean;
   /** 强制登录的原因说明（展示给玩家） */
   forcedMicrosoftLoginMessage: string | null;
@@ -77,6 +72,8 @@ type AccountContextType = {
   /** 手动打开登录对话框（AccountSwitcher 里"添加账户"按钮点下时设为 true；关闭时设为 false） */
   manualLoginOpen: boolean;
   setManualLoginOpen: (open: boolean) => void;
+  /** 正版账号启动游戏前：刷新或引导重新登录以取得 Minecraft 令牌 */
+  prepareMicrosoftAccountForLaunch: (profile: Account) => Promise<MicrosoftLaunchPrepResult>;
 };
 
 const AccountContext = createContext<AccountContextType | undefined>(undefined);
@@ -114,6 +111,18 @@ function loadSelectedId(): string | null {
   return null;
 }
 
+function withTimeout<T>(p: Promise<T>, ms: number, tag: string): Promise<T> {
+  return Promise.race<T>([
+    p,
+    new Promise<T>((_, rej) => setTimeout(() => rej(new Error(`${tag}_TIMEOUT`)), ms)),
+  ]);
+}
+
+/** 以正版账号启动游戏前的令牌准备结果 */
+export type MicrosoftLaunchPrepResult =
+  | { ok: true; accessToken: string }
+  | { ok: false; reason: "cancelled" | "network" | "credentials" };
+
 export function AccountProvider({ children }: { children: React.ReactNode }) {
   const [profiles, setProfiles] = useState<Account[]>([]);
   const [selectedProfile, setSelectedProfile] = useState<Account | null>(null);
@@ -128,11 +137,202 @@ export function AccountProvider({ children }: { children: React.ReactNode }) {
   // 如果用户在途中调用 cancelMicrosoftLogin，这个计数器会递增，
   // 使得后续的 .then/.catch 回调不更新状态（避免关闭对话框后仍显示"登录中"）
   const msLoginVersionRef = React.useRef<number>(0);
+  /** 以正版启动游戏时，等待重新登录完成或用户关闭弹窗 */
+  const microsoftLaunchGateRef = React.useRef<((accessToken: string | null) => void) | null>(null);
+
+  const applyMicrosoftRefresh = useCallback(
+    async (
+      pid: string,
+      puuid: string,
+      pName: string,
+      refreshed: { access_token: string; name?: string; variant?: string | null }
+    ) => {
+      let avatarSrc: string | undefined;
+      try {
+        avatarSrc = (await getSkinBase64(puuid)) || undefined;
+      } catch {
+        /* 皮肤非必需 */
+      }
+      const refreshedVariant = normalizeSkinVariant(refreshed.variant);
+      setProfiles((prev) =>
+        prev.map((p) =>
+          p.id === pid
+            ? {
+                ...p,
+                name: refreshed.name || pName,
+                accessToken: refreshed.access_token,
+                skinUrl: avatarSrc ?? p.skinUrl,
+                ...(refreshedVariant ? { variant: refreshedVariant } : {}),
+              }
+            : p
+        )
+      );
+      setSelectedProfile((current) =>
+        current?.id === pid
+          ? {
+              ...current,
+              name: refreshed.name || pName,
+              accessToken: refreshed.access_token,
+              skinUrl: avatarSrc ?? current.skinUrl,
+              ...(refreshedVariant ? { variant: refreshedVariant } : {}),
+            }
+          : current
+      );
+    },
+    []
+  );
+
+  const runForcedMicrosoftRelogin = useCallback(
+    (pName: string, tokenErrorMsg: string): Promise<string | null> => {
+      return new Promise((resolve) => {
+        const finish = (accessToken: string | null) => {
+          if (microsoftLaunchGateRef.current) {
+            microsoftLaunchGateRef.current = null;
+          }
+          resolve(accessToken);
+        };
+        microsoftLaunchGateRef.current = finish;
+
+        void (async () => {
+          try {
+            const currentVersion = ++msLoginVersionRef.current;
+            setLoginState("loading");
+            setLoginError(null);
+            setForcedMicrosoftLoginMode(true);
+            setForcedMicrosoftLoginMessage(
+              `检测到你的微软正版账号「${pName}」无法获取 Minecraft 登录令牌（${tokenErrorMsg || "凭据已失效"}）。` +
+                `请完成下方的微软正版登录后再启动游戏；也可先关闭此窗口。`
+            );
+            setForcedMicrosoftDeviceCode(null);
+
+            let codeInfo: DeviceCodeInfo | null = null;
+            try {
+              codeInfo = await withTimeout(msRequestDeviceCode(), 10000, "DEVICE_CODE_REQUEST");
+            } catch (reqErr) {
+              const msg = reqErr instanceof Error ? reqErr.message : String(reqErr);
+              if (msLoginVersionRef.current === currentVersion) {
+                setLoginError(
+                  `获取验证码失败（${msg.includes("TIMEOUT") ? "网络超时" : msg}），请检查网络连接或稍后重试。`
+                );
+                setLoginState("error");
+              }
+              finish(null);
+              return;
+            }
+
+            if (msLoginVersionRef.current !== currentVersion) {
+              finish(null);
+              return;
+            }
+            setForcedMicrosoftDeviceCode(codeInfo);
+
+            try {
+              const info = await msPollAndLogin(codeInfo.device_code, codeInfo.interval);
+              if (msLoginVersionRef.current !== currentVersion) {
+                finish(null);
+                return;
+              }
+              let avatarSrc: string | null = null;
+              if (info.uuid) {
+                try {
+                  avatarSrc = await getSkinBase64(info.uuid);
+                } catch {
+                  /* ignore */
+                }
+              }
+              if (msLoginVersionRef.current !== currentVersion) {
+                finish(null);
+                return;
+              }
+              const newAccount: Account = {
+                id: `ms-${info.uuid}`,
+                name: info.name,
+                uuid: info.uuid,
+                authType: "microsoft",
+                status: AUTH_TYPE_LABELS.microsoft,
+                accessToken: info.access_token,
+                skinUrl: avatarSrc ?? undefined,
+                variant: normalizeSkinVariant(info.variant),
+              };
+              setProfiles((prev) => {
+                const filtered = prev.filter(
+                  (p) => !(p.uuid === info.uuid && p.authType === "microsoft")
+                );
+                return [...filtered, newAccount];
+              });
+              setSelectedProfile(newAccount);
+              setLoginState("idle");
+              setForcedMicrosoftLoginMode(false);
+              setForcedMicrosoftLoginMessage(null);
+              setForcedMicrosoftDeviceCode(null);
+              finish(info.access_token);
+            } catch (e: unknown) {
+              if (msLoginVersionRef.current !== currentVersion) {
+                finish(null);
+                return;
+              }
+              const msg = e instanceof Error ? e.message : String(e);
+              if (!msg.includes("已取消登录")) {
+                setLoginError(msg);
+                setLoginState("error");
+              } else {
+                setLoginState("idle");
+                setLoginError(null);
+              }
+              finish(null);
+            }
+          } catch (e: unknown) {
+            const msg = e instanceof Error ? e.message : String(e);
+            setLoginError(msg);
+            setLoginState("error");
+            finish(null);
+          }
+        })();
+      });
+    },
+    []
+  );
+
+  const prepareMicrosoftAccountForLaunch = useCallback(
+    async (profile: Account): Promise<MicrosoftLaunchPrepResult> => {
+      if (profile.authType !== "microsoft" || !profile.uuid) {
+        const token = profile.accessToken?.trim();
+        return token ? { ok: true, accessToken: token } : { ok: false, reason: "credentials" };
+      }
+
+      const puuid = profile.uuid;
+      let tokenErrorMsg = "";
+      try {
+        const refreshed = await withTimeout(msSilentRefreshAccount(puuid), 20000, "MC_TOKEN_REFRESH");
+        if (refreshed?.access_token) {
+          await applyMicrosoftRefresh(profile.id, puuid, profile.name, refreshed);
+          return { ok: true, accessToken: refreshed.access_token };
+        }
+        tokenErrorMsg = "MC_TOKEN_REFRESH_EMPTY";
+      } catch (e: unknown) {
+        tokenErrorMsg = e instanceof Error ? e.message : String(e);
+      }
+
+      if (isMicrosoftTokenTransientError(tokenErrorMsg)) {
+        const existing = profile.accessToken?.trim();
+        return existing ? { ok: true, accessToken: existing } : { ok: false, reason: "network" };
+      }
+
+      if (tokenErrorMsg.includes("NO_REFRESH_TOKEN") && profile.accessToken?.trim()) {
+        return { ok: true, accessToken: profile.accessToken.trim() };
+      }
+
+      const newToken = await runForcedMicrosoftRelogin(profile.name, tokenErrorMsg);
+      if (newToken) {
+        return { ok: true, accessToken: newToken };
+      }
+      return { ok: false, reason: "cancelled" };
+    },
+    [applyMicrosoftRefresh, runForcedMicrosoftRelogin]
+  );
 
   // 客户端挂载后从 localStorage 恢复数据，避免 SSR hydration 不匹配
-  // 同时刷新 LittleSkin 账户的皮肤，确保显示最新的皮肤
-  // 对于微软正版账户：利用"皮肤与披风"模块试探 access_token 是否仍然有效，
-  // 如果失效则先用 official.rs 的 refresh_token 静默刷新，再失败就强制重新登录
+  // 同时刷新 LittleSkin 账户的皮肤；微软账号仅静默刷新令牌（不弹登录窗）
   useEffect(() => {
     const all = loadProfiles();
     const id = loadSelectedId();
@@ -163,20 +363,6 @@ export function AccountProvider({ children }: { children: React.ReactNode }) {
         })();
       }
     });
-
-    // ── 微软正版账号健康检查（直接使用【皮肤与披风】模块的 msGetSkinsAndCapes 检测） ──
-    // 用户要求：不用"自己那一套验证"，每次启动器打开后，有正版账号就调用皮肤与披风那套方法，
-    // 看看有没有"无法获取皮肤和披风"的异常情况；有异常就尝试刷新，再不行就强制登录。
-    // 所以这里的检测逻辑 = 和皮肤与披风 loadProfile 完全一致地调用 msGetSkinsAndCapes(accessToken)，
-    // 只有它抛异常我们才视为"账号有问题"，其他任何情况都视为正常。
-    let forcedLoginTriggered = false;
-
-    // 通用：Promise 硬超时包装器（避免网络慢时整段流程卡住）
-    const withTimeout = <T,>(p: Promise<T>, ms: number, tag: string): Promise<T> =>
-      Promise.race<T>([
-        p,
-        new Promise<T>((_, rej) => setTimeout(() => rej(new Error(`${tag}_TIMEOUT`)), ms)),
-      ]);
 
     all.forEach((profile) => {
       if (profile.authType !== "microsoft" || !profile.uuid) return;
@@ -235,262 +421,32 @@ export function AccountProvider({ children }: { children: React.ReactNode }) {
           `[正版检测-前端] 步骤1：✓ official.rs 数据库中存在该账号记录`
         );
 
-        // 2) ⚠️  就用"皮肤与披风"那一套方法：直接调 microsoftProbeAccountLogin(accessToken) ⚠️
-        //    和用户手动点进"皮肤与披风" → 组件内部 loadProfile → microsoftProbeAccountLogin 完全一样。
-        //    任何异常（accessToken 为 null / 返回 access_token 不存在 / HTTP 401 / 网络超时等）
-        //    都视为"无法获取皮肤和披风的异常情况" → 需要进一步处理。
-        //    注意：microsoftProbeAccountLogin 本身就是 {ok, error} 结构，不会抛出异常。
         console.log(
-          `[正版检测-前端] 步骤2：使用【皮肤与披风】模块的 microsoftProbeAccountLogin 试探 access_token...`
+          `[正版检测-前端] 步骤2：尝试静默刷新 Minecraft 登录令牌（msSilentRefreshAccount）...`
         );
-        let probeFailed = false;
-        let probeErrorMsg = "";
+        let tokenErrorMsg = "";
         try {
-          // 如果 accessToken 为空，microsoftProbeAccountLogin 的前端 impl 会立刻返回
-          // { ok: false, error: "账户 access_token 不存在，请重新登录" }，
-          // 和皮肤与披风点击进去看到的完全一致（零网络延迟）。
-          const probeResult = await withTimeout(
-            microsoftProbeAccountLogin(profile.accessToken),
-            3000,
-            "SKIN_CAPE_PROBE"
+          const refreshed = await withTimeout(
+            msSilentRefreshAccount(puuid),
+            20000,
+            "MC_TOKEN_REFRESH"
           );
-          if (!probeResult.ok) {
-            probeFailed = true;
-            probeErrorMsg = probeResult.error;
-          } else {
-            // 试探成功时顺带写入 ACTIVE 皮肤的 slim/classic，供 3D 预览用
-            const active = probeResult.profile.skins.find(
-              (s) => s.state?.toUpperCase() === "ACTIVE"
-            ) ?? probeResult.profile.skins[0];
-            const probedVariant = normalizeSkinVariant(active?.variant);
-            if (probedVariant) {
-              setProfiles((prev) =>
-                prev.map((p) =>
-                  p.id === pid ? { ...p, variant: probedVariant } : p
-                )
-              );
-              setSelectedProfile((curr) =>
-                curr?.id === pid ? { ...curr, variant: probedVariant } : curr
-              );
-            }
+          if (refreshed?.access_token) {
+            await applyMicrosoftRefresh(pid, puuid, pName, refreshed);
+            console.log(
+              `[正版检测-前端] 步骤2：✓ Minecraft 令牌刷新成功，玩家名=${refreshed.name || pName}`
+            );
           }
         } catch (e: unknown) {
-          // 超时等异常也视为探测失败
-          probeFailed = true;
-          probeErrorMsg = e instanceof Error ? e.message : String(e);
-        }
-
-        // 能正常返回皮肤/披风 → 账号没问题，跳过
-        if (!probeFailed) {
+          tokenErrorMsg = e instanceof Error ? e.message : String(e);
           console.log(
-            `[正版检测-前端] 步骤2：✓ 皮肤与披风模块试探成功，账号一切正常，无需任何操作`
+            `[正版检测-前端] 步骤2：静默刷新未成功（启动游戏时会再试）→`,
+            tokenErrorMsg
           );
-          return;
-        }
-        console.log(
-          `[正版检测-前端] 步骤2：✗ 皮肤与披风模块试探失败 →`,
-          probeErrorMsg
-        );
-
-        // 皮肤/披风探测超时 ≠ 凭据失效：网络慢时 probe 可能仍在进行，不应强制重新登录
-        if (probeErrorMsg.includes("SKIN_CAPE_PROBE_TIMEOUT")) {
-          console.log(
-            `[正版检测-前端] 步骤2：⚠ 皮肤与披风探测超时（非 token 失效），保持微软账号登录状态，跳过刷新与强制登录`
-          );
-          return;
-        }
-
-        // 用户明确要求：如果【皮肤与披风】模块返回"账户 access_token 不存在，请重新登录"
-        // 就直接调用 official.rs 强制玩家重新登录正版（跳过 refresh_token 静默刷新）
-        const isMissingAccessToken =
-          probeErrorMsg.includes("账户 access_token 不存在") ||
-          probeErrorMsg.includes("请重新登录");
-
-        if (isMissingAccessToken) {
-          console.log(
-            `[正版检测-前端] 步骤2：⚠ 命中"access_token 不存在"条件 → 根据用户要求，跳过 refresh_token 静默刷新，直接进入强制重新登录流程！`
-          );
-        }
-
-        // 3) 如果不是"纯缺 token"，就尝试用 official.rs 的 refresh_token 静默刷新一次
-        //    （纯缺 token 意味着 refresh_token 可能也没了，没必要等 8 秒）
-        let refreshedOk = false;
-        if (!isMissingAccessToken) {
-          console.log(
-            `[正版检测-前端] 步骤3：尝试调用 official.rs msSilentRefreshAccount 静默刷新...`
-          );
-          try {
-            const refreshed = await withTimeout(
-              msSilentRefreshAccount(puuid),
-              8000,
-              "SILENT_REFRESH"
-            );
-            if (refreshed && refreshed.access_token) {
-              let avatarSrc: string | undefined = undefined;
-              try {
-                avatarSrc = (await getSkinBase64(puuid)) || undefined;
-              } catch {}
-              const refreshedVariant = normalizeSkinVariant(refreshed.variant);
-              setProfiles((prev) =>
-                prev.map((p) =>
-                  p.id === pid
-                    ? {
-                        ...p,
-                        name: refreshed.name || pName,
-                        accessToken: refreshed.access_token,
-                        skinUrl: avatarSrc ?? p.skinUrl,
-                        ...(refreshedVariant ? { variant: refreshedVariant } : {}),
-                      }
-                    : p
-                )
-              );
-              // launchGame 使用的是 selectedProfile。若只更新 profiles，闭包中的
-              // selectedProfile 仍保留旧 access token，下一次启动依然会在游戏内
-              // 收到 Minecraft Services 的 401。
-              setSelectedProfile((current) =>
-                current?.id === pid
-                  ? {
-                      ...current,
-                      name: refreshed.name || pName,
-                      accessToken: refreshed.access_token,
-                      skinUrl: avatarSrc ?? current.skinUrl,
-                      ...(refreshedVariant ? { variant: refreshedVariant } : {}),
-                    }
-                  : current
-              );
-              refreshedOk = true;
-              console.log(
-                `[正版检测-前端] 步骤3：✓ 静默刷新成功！新 access_token 已应用，玩家名=${refreshed.name || pName}`
-              );
-            }
-          } catch (e) {
-            console.log(
-              `[正版检测-前端] 步骤3：✗ 静默刷新失败:`,
-              e instanceof Error ? e.message : String(e)
-            );
-            // 静默刷新失败 —— 继续走强制登录
-          }
-        }
-
-        if (refreshedOk) return;
-
-        // 4) 【皮肤与披风获取异常】 → 强制重新登录
-        //    只允许一个账号触发（避免多个坏账号同时弹出多个登录窗）
-        if (forcedLoginTriggered) {
-          console.log(
-            `[正版检测-前端] 步骤4：已有其他账号正在强制登录，跳过当前账号`
-          );
-          return;
-        }
-        forcedLoginTriggered = true;
-        console.log(
-          `[正版检测-前端] 步骤4：⟡ 开始强制执行 official.rs 微软设备码登录流程...`
-        );
-
-        try {
-          const currentVersion = ++msLoginVersionRef.current;
-          setLoginState("loading");
-          setLoginError(null);
-
-          // 先开强制登录弹窗，再请求 DeviceCode，避免看起来"卡住"
-          setForcedMicrosoftLoginMode(true);
-          setForcedMicrosoftLoginMessage(
-            `检测到你的微软正版账号「${pName}」无法正常获取皮肤与披风（${probeErrorMsg}）。` +
-              `这通常是由于登录凭据失效（长时间未使用或在其他设备/启动器上登录过）导致的。` +
-              `必须完成微软正版账号重新登录后才能继续使用启动器。`
-          );
-          setForcedMicrosoftDeviceCode(null);
-
-          // 后台异步获取 DeviceCode（加 10 秒硬超时）
-          let codeInfo: DeviceCodeInfo | null = null;
-          try {
-            codeInfo = await withTimeout(
-              msRequestDeviceCode(),
-              10000,
-              "DEVICE_CODE_REQUEST"
-            );
-            console.log(
-              `[正版检测-前端] 步骤4：✓ 获取设备授权码成功 user_code=${codeInfo.user_code}`
-            );
-          } catch (reqErr) {
-            const msg =
-              reqErr instanceof Error ? reqErr.message : String(reqErr);
-            console.log(
-              `[正版检测-前端] 步骤4：✗ 获取设备授权码失败:`,
-              msg
-            );
-            if (msLoginVersionRef.current === currentVersion) {
-              setLoginError(
-                `获取验证码失败（${msg.includes("TIMEOUT") ? "网络超时" : msg}），请检查网络连接或稍后重试。`
-              );
-            }
-            return;
-          }
-
-          if (msLoginVersionRef.current !== currentVersion) return;
-          setForcedMicrosoftDeviceCode(codeInfo);
-
-          // 后台轮询：登录成功后自动更新前端账号信息
-          msPollAndLogin(codeInfo.device_code, codeInfo.interval)
-            .then(async (info) => {
-              if (msLoginVersionRef.current !== currentVersion) return;
-              let avatarSrc: string | null = null;
-              if (info.uuid) {
-                try {
-                  avatarSrc = await getSkinBase64(info.uuid);
-                } catch {}
-              }
-              if (msLoginVersionRef.current !== currentVersion) return;
-              const newAccount: Account = {
-                id: `ms-${info.uuid}`,
-                name: info.name,
-                uuid: info.uuid,
-                authType: "microsoft",
-                status: AUTH_TYPE_LABELS.microsoft,
-                accessToken: info.access_token,
-                skinUrl: avatarSrc ?? undefined,
-                variant: normalizeSkinVariant(info.variant),
-              };
-              setProfiles((prev) => {
-                const filtered = prev.filter(
-                  (p) => !(p.uuid === info.uuid && p.authType === "microsoft")
-                );
-                return [...filtered, newAccount];
-              });
-              setSelectedProfile(newAccount);
-              setLoginState("idle");
-              // 登录成功：退出"强制登录"模式
-              setForcedMicrosoftLoginMode(false);
-              setForcedMicrosoftLoginMessage(null);
-              console.log(
-                `[正版检测-前端] 步骤4：✅ 强制重新登录成功！玩家=${info.name}, UUID=${info.uuid}`
-              );
-            })
-            .catch((e: unknown) => {
-              if (msLoginVersionRef.current !== currentVersion) return;
-              const msg = e instanceof Error ? e.message : String(e);
-              console.log(
-                `[正版检测-前端] 步骤4：✗ 强制重新登录失败:`,
-                msg
-              );
-              if (msg.includes("已取消登录")) {
-                // 强制登录模式下不允许取消；保留强制模式状态，只把 loading 去掉
-                setLoginState("idle");
-                setLoginError(null);
-                return;
-              }
-              setLoginError(msg);
-              setLoginState("error");
-            });
-        } catch (e: unknown) {
-          const msg = e instanceof Error ? e.message : String(e);
-          console.log(`[正版检测-前端] 步骤4：✗ 强制登录异常:`, msg);
-          setLoginError(msg);
-          setLoginState("error");
         }
       })();
     });
-  }, []);
+  }, [applyMicrosoftRefresh]);
 
   const clearForcedMicrosoftDeviceCode = useCallback(() => {
     setForcedMicrosoftDeviceCode(null);
@@ -851,6 +807,11 @@ export function AccountProvider({ children }: { children: React.ReactNode }) {
   const cancelMicrosoftLogin = useCallback(() => {
     // 递增版本号：让之前的 then/catch 回调识别到"已被取消"
     msLoginVersionRef.current++;
+    if (microsoftLaunchGateRef.current) {
+      const gate = microsoftLaunchGateRef.current;
+      microsoftLaunchGateRef.current = null;
+      gate(null);
+    }
     // 设置状态恢复为 idle，不再显示"登录中"
     setLoginState("idle");
     setLoginError(null);
@@ -888,21 +849,20 @@ export function AccountProvider({ children }: { children: React.ReactNode }) {
         clearForcedMicrosoftDeviceCode,
         manualLoginOpen,
         setManualLoginOpen,
+        prepareMicrosoftAccountForLaunch,
       }}
     >
       {children}
       {/*
         🔴 关键修复：LoginDialog 直接放在 AccountProvider 内全局渲染，
         不再依赖 AccountSwitcher 是否被用户打开过！
-        - forcedMicrosoftLoginMode=true → 强制登录模式（必须是 microsoft tab，不可关闭）
+        - forcedMicrosoftLoginMode=true → 正版启动前令牌失效提示（锁定 microsoft tab，可关闭）
         - manualLoginOpen=true         → 用户点了"添加账户"按钮的普通模式
         两者只要有一个是 true，就显示 LoginDialog。
       */}
       <LoginDialog
         open={forcedMicrosoftLoginMode || manualLoginOpen}
         onClose={() => {
-          // 强制登录模式下忽略 onClose（LoginDialog 内部也做了防护）
-          // 普通模式下：关闭手动登录弹窗
           setManualLoginOpen(false);
         }}
         forcedDeviceCode={forcedMicrosoftDeviceCode}

@@ -24,6 +24,11 @@ use auth::official::{
 };
 use auth::yissadrail::{getAccountList, getPlayerSkin, thirdPartyLogin};
 use downloader::decompression::extract_library_paths;
+use downloader::download_runtime_config::{
+    get_download_prefs, get_download_worker_config, set_custom_download_directory,
+    set_download_worker_config,
+};
+use handler::custom_download::{cancel_custom_download, start_custom_download};
 use downloader::dwPatch::{cancel_download, download_patcher};
 use downloader::version_install::{
     cancel_version_install_session, check_java_for_mc_version, start_version_install_session,
@@ -262,6 +267,12 @@ pub fn run() {
             download_mod_file,
             download_resource_file,
             cancel_mod_download,
+            get_download_worker_config,
+            get_download_prefs,
+            set_download_worker_config,
+            set_custom_download_directory,
+            start_custom_download,
+            cancel_custom_download,
             get_modpack_dir,
             save_modpack_instance,
             list_modpack_instances,

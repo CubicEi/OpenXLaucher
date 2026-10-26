@@ -196,6 +196,9 @@ function defaultLabelForEvent(eventName: string): string {
     case "mod-download-progress":
     case "mod-download-finished":
       return "资源下载";
+    case "custom-download-progress":
+    case "custom-download-finished":
+      return "自定义下载";
     case "combined-download-progress":
     case "combined-download-finished":
       return "组合安装";
@@ -568,6 +571,7 @@ export async function setupAllDownloadListeners(
     ["fabric-download-progress", "fabric-download-finished", "other"],
     ["forge-download-progress", "forge-download-finished", "other"],
     ["mod-download-progress", "mod-download-finished", "other"],
+    ["custom-download-progress", "custom-download-finished", "other"],
     ["neoforge-download-progress", "neoforge-download-finished", "other"],
     ["liteloader-download-progress", "liteloader-download-finished", "other"],
     ["quilt-download-progress", "quilt-download-finished", "other"],

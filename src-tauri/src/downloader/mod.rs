@@ -19,7 +19,7 @@ pub mod mod_loader_installer;
 pub mod mod_loader_installer_shared;
 #[allow(non_snake_case)]
 pub mod modpack_installer;
-#[allow(dead_code)]
+pub mod download_runtime_config;
 pub mod modular_download;
 #[allow(dead_code, non_snake_case)]
 pub mod neoforge_installer;

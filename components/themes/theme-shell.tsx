@@ -22,7 +22,7 @@ function routeIdFromPathname(pathname: string): CoreRouteId | undefined {
   if (path === "/download") return "core.download";
   if (path === "/process-list") return "core.process-list";
   if (path === "/tools") return "core.tools";
-  if (path === "/settings") return "core.settings";
+  if (path === "/settings" || path.startsWith("/settings/")) return "core.settings";
   if (path === "/game-settings") return "core.game-settings";
   const instanceSection = path.match(
     /^\/(?:game-settings|instance-settings)\/(mods|worlds|resources|shaders|screenshots|schematics)/,

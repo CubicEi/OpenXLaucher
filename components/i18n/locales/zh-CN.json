@@ -372,8 +372,8 @@
       "full": "完整",
       "simpleLayoutOnlyAccountRelatedContentIsShown": "简约模式：仅显示账户相关内容",
       "fullLayoutAllFeatureSectionsAreShown": "完整模式：显示所有功能模块",
-      "appearance": "外观",
-      "themeColorFontSizeAndPageBackground": "主题、配色、字体大小与页面背景"
+      "appearance": "主题",
+      "themeColorFontSizeAndPageBackground": "配色、字体大小与页面背景"
     },
     "themeManager": {
       "selectTheme": "前端主题",
@@ -417,7 +417,12 @@
       "configureModDownloadBehavior": "配置模组下载行为",
       "downloadRequiredDependencies": "自动下载必需依赖",
       "whenDownloadingModrinthOrCurseForgeModsAutomaticallyResolve": "下载 Modrinth 或 CurseForge 模组时，自动解析并下载与所选版本兼容的必需依赖；可选依赖不会下载。",
-      "toggleRequiredDependencyDownloads": "切换自动下载必需依赖"
+      "toggleRequiredDependencyDownloads": "切换自动下载必需依赖",
+      "workersPerFile": "单文件连接数",
+      "workersPerFileDescription": "对支持 HTTP Range 的直链生效；Modrinth/CurseForge 资源仍为单连接（1–32）。",
+      "maxTotalWorkers": "总连接数上限",
+      "maxTotalWorkersDescription": "所有进行中的分块下载共享此上限（1–256）；滑到最右一格为无限制。",
+      "unlimited": "无限制"
     },
     "about": {
       "updates": "版本更新",
@@ -430,10 +435,17 @@
       "installing": "安装中",
       "theLauncherIsUpToDate": "启动器已在最新版本。"
     },
+    "general": {
+      "updateDescription": "检查更新、查看说明并安装新版本",
+      "manageUpdates": "管理更新"
+    },
     "page": {
-      "title": "设置",
-      "description": "全局设置 —— 外观、主题、版本信息",
+      "title": "启动器设置",
+      "description": "通用、下载与外观相关选项",
       "categories": "分类",
+      "general": "通用",
+      "download": "下载",
+      "appearance": "外观",
       "end": "— 已经到底了 —"
     },
     "languageSection": {
@@ -442,9 +454,7 @@
       "systemLanguage": "首次使用时会根据系统语言自动选择。",
       "chinese": "中文",
       "english": "英文"
-    },
-    "language": "语言",
-    "sidebar": "侧边栏配置"
+    }
   },
   "sidebar": {
     "home": "首页",
@@ -454,7 +464,7 @@
     "downloads": "下载",
     "multiplayer": "联机",
     "tools": "工具",
-    "settings": "设置"
+    "settings": "启动器设置"
   },
   "diagnostics": {
     "title": "诊断报告",
@@ -594,6 +604,21 @@
     "deleteFailed": "删除失败",
     "tools": "工具中心",
     "createAndManageModpacks": "整合包制作与管理",
+    "customDownload": {
+      "title": "自定义下载",
+      "description": "输入直链地址并选择保存文件夹，使用启动器下载引擎（支持 Range 多连接）。",
+      "url": "下载地址",
+      "urlPlaceholder": "https://…",
+      "saveDirectory": "保存位置",
+      "browse": "浏览",
+      "fileName": "文件名",
+      "fileNamePlaceholder": "留空则从链接自动解析",
+      "start": "开始下载",
+      "downloading": "下载中…",
+      "invalidUrl": "请输入有效的 http 或 https 链接",
+      "pickDirectoryFirst": "请先选择保存位置",
+      "startFailed": "无法开始下载"
+    },
     "createAModrinthModpack": "制作 Modrinth 整合包",
     "searchAndAddFilesWithTheModrinthApiCollects": "通过 Modrinth API 搜索并添加文件，自动收集 path、sha1、sha256、fileSize、downloadUrl；可指定每个文件的客户端/服务端依赖级别。",
     "newModrinthModpack": "新建 Modrinth 整合包",
