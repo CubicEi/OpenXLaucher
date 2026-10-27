@@ -2,10 +2,12 @@
 
 import { useState, useEffect } from "react";
 import { Camera, Copy, Check, X, Plus } from "lucide-react";
+import { motion } from "framer-motion";
 import { useLaunchContext } from "@/components/launch/launch-provider";
 import { Button } from "@/components/ui/button";
 import { invoke } from "@tauri-apps/api/core";
 import { blobToBase64 } from "@/lib/file-utils";
+import { fadeSlideUp } from "@/lib/motion";
 
 interface ScreenshotFile {
   name: string;
@@ -150,7 +152,12 @@ export default function GameSettingsScreenshots() {
 
   return (
     <div className="h-full flex flex-col">
-      <div className="flex items-center justify-between px-4 py-3 border-b border-border">
+      <motion.div
+        variants={fadeSlideUp}
+        initial="initial"
+        animate="animate"
+        className="flex items-center justify-between px-4 py-3 border-b border-border"
+      >
         <div className="flex items-center gap-3">
           <div className="flex size-9 items-center justify-center rounded-xl bg-pink-500/10">
             <Camera className="size-5 text-pink-500" />
@@ -163,9 +170,15 @@ export default function GameSettingsScreenshots() {
         <Button variant="default" size="icon" className="size-8" onClick={handleUploadFiles} title="上传截图">
           <Plus className="size-3.5" />
         </Button>
-      </div>
+      </motion.div>
 
-      <div className="flex-1 overflow-auto p-4">
+      <motion.div
+        variants={fadeSlideUp}
+        initial="initial"
+        animate="animate"
+        transition={{ delay: 0.05 }}
+        className="flex-1 overflow-auto p-4"
+      >
         {loading ? (
           <div className="flex h-full items-center justify-center">
             <div className="size-8 border-2 border-border border-t-foreground rounded-full animate-spin" />
@@ -199,7 +212,7 @@ export default function GameSettingsScreenshots() {
             ))}
           </div>
         )}
-      </div>
+      </motion.div>
 
       {selectedImage && (
         <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4" onClick={() => setSelectedImage(null)}>

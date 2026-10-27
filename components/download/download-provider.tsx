@@ -17,7 +17,10 @@ import {
   makeStartDownloadFn,
 } from "./download-event-utils";
 import { isTauriRuntime } from "@/lib/tauri-runtime";
-import { flyToProcessList } from "@/components/process-list/fly-to-process-list";
+import {
+  flyToProcessList,
+  type FlyCoords,
+} from "@/components/process-list/fly-to-process-list";
 import {
   DownloadCornerNoticeProvider,
   useDownloadCornerNotice,
@@ -141,6 +144,11 @@ interface DownloadContextValue {
   ) => Promise<number>;
   /** 整合包安装（异步） */
   startModpackDownload: (modpackName: string, path: string) => Promise<number>;
+  /** 游戏设置：导出实例为整合包 */
+  startInstanceExport: (
+    options: import("@/types").InstanceExportOptions,
+    flyFrom?: FlyCoords,
+  ) => Promise<number>;
   /** 工具中心：自定义 URL 下载 */
   startCustomDownload: (opts: {
     url: string;
@@ -875,6 +883,71 @@ function DownloadProviderInner({ children }: { children: React.ReactNode }) {
     [startVersionInstallSession]
   );
 
+  const startInstanceExport = useCallback(
+    async (
+      options: import("@/types").InstanceExportOptions,
+      flyFrom?: FlyCoords,
+    ) => {
+      await ensureDownloadListeners();
+      const localTaskId = taskIdCounterRef.current++;
+      const label = `导出整合包: ${options.packName.trim() || options.instanceFolder}`;
+
+      setTasks((prev) => {
+        const task: DownloadTask = {
+          clientId: `client-${localTaskId}`,
+          taskId: localTaskId,
+          label,
+          mcVersion: "—",
+          status: "downloading",
+          progress: 0,
+          detail: "准备中…",
+          stage: "准备中…",
+          startedAt: Date.now(),
+        };
+        return [task, ...prev];
+      });
+
+      flyToProcessList(flyFrom);
+
+      try {
+        const returnedTaskId = await invoke<number>("export_instance_modpack_cmd", {
+          options,
+        });
+        if (returnedTaskId !== localTaskId) {
+          setTasks((prev) => bindBackendTaskId(prev, localTaskId, returnedTaskId));
+        }
+        const effectiveId = returnedTaskId;
+        if (cancelledLocalIdsRef.current.has(localTaskId)) {
+          cancelledLocalIdsRef.current.delete(localTaskId);
+          cancelledLocalIdsRef.current.add(effectiveId);
+          if (isTaskDismissed(localTaskId)) {
+            dismissTaskIds(effectiveId);
+          } else {
+            setTasks((prev) =>
+              prev.map((t) =>
+                t.taskId === effectiveId
+                  ? { ...t, status: "cancelled" as const, error: "已取消" }
+                  : t
+              )
+            );
+          }
+        }
+        return returnedTaskId;
+      } catch (err) {
+        console.error("启动实例导出失败:", err);
+        setTasks((prev) =>
+          prev.map((t) =>
+            t.taskId === localTaskId
+              ? { ...t, status: "error", error: String(err) }
+              : t
+          )
+        );
+        throw err;
+      }
+    },
+    [ensureDownloadListeners]
+  );
+
   const updateKindLabel = (resourceKind: string) => {
     switch (resourceKind) {
       case "resourcepack":
@@ -1096,6 +1169,7 @@ function DownloadProviderInner({ children }: { children: React.ReactNode }) {
             invoke("cancel_mod_download", { taskId }),
             invoke("cancel_custom_download", { taskId }),
             invoke("cancel_java_download", { taskId }),
+            invoke("cancel_instance_export_cmd", { taskId }),
           ]);
         }
       } catch (e) {
@@ -1145,6 +1219,7 @@ function DownloadProviderInner({ children }: { children: React.ReactNode }) {
         startModDownload,
         startResourceDownload,
         startModpackDownload,
+        startInstanceExport,
         startCustomDownload,
         startModUpdate,
         startModUpdateAll,

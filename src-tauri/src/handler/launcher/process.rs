@@ -83,6 +83,9 @@ struct GamePidEvent {
 struct GameExitedEvent {
     pid: u32,
     exit_code: i32,
+    game_dir: String,
+    /// True when the launcher requested kill/stop (not a spontaneous crash).
+    termination_requested: bool,
 }
 
 /// 解析 Minecraft log4j 日志行，提取日志级别
@@ -153,6 +156,74 @@ fn ensure_owner_executable(path: &std::path::Path) -> Result<(), String> {
         .map_err(|e| format!("无法设置 Java 执行权限: {}", e))
 }
 
+/// 将启动配置中的优先级映射并应用到已启动的游戏进程。
+/// Windows: BELOW_NORMAL / NORMAL / HIGH；失败仅记日志，不中断启动。
+fn apply_process_priority(child: &std::process::Child, priority: &str) {
+    let level = match priority {
+        "low" | "medium" | "high" => priority,
+        _ => "medium",
+    };
+
+    #[cfg(windows)]
+    {
+        use std::os::windows::io::AsRawHandle;
+        use winapi::shared::minwindef::FALSE;
+        use winapi::um::processthreadsapi::SetPriorityClass;
+        use winapi::um::winbase::{
+            BELOW_NORMAL_PRIORITY_CLASS, HIGH_PRIORITY_CLASS, NORMAL_PRIORITY_CLASS,
+        };
+
+        let class = match level {
+            "low" => BELOW_NORMAL_PRIORITY_CLASS,
+            "high" => HIGH_PRIORITY_CLASS,
+            _ => NORMAL_PRIORITY_CLASS,
+        };
+        let handle = child.as_raw_handle() as winapi::um::winnt::HANDLE;
+        let ok = unsafe { SetPriorityClass(handle, class) };
+        if ok == FALSE {
+            warn!(
+                "设置游戏进程优先级失败 (PID {}, priority={})",
+                child.id(),
+                level
+            );
+        } else {
+            info!(
+                "已设置游戏进程优先级: {} (PID {})",
+                level,
+                child.id()
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    {
+        // nice 值：低=10、中=0、高=-5（提高优先级可能因权限失败，忽略即可）
+        let nice = match level {
+            "low" => 10,
+            "high" => -5,
+            _ => 0,
+        };
+        let pid = child.id() as i32;
+        let rc = unsafe { libc::setpriority(libc::PRIO_PROCESS, pid as u32, nice) };
+        if rc != 0 {
+            warn!(
+                "设置游戏进程优先级失败 (PID {}, nice={}, priority={})",
+                pid, nice, level
+            );
+        } else {
+            info!(
+                "已设置游戏进程优先级: {} / nice={} (PID {})",
+                level, nice, pid
+            );
+        }
+    }
+
+    #[cfg(not(any(windows, unix)))]
+    {
+        let _ = (child, level);
+    }
+}
+
 pub fn run_command(
     args: Vec<String>,
     javaPath: PathBuf,
@@ -161,6 +232,7 @@ pub fn run_command(
     minecraft_version: String,
     game_directory: String,
     display_name: String,
+    process_priority: String,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // 检查 Java 路径是否存在
     if !javaPath.exists() {
@@ -221,6 +293,7 @@ pub fn run_command(
         Ok(mut child) => {
             let pid = child.id();
             info!("游戏启动成功，进程ID: {}", pid);
+            apply_process_priority(&child, &process_priority);
 
             // 从子进程取出 stdout/stderr 管道
             let stdout = child.stdout.take();
@@ -338,17 +411,29 @@ pub fn run_command(
                 info!("游戏进程 {} 已结束，退出码: {}", pid, exit_code);
 
                 // 仅清除此等待线程对应的进程。旧线程不能清除或上报新进程。
-                let (should_emit, launched_mc_version, launched_game_dir) = game_process_store()
-                    .lock()
-                    .map(|mut store| {
-                        let snapshot = store
-                            .get(&pid)
-                            .map(|gp| (gp.minecraft_version.clone(), gp.game_dir.clone()));
-                        let mc = snapshot.as_ref().map(|s| s.0.clone()).unwrap_or_default();
-                        let gd = snapshot.as_ref().map(|s| s.1.clone()).unwrap_or_default();
-                        (clear_process_if_pid(&mut store, pid), mc, gd)
-                    })
-                    .unwrap_or((false, String::new(), String::new()));
+                let (should_emit, launched_mc_version, launched_game_dir, termination_requested) =
+                    game_process_store()
+                        .lock()
+                        .map(|mut store| {
+                            let snapshot = store.get(&pid).map(|gp| {
+                                (
+                                    gp.minecraft_version.clone(),
+                                    gp.game_dir.clone(),
+                                    gp.termination_requested,
+                                )
+                            });
+                            let mc = snapshot
+                                .as_ref()
+                                .map(|s| s.0.clone())
+                                .unwrap_or_default();
+                            let gd = snapshot
+                                .as_ref()
+                                .map(|s| s.1.clone())
+                                .unwrap_or_default();
+                            let term = snapshot.map(|s| s.2).unwrap_or(false);
+                            (clear_process_if_pid(&mut store, pid), mc, gd, term)
+                        })
+                        .unwrap_or((false, String::new(), String::new(), false));
                 if should_emit {
                     if exit_code == 0 && !launched_mc_version.is_empty() {
                         crate::handler::mod_updates::on_successful_game_exit(
@@ -358,7 +443,12 @@ pub fn run_command(
                     }
                     let _ = app_handle.emit(
                         "game-exited",
-                        GameExitedEvent { pid, exit_code },
+                        GameExitedEvent {
+                            pid,
+                            exit_code,
+                            game_dir: launched_game_dir,
+                            termination_requested,
+                        },
                     );
                 }
             });

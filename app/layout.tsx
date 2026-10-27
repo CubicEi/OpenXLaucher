@@ -16,6 +16,7 @@ import { ThemeShell } from "@/components/themes/theme-shell";
 import { StartupUpdateNotifier } from "@/components/settings/startup-update-notifier";
 import { StartupJavaScan } from "@/components/settings/startup-java-scan";
 import { JavaIncompatibleDialog } from "@/components/launch/java-incompatible-dialog";
+import { GameExitErrorDialog } from "@/components/launch/game-exit-error-dialog";
 
 export const metadata: Metadata = {
   title: "OpenXLauncher",
@@ -51,6 +52,7 @@ export default function RootLayout({
                           <StartupUpdateNotifier />
                           <StartupJavaScan />
                           <JavaIncompatibleDialog />
+                          <GameExitErrorDialog />
                           <ThemeShell>{children}</ThemeShell>
                           <FlyToProcessListOverlay />
                         </ThemeRuntimeProvider>

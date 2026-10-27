@@ -21,7 +21,7 @@ import {
 } from "lucide-react";
 import { motion } from "framer-motion";
 import { useLaunchContext } from "@/components/launch/launch-provider";
-import { VersionSelectorDialog } from "@/components/launch/version-selector-dialog";
+import { SELECT_VERSION_PATH } from "@/components/launch/version-selector-panel";
 import { InstanceNameDialog } from "@/components/download/instance-name-dialog";
 import {
   invalidateInstancesCache,
@@ -42,6 +42,7 @@ import { useI18n, type Translation } from "@/components/i18n/use-i18n";
 import { GAME_SETTINGS_FEATURE_NAV } from "./feature-nav";
 import {
   createInAppLinkHandler,
+  navigateWithMainTransition,
   onInAppLinkPointerDown,
 } from "@/lib/main-navigation-transition";
 import { useDownloadManager } from "@/components/download/download-provider";
@@ -55,6 +56,10 @@ const FEATURE_META: Record<
   (typeof GAME_SETTINGS_FEATURE_NAV)[number]["href"],
   { description: Translation; icon: LucideIcon }
 > = {
+  "/game-settings/export": {
+    description: "gameSettings.exportInstanceHint",
+    icon: Package,
+  },
   "/game-settings/mods": {
     description: "gameSettings.addRemoveAndManageMods",
     icon: Puzzle,
@@ -99,7 +104,6 @@ export default function GameSettings() {
   const { config, updateConfig } = useLaunchContext();
   const { tasks } = useDownloadManager();
   const { t } = useI18n();
-  const [versionDialogOpen, setVersionDialogOpen] = useState(false);
   const [deleteVersionOpen, setDeleteVersionOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [renameDialogOpen, setRenameDialogOpen] = useState(false);
@@ -167,7 +171,6 @@ export default function GameSettings() {
         loadType: "0",
         loadName: "",
       });
-      setVersionDialogOpen(false);
       setDeleteVersionOpen(false);
       alert(
         t("gameSettings.deletedVersionDirectoryEffectiveVersionDirName", {
@@ -237,7 +240,7 @@ export default function GameSettings() {
         >
           <button
             type="button"
-            onClick={() => setVersionDialogOpen(true)}
+            onClick={() => navigateWithMainTransition(router, SELECT_VERSION_PATH)}
             className="flex min-w-0 flex-1 cursor-pointer items-center gap-3 rounded-xl px-3 py-2 text-left transition-colors hover:bg-accent/30 focus:outline-none"
             title={t("gameSettings.clickToSelectGameVersion")}
           >
@@ -354,6 +357,43 @@ export default function GameSettings() {
                         {t("gameSettings.retargetVersionStart")}
                       </Button>
                     </li>
+                    <li className="flex items-center gap-3 px-4 py-3">
+                      <div className="min-w-0 flex-1">
+                        <span className="block text-sm font-medium">
+                          {t("gameSettings.exportInstance")}
+                        </span>
+                        <span className="mt-0.5 block text-xs text-muted-foreground">
+                          {t("gameSettings.exportInstanceHint")}
+                        </span>
+                      </div>
+                      <Button
+                        size="sm"
+                        className="shrink-0"
+                        disabled={!isConfigured || !effectiveVersionDirName}
+                        onClick={() => {
+                          // #region agent log
+                          fetch("http://127.0.0.1:7931/ingest/39fb5222-8319-46c5-a5ae-7bfa2ec61c80", {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "966db3" },
+                            body: JSON.stringify({
+                              sessionId: "966db3",
+                              hypothesisId: "H3",
+                              location: "game-settings/page.tsx:exportStartButton",
+                              message: "direct router.push export (no createInAppLinkHandler)",
+                              data: {
+                                from: window.location.pathname,
+                                target: "/game-settings/export",
+                              },
+                              timestamp: Date.now(),
+                            }),
+                          }).catch(() => {});
+                          // #endregion
+                          router.push("/game-settings/export");
+                        }}
+                      >
+                        {t("gameSettings.exportInstanceStart")}
+                      </Button>
+                    </li>
                   </ul>
                 )}
               </div>
@@ -402,8 +442,6 @@ export default function GameSettings() {
           </div>
         </div>
       </div>
-
-      <VersionSelectorDialog open={versionDialogOpen} onOpenChange={setVersionDialogOpen} />
 
       <InstanceNameDialog
         open={renameDialogOpen}

@@ -43,6 +43,10 @@ use handler::config::{
     get_java_download_dir, get_launcher_paths_config, run_portable_first_launch_setup,
     save_launcher_paths_config,
 };
+use handler::instance_export::{
+    cancel_instance_export_cmd, estimate_instance_export_size_cmd, export_instance_modpack_cmd,
+    maybe_install_bundled_modpack_cmd,
+};
 use handler::fabric_handler::{
     cancel_fabric_download, download_and_install_fabric, get_fabric_api_versions,
     get_fabric_loader_versions,
@@ -226,6 +230,10 @@ pub fn run() {
             get_launcher_paths_config,
             save_launcher_paths_config,
             run_portable_first_launch_setup,
+            maybe_install_bundled_modpack_cmd,
+            export_instance_modpack_cmd,
+            cancel_instance_export_cmd,
+            estimate_instance_export_size_cmd,
             write_file,
             list_java_distributions,
             download_and_install_java,

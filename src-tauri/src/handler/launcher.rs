@@ -40,6 +40,7 @@ pub fn launch_game(
     window_width: &str,
     window_height: &str,
     custom_jvm_args: &str,
+    process_priority: Option<String>,
 ) -> Result<String, String> {
     crate::handler::system::schedule_launcher_profiles_check();
 
@@ -183,6 +184,11 @@ pub fn launch_game(
 
     let game_directory = compute_game_directory(minecraft_path, loadType, loadName);
 
+    let priority = process_priority
+        .as_deref()
+        .unwrap_or("medium")
+        .to_string();
+
     // 再启动游戏
     run_command(
         args.clone(),
@@ -192,6 +198,7 @@ pub fn launch_game(
         minecraft_version.to_string(),
         game_directory.to_string_lossy().to_string(),
         version_name.to_string(),
+        priority,
     )
     .map_err(|e| e.to_string())?;
 

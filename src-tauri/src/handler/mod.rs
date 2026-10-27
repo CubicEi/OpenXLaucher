@@ -4,6 +4,7 @@ pub mod runtime_dependencies;
 pub mod runtime_log;
 pub mod config;
 pub mod game_dir;
+pub mod instance_export;
 pub mod mod_file_registry;
 pub mod diagnostics;
 // Tauri command argument names intentionally match the existing frontend API.

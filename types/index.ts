@@ -187,6 +187,8 @@ export type LaunchConfig = {
   javaPath: string;
   /** Wrapper 路径 */
   wrapperPath: string;
+  /** 游戏进程优先级：低 / 中 / 高 */
+  processPriority: "low" | "medium" | "high";
   /** 最大内存 (MB) */
   maxMemory: string;
   /** 是否按系统可用内存自动分配 -Xmx（默认 true） */
@@ -394,4 +396,38 @@ export type LevelDatInfo = {
   mob_griefing: boolean;
   do_fire_tick: boolean;
   allow_commands: boolean;
+};
+
+/** export_instance_modpack_cmd 选项 */
+export type InstanceExportOptions = {
+  minecraftPath: string;
+  instanceFolder: string;
+  packName: string;
+  packVersion: string;
+  summary?: string;
+  format: "modrinth" | "curseforge" | string;
+  outputMode: "pack_only" | "portable_folder" | string;
+  outputPath: string;
+  includeLauncher: boolean;
+  includeMods: boolean;
+  includeModConfigs: boolean;
+  includeShaderpacks: boolean;
+  includeShaderConfigs: boolean;
+  includeResourcepacks: boolean;
+  includeGameSettings: boolean;
+  includeSaves: boolean;
+};
+
+export type InstanceExportProgressPayload = {
+  taskId: number;
+  current: number;
+  total: number;
+  message: string;
+};
+
+export type InstanceExportFinishedPayload = {
+  taskId: number;
+  success: boolean;
+  message: string;
+  outputPath?: string | null;
 };

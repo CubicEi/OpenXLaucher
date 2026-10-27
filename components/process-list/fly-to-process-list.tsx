@@ -11,7 +11,7 @@ const FLY_EVENT = "oxl:fly-to-process-list";
 const DOT_SIZE = 12;
 const DURATION_MS = 560;
 
-type FlyCoords = { x: number; y: number };
+export type FlyCoords = { x: number; y: number };
 
 type FlyParticle = {
   id: number;

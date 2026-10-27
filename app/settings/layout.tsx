@@ -3,9 +3,12 @@
 import { useEffect } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
+import { motion } from "framer-motion";
 import { cn } from "@/lib/utils";
 import { useI18n, type TranslationKey } from "@/components/i18n/use-i18n";
 import { Settings, Sparkles, Download, SlidersHorizontal } from "lucide-react";
+import { fadeSlideUp } from "@/lib/motion";
+import { SettingsCategoryMotion } from "@/components/settings/settings-category-motion";
 import {
   createInAppLinkHandler,
   normalizeAppPathname,
@@ -52,6 +55,7 @@ export default function SettingsLayout({
   const pathname = usePathname();
   const router = useRouter();
   const currentPath = normalizeAppPathname(pathname);
+  const categoryTransitionKey = currentPath;
 
   useEffect(() => {
     for (const item of NAV_ITEMS) {
@@ -61,7 +65,12 @@ export default function SettingsLayout({
 
   return (
     <div className="relative h-full overflow-hidden">
-      <div className="border-b border-border bg-background/60 px-5 py-3 backdrop-blur">
+      <motion.div
+        variants={fadeSlideUp}
+        initial="initial"
+        animate="animate"
+        className="border-b border-border bg-background/60 px-5 py-3 backdrop-blur"
+      >
         <div className="flex items-center gap-2">
           <div className="flex size-7 items-center justify-center rounded-lg bg-primary/10 text-primary">
             <Settings className="size-3.5" />
@@ -71,11 +80,17 @@ export default function SettingsLayout({
             <p className="text-xs text-muted-foreground">{t(PAGE_COPY.description)}</p>
           </div>
         </div>
-      </div>
+      </motion.div>
 
       <div className="flex h-[calc(100%-54px)]">
         <nav className="hidden w-52 shrink-0 border-r border-border bg-background/30 p-3 md:block">
-          <div className="sticky top-0 space-y-1">
+          <motion.div
+            variants={fadeSlideUp}
+            initial="initial"
+            animate="animate"
+            transition={{ delay: 0.04 }}
+            className="sticky top-0 space-y-1"
+          >
             <div className="px-2 pb-1.5 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
               {t(PAGE_COPY.category)}
             </div>
@@ -99,11 +114,15 @@ export default function SettingsLayout({
                 <span>{t(item.label)}</span>
               </Link>
             ))}
-          </div>
+          </motion.div>
         </nav>
 
-        <main className="h-full flex-1 overflow-y-auto px-4 py-4 md:px-6">
-          <div className="mx-auto max-w-2xl space-y-4">{children}</div>
+        <main className="flex h-full min-h-0 flex-1 flex-col overflow-hidden px-4 py-4 md:px-6">
+          <div className="mx-auto flex min-h-0 w-full max-w-2xl flex-1 flex-col overflow-y-auto">
+            <SettingsCategoryMotion routeKey={categoryTransitionKey}>
+              {children}
+            </SettingsCategoryMotion>
+          </div>
         </main>
       </div>
     </div>

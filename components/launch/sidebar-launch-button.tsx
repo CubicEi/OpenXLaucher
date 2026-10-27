@@ -1,10 +1,11 @@
 "use client";
 
-import { useState } from "react";
 import { Layers, Loader2, Play, Square } from "lucide-react";
+import { usePathname, useRouter } from "next/navigation";
+import { motion } from "framer-motion";
 
 import { useLaunchContext } from "@/components/launch/launch-provider";
-import { VersionSelectorDialog } from "@/components/launch/version-selector-dialog";
+import { SELECT_VERSION_PATH } from "@/components/launch/version-selector-panel";
 import {
   Tooltip,
   TooltipContent,
@@ -13,14 +14,21 @@ import {
 import { useI18n } from "@/components/i18n/use-i18n";
 import { cn } from "@/lib/utils";
 import { buttonVariants } from "@/components/ui/button";
+import {
+  navigateWithMainTransition,
+  normalizeAppPathname,
+} from "@/lib/main-navigation-transition";
 
 export function SidebarLaunchButton() {
   const { t } = useI18n();
+  const router = useRouter();
+  const pathname = usePathname();
   const { status, launchGame, cancelLaunch } = useLaunchContext();
-  const [versionOpen, setVersionOpen] = useState(false);
 
   const isLaunching = status === "preparing" || status === "launching";
   const isRunning = status === "running";
+  const isSelectVersionActive =
+    normalizeAppPathname(pathname) === normalizeAppPathname(SELECT_VERSION_PATH);
 
   const handlePrimaryClick = () => {
     if (isLaunching || isRunning) {
@@ -28,6 +36,11 @@ export function SidebarLaunchButton() {
       return;
     }
     void launchGame();
+  };
+
+  const handleSelectVersionClick = () => {
+    if (isSelectVersionActive) return;
+    navigateWithMainTransition(router, SELECT_VERSION_PATH);
   };
 
   return (
@@ -62,25 +75,32 @@ export function SidebarLaunchButton() {
           <button
             type="button"
             aria-label={t("launch.versionSelector.selectAGameVersion")}
+            aria-current={isSelectVersionActive ? "page" : undefined}
             className={cn(
               buttonVariants({ variant: "ghost", size: "icon" }),
-              "size-7 touch-manipulation text-muted-foreground"
+              "relative size-7 touch-manipulation overflow-hidden",
+              isSelectVersionActive
+                ? "text-accent-foreground"
+                : "text-muted-foreground"
             )}
-            onClick={() => setVersionOpen(true)}
+            onClick={handleSelectVersionClick}
           >
-            <Layers className="size-3.5" />
+            {isSelectVersionActive && (
+              <motion.span
+                layoutId="active-nav-indicator"
+                className="absolute inset-0 rounded-md bg-accent"
+                transition={{ type: "spring", stiffness: 380, damping: 30 }}
+              />
+            )}
+            <span className="relative z-10">
+              <Layers className="size-3.5" />
+            </span>
           </button>
         </TooltipTrigger>
         <TooltipContent side="right">
           <p>{t("launch.versionSelector.selectAGameVersion")}</p>
         </TooltipContent>
       </Tooltip>
-
-      <VersionSelectorDialog
-        open={versionOpen}
-        onOpenChange={setVersionOpen}
-        compact
-      />
     </div>
   );
 }

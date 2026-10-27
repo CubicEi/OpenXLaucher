@@ -67,6 +67,21 @@ export function isSharedLayoutRoute(path: string) {
   );
 }
 
+/**
+ * AnimatePresence key for the shell page transition.
+ * Shared-layout sections keep a stable key so in-section category/tab switches
+ * do not remount the outer fade (layouts handle that with path-keyed children).
+ */
+export function getPageTransitionKey(pathname: string) {
+  const normalized = normalizeAppPathname(pathname);
+  for (const prefix of SHARED_LAYOUT_PREFIXES) {
+    if (normalized === prefix || normalized.startsWith(`${prefix}/`)) {
+      return prefix;
+    }
+  }
+  return normalized;
+}
+
 export function isWithinSameLayoutSection(current: string, target: string) {
   const normalizedCurrent = normalizeAppPathname(current);
   const normalizedTarget = normalizeAppPathname(target);
@@ -363,10 +378,38 @@ export function createInAppLinkHandler(
     const currentPathname = normalizeAppPathname(window.location.pathname);
 
     if (shouldUseLightweightAppNavigation(currentPathname, targetPathname)) {
+      // #region agent log
+      fetch("http://127.0.0.1:7931/ingest/39fb5222-8319-46c5-a5ae-7bfa2ec61c80", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "966db3" },
+        body: JSON.stringify({
+          sessionId: "966db3",
+          hypothesisId: "H3",
+          location: "main-navigation-transition.ts:createInAppLinkHandler",
+          message: "nav lightweight pushAppRoute",
+          data: { currentPathname, targetPathname, href },
+          timestamp: Date.now(),
+        }),
+      }).catch(() => {});
+      // #endregion
       pushAppRoute(router, href);
       return;
     }
 
+    // #region agent log
+    fetch("http://127.0.0.1:7931/ingest/39fb5222-8319-46c5-a5ae-7bfa2ec61c80", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "966db3" },
+      body: JSON.stringify({
+        sessionId: "966db3",
+        hypothesisId: "H3",
+        location: "main-navigation-transition.ts:createInAppLinkHandler",
+        message: "nav full navigateWithMainTransition",
+        data: { currentPathname, targetPathname, href },
+        timestamp: Date.now(),
+      }),
+    }).catch(() => {});
+    // #endregion
     navigateWithMainTransition(router, href, options);
   };
 }

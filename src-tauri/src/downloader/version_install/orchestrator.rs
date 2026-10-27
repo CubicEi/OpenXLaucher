@@ -478,7 +478,7 @@ async fn download_modpack_files(
     let legacy = session.legacy;
     let cancel_fwd = cancel.clone();
     tokio::spawn(async move {
-        while let Some((downloaded, total, fname, _stage)) = rx.recv().await {
+        while let Some((downloaded, total, fname, stage_hint)) = rx.recv().await {
             if cancel_fwd.load(Ordering::SeqCst) {
                 break;
             }
@@ -488,19 +488,37 @@ async fn download_modpack_files(
                 (downloaded as f64 / total as f64) * 100.0
             };
             let percent = percent.clamp(0.0, 99.5);
+            let hint = stage_hint.to_ascii_lowercase();
+            let stage = if hint.contains("原版") || hint.contains("minecraft") {
+                STAGE_VANILLA
+            } else if hint.contains("加载器")
+                || hint.contains("forge")
+                || hint.contains("fabric")
+                || hint.contains("neoforge")
+                || hint.contains("quilt")
+                || hint.contains("optifine")
+                || hint.contains("liteloader")
+            {
+                STAGE_LOADER_INSTALLER
+            } else {
+                STAGE_COMMUNITY
+            };
+            let message = if !fname.is_empty() {
+                Some(fname)
+            } else if !stage_hint.is_empty() {
+                Some(stage_hint)
+            } else {
+                None
+            };
             emit_download_progress(
                 &app2,
                 &sid,
                 tid,
                 percent,
-                STAGE_COMMUNITY,
+                stage,
                 None,
                 Some(downloaded as u64),
-                if fname.is_empty() {
-                    None
-                } else {
-                    Some(fname)
-                },
+                message,
                 legacy,
             );
         }

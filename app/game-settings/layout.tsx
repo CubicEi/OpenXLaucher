@@ -9,6 +9,7 @@ import {
   GAME_SETTINGS_CORE_HREF,
   GAME_SETTINGS_FEATURE_NAV,
 } from "./feature-nav";
+import { SharedSectionRouteTransition } from "@/components/layout/shared-section-route-transition";
 import {
   createInAppLinkHandler,
   normalizeAppPathname,
@@ -49,7 +50,7 @@ export default function GameSettingsLayout({
           {NAV_ITEMS.map((item) => (
             <Link
               key={item.href}
-              href={item.href}
+              href={toAppHref(item.href)}
               onPointerDown={onInAppLinkPointerDown}
               onClick={createInAppLinkHandler(router, item.href, {
                 skipIfSamePath: true,
@@ -67,8 +68,11 @@ export default function GameSettingsLayout({
           ))}
         </div>
       </div>
-      {/* 页面内容 */}
-      <div className="flex-1 overflow-hidden">{children}</div>
+      <div className="flex-1 overflow-hidden">
+        <SharedSectionRouteTransition debugSegment="game-settings" className="h-full w-full">
+          {children}
+        </SharedSectionRouteTransition>
+      </div>
     </div>
   );
 }

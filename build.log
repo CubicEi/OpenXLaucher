@@ -1,6 +1,6 @@
 
 
-> openxlauncher@0.4.1-beta build D:\programing\MCprojects\OpenXLauncher
+> openxlauncher@1.0.0-pre.1 build D:\programing\MCprojects\OpenXLauncher
 > next build
 
 ▲ Next.js 16.1.6 (Turbopack)
@@ -8,14 +8,14 @@
   · optimizePackageImports
 
   Creating an optimized production build ...
-✓ Compiled successfully in 26.3s
+✓ Compiled successfully in 8.5s
   Running TypeScript ...
   Collecting page data using 11 workers ...
-  Generating static pages using 11 workers (0/37) ...
-  Generating static pages using 11 workers (9/37) 
-  Generating static pages using 11 workers (18/37) 
-  Generating static pages using 11 workers (27/37) 
-✓ Generating static pages using 11 workers (37/37) in 1861.7ms
+  Generating static pages using 11 workers (0/39) ...
+  Generating static pages using 11 workers (9/39) 
+  Generating static pages using 11 workers (19/39) 
+  Generating static pages using 11 workers (29/39) 
+✓ Generating static pages using 11 workers (39/39) in 737.1ms
   Finalizing page optimization ...
 
 Route (app)
@@ -29,6 +29,7 @@ Route (app)
 ├ ○ /download/detail
 ├ ○ /game-settings
 ├ ○ /game-settings/datapacks
+├ ○ /game-settings/export
 ├ ○ /game-settings/modpacks
 ├ ○ /game-settings/mods
 ├ ○ /game-settings/resources
@@ -47,6 +48,7 @@ Route (app)
 ├ ○ /launch
 ├ ○ /multiplayer
 ├ ○ /process-list
+├ ○ /select-version
 ├ ○ /settings
 ├ ○ /settings/appearance
 ├ ○ /settings/download

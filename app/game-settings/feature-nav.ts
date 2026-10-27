@@ -2,6 +2,10 @@ import type { Translation } from "@/components/i18n/use-i18n";
 
 /** 游戏设置子功能入口（顶部导航与核心页词条列表共用） */
 export const GAME_SETTINGS_FEATURE_NAV = [
+  {
+    href: "/game-settings/export",
+    label: "gameSettings.exportInstance" as Translation,
+  },
   { href: "/game-settings/mods", label: "panel.mods" as Translation },
   {
     href: "/game-settings/resources",

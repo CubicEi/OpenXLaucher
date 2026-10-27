@@ -4,6 +4,13 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { useLaunchContext, DEFAULT_INITIAL_JVM_ARGS } from "@/components/launch/launch-provider";
 import { useAccountContext } from "@/components/accounts/account-provider";
 import { VersionSelectorDialog } from "@/components/launch/version-selector-dialog";
@@ -22,10 +29,11 @@ import {
   Search,
   RotateCcw,
   ChevronRight,
+  Gauge,
 } from "lucide-react";
 import { useState, useEffect, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import type { LauncherPathsConfig } from "@/types";
+import type { LaunchConfig, LauncherPathsConfig } from "@/types";
 import { useI18n } from "@/components/i18n/use-i18n";
 import {
   JAVA_AUTO_SELECT_PATH,
@@ -507,31 +515,35 @@ ${result}
           )}
         </div>
 
-        {/* Wrapper 路径（可选） */}
+        {/* 游戏进程优先级 */}
         <div className="space-y-1.5">
           <Label className="text-xs text-muted-foreground">
-            <Package className="size-3" />
-            {t("launch.config.wrapperPath")}
-            <span className="text-[10px] text-muted-foreground/60 ml-1">{t("launch.config.optional")}</span>
+            <Gauge className="size-3" />
+            {t("launch.config.processPriority")}
           </Label>
-          <div className="flex gap-2">
-            <Input
-              placeholder={t("launch.config.leaveEmptyToLaunchDirectlyWithoutAWrapper")}
-              value={config.wrapperPath}
-              onChange={(e) =>
-                updateConfig({ wrapperPath: e.target.value })
-              }
-              className="text-xs h-8"
-            />
-            <Button
-              variant="outline"
-              size="sm"
-              className="shrink-0 h-8 px-2"
-              onClick={() => handleOpenFileDialog("wrapperPath")}
-            >
-              <FolderOpen className="size-3.5" />
-            </Button>
-          </div>
+          <Select
+            value={config.processPriority || "medium"}
+            onValueChange={(value) =>
+              updateConfig({
+                processPriority: value as LaunchConfig["processPriority"],
+              })
+            }
+          >
+            <SelectTrigger size="sm" className="h-8 w-full text-xs">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="low" className="text-xs">
+                {t("launch.config.processPriorityLow")}
+              </SelectItem>
+              <SelectItem value="medium" className="text-xs">
+                {t("launch.config.processPriorityMedium")}
+              </SelectItem>
+              <SelectItem value="high" className="text-xs">
+                {t("launch.config.processPriorityHigh")}
+              </SelectItem>
+            </SelectContent>
+          </Select>
         </div>
 
         {/* 最大内存 */}
@@ -678,7 +690,7 @@ ${result}
               {t("launch.config.resetJvmArgs")}
             </Button>
           </summary>
-          <div className="mt-3 space-y-2 border-l-2 border-border pl-3">
+          <div className="mt-3 space-y-3 border-l-2 border-border pl-3">
             <textarea
               spellCheck={false}
               value={config.customJvmArgs}
@@ -689,14 +701,40 @@ ${result}
             <p className="text-[11px] leading-tight text-muted-foreground/80 whitespace-pre-line">
               {t("launch.config.jvmArgsDescription")}
             </p>
+            {/* Wrapper 路径（可选，折叠在 JVM 参数内） */}
+            <div className="space-y-1.5">
+              <Label className="text-xs text-muted-foreground">
+                <Package className="size-3" />
+                {t("launch.config.wrapperPath")}
+                <span className="text-[10px] text-muted-foreground/60 ml-1">{t("launch.config.optional")}</span>
+              </Label>
+              <div className="flex gap-2">
+                <Input
+                  placeholder={t("launch.config.leaveEmptyToLaunchDirectlyWithoutAWrapper")}
+                  value={config.wrapperPath}
+                  onChange={(e) =>
+                    updateConfig({ wrapperPath: e.target.value })
+                  }
+                  className="text-xs h-8"
+                />
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="shrink-0 h-8 px-2"
+                  onClick={() => handleOpenFileDialog("wrapperPath")}
+                >
+                  <FolderOpen className="size-3.5" />
+                </Button>
+              </div>
+            </div>
           </div>
         </details>
 
-        {/* 玩家身份（可折叠） */}
+        {/* 高级账户设置（可折叠） */}
         <details className="group">
           <summary className="cursor-pointer text-xs text-muted-foreground hover:text-foreground transition-colors select-none flex items-center list-none">
             <ChevronRight className="size-3 -translate-x-0.5 transition-transform duration-200 group-open:rotate-90 text-muted-foreground/80" />
-            <span className="inline-flex items-center">{t("launch.config.advancedPlayerIdentity")}</span>
+            <span className="inline-flex items-center">{t("launch.config.advancedAccountSettings")}</span>
           </summary>
           <div className="mt-3 space-y-3 border-l-2 border-border pl-3">
             <div className="space-y-1.5">
@@ -740,16 +778,6 @@ ${result}
                 className="text-xs h-8"
               />
             </div>
-          </div>
-        </details>
-
-        {/* 第三方验证（可折叠） */}
-        <details className="group">
-          <summary className="cursor-pointer text-xs text-muted-foreground hover:text-foreground transition-colors select-none flex items-center list-none">
-            <ChevronRight className="size-3 -translate-x-0.5 transition-transform duration-200 group-open:rotate-90 text-muted-foreground/80" />
-            <span className="inline-flex items-center">{t("launch.config.advancedThirdPartyAuthentication")}</span>
-          </summary>
-          <div className="mt-3 space-y-3 border-l-2 border-border pl-3">
             <div className="space-y-1.5">
               <Label className="text-xs text-muted-foreground">
                 {t("launch.config.authlibInjectorPath")}

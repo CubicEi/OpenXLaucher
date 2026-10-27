@@ -178,16 +178,17 @@ pub fn emit_download_progress(
     let _ = app.emit("version-install-progress", &payload);
 
     if let Some(ev) = legacy.progress_event() {
+        let current_file = message.clone().filter(|m| !m.is_empty() && m.as_str() != label);
         let legacy_payload = LegacyProgressPayload {
             task_id: download_task_id,
             percent,
             stage: Some(label),
-            message,
+            message: message.clone(),
             downloaded,
             speed,
             total_files: None,
             downloaded_files: None,
-            current_file: None,
+            current_file,
         };
         let _ = app.emit(ev, legacy_payload);
     }

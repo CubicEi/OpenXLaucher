@@ -24,6 +24,7 @@ interface ProgressPayload {
   speed?: number;
   downloaded?: number;
   total?: number;
+  current_file?: string;
 }
 
 interface FinishedPayload {
@@ -155,9 +156,16 @@ function resolveProgressLabels(payload: ProgressPayload): {
 } {
   const stage = payload.stage?.trim() || undefined;
   const message = payload.message?.trim() || undefined;
+  const currentFile = payload.current_file?.trim() || undefined;
+  const detail =
+    stage && currentFile && currentFile !== stage
+      ? `${stage} · ${currentFile}`
+      : stage && message && message !== stage
+        ? `${stage} · ${message}`
+        : message || currentFile || stage;
   return {
-    stage,
-    detail: message ?? stage,
+    stage: detail,
+    detail,
   };
 }
 
@@ -205,6 +213,9 @@ function defaultLabelForEvent(eventName: string): string {
     case "modpack-progress":
     case "modpack-finished":
       return "整合包";
+    case "instance-export-progress":
+    case "instance-export-finished":
+      return "导出整合包";
     default:
       return "下载任务";
   }
@@ -631,6 +642,64 @@ export async function setupAllDownloadListeners(
     })
   );
 
+  const exportProgressHandler = makeProgressHandler(
+    setTasks,
+    cancelledRef,
+    "instance-export-progress"
+  );
+  unlistens.push(
+    await listen(
+      "instance-export-progress",
+      (event: {
+        payload: {
+          taskId: number;
+          current: number;
+          total: number;
+          message: string;
+        };
+      }) => {
+        const p = event.payload;
+        const total = p.total > 0 ? p.total : 1;
+        const percent = Math.min(100, (p.current / total) * 100);
+        exportProgressHandler({
+          payload: {
+            task_id: p.taskId,
+            percent,
+            message: p.message,
+            stage: p.message,
+          },
+        });
+      }
+    )
+  );
+  unlistens.push(
+    await listen("instance-export-finished", (event) => {
+      const payload = event.payload as {
+        taskId: number;
+        success: boolean;
+        message: string;
+      };
+      clearSpeedSample(payload.taskId);
+      if (isTaskDismissed(payload.taskId)) return;
+      setTasks((prev) => {
+        if (isTaskDismissed(payload.taskId)) return prev;
+        return dedupeSameTaskId(prev, payload.taskId).map((task) =>
+          task.taskId === payload.taskId && task.status !== "cancelled"
+            ? {
+                ...task,
+                status: (payload.success ? "success" : "error") as DownloadTaskStatus,
+                progress: payload.success ? 100 : task.progress,
+                stage: payload.success ? "完成" : undefined,
+                detail: payload.message,
+                error: payload.success ? undefined : String(payload.message),
+                speedBps: undefined,
+              }
+            : task
+        );
+      });
+    })
+  );
+
   // —— Dual-task version-install session events ——
   unlistens.push(
     await listen<VersionInstallSessionStartedPayload>(
@@ -805,11 +874,15 @@ export async function setupAllDownloadListeners(
         return;
       }
 
+      // Prefer a concrete file/detail message over the coarse stage label
+      // (e.g. modpack community downloads: "下载社区资源" + "foo.jar").
+      const stageLabel = payload.stage_label?.trim();
+      const message = payload.message?.trim();
+      const stageKey = payload.stage?.trim();
       const stageText =
-        payload.stage_label?.trim() ||
-        payload.message?.trim() ||
-        payload.stage?.trim() ||
-        undefined;
+        stageLabel && message && message !== stageLabel
+          ? `${stageLabel} · ${message}`
+          : stageLabel || message || stageKey || undefined;
       const isInstall = payload.role === "install" || payload.progress_mode === "indeterminate";
       const percent =
         typeof payload.percent === "number" && Number.isFinite(payload.percent)

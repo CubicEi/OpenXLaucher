@@ -45,6 +45,7 @@ const DEFAULT_LAUNCH_CONFIG: LaunchConfig = {
   minecraftPath: "",
   javaPath: "",
   wrapperPath: "",
+  processPriority: "medium",
   maxMemory: "2048",
   autoMemory: true,
   versionName: "",
@@ -211,6 +212,12 @@ export function LaunchProvider({ children }: { children: React.ReactNode }) {
           selected_java_path: string;
           selected_minecraft_path: string;
         }>("get_launcher_paths_config");
+
+        try {
+          await invoke<string | null>("maybe_install_bundled_modpack_cmd");
+        } catch (bundledErr) {
+          console.warn("bundled modpack install:", bundledErr);
+        }
 
         if (cancelled) return;
 
@@ -423,7 +430,7 @@ export function LaunchProvider({ children }: { children: React.ReactNode }) {
     if (!isTauriRuntime()) return;
 
     let unlisten: (() => void) | null = null;
-    listen<{ pid: number; exitCode: number } | number>("game-exited", (event) => {
+    listen<{ pid: number; exitCode: number; gameDir?: string } | number>("game-exited", (event) => {
       const payload = event.payload;
       const exitCode = typeof payload === "number" ? payload : payload.exitCode;
       const pid = typeof payload === "number" ? null : payload.pid;
@@ -718,6 +725,7 @@ export function LaunchProvider({ children }: { children: React.ReactNode }) {
           windowWidth: merged.windowWidth || "873",
           windowHeight: merged.windowHeight || "486",
           customJvmArgs: merged.customJvmArgs || "",
+          processPriority: merged.processPriority || "medium",
         });
 
         setLastCommandArgs(result);

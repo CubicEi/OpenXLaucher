@@ -9,7 +9,7 @@ import { VersionList } from "@/components/download/version-list";
 import { VersionFilterBar } from "@/components/download/version-filter-bar";
 import { RetargetVersionDetail } from "@/components/retarget/retarget-version-detail";
 import { useMinecraftVersions } from "@/hooks/use-minecraft-versions";
-import { fadeIn, slideInFromLeft, slideInFromRight } from "@/lib/motion";
+import { fadeIn, fadeSlideUp, slideInFromLeft, slideInFromRight } from "@/lib/motion";
 import { useI18n } from "@/components/i18n/use-i18n";
 import {
   getRetargetContext,
@@ -110,7 +110,12 @@ export default function RetargetVersionPage() {
           animate="animate"
           exit="exit"
         >
-          <div className="flex shrink-0 items-center gap-3">
+          <motion.div
+            variants={fadeSlideUp}
+            initial="initial"
+            animate="animate"
+            className="flex shrink-0 items-center gap-3"
+          >
             <Button
               variant="ghost"
               size="icon-sm"
@@ -134,7 +139,7 @@ export default function RetargetVersionPage() {
                 })}
               </p>
             </div>
-          </div>
+          </motion.div>
 
           <div className="flex min-h-0 flex-1 flex-col gap-4">
             <div className="shrink-0">
