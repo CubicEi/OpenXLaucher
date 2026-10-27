@@ -46,7 +46,7 @@ const NAV_ITEM_BASE: Omit<NavItem, "label">[] = [
   { id: "launch", icon: <Rocket className="size-4" />, href: "/launch" },
   { id: "download", icon: <Download className="size-4" />, href: "/download" },
   { id: "tools", icon: <Wrench className="size-4" />, href: "/tools" },
-  { id: "settings", icon: <Settings className="size-4" />, href: "/settings" },
+  { id: "settings", icon: <Settings className="size-4" />, href: "/settings/general" },
 ]
 
 const NAV_LABELS: Record<string, TranslationKey> = {

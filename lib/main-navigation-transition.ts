@@ -3,7 +3,9 @@
 import type { MouseEvent as ReactMouseEvent } from "react";
 import type { AppRouterInstance } from "next/dist/shared/lib/app-router-context.shared-runtime";
 
+import { animTrace } from "@/lib/animation-trace";
 import { appLog } from "@/lib/runtime-log";
+import { isTauriRuntime } from "@/lib/tauri-runtime";
 
 export type ActiveMainNavigation = {
   controller: AbortController;
@@ -19,10 +21,12 @@ const FADE_OUT_MS = 80;
 const FADE_IN_MS = 150;
 const FIRST_MUTATION_SETTLE_MS = 80;
 const TIMEOUT_MS = 1200;
-/** Static export + WebView: client `router.push` can stall; hard-assign if URL unchanged. */
-const APP_ROUTE_PUSH_FALLBACK_MS = 50;
+/** Poll after `router.push` before hard-assign (non-lightweight navigations only). */
+const APP_ROUTE_PUSH_POLL_MS = 32;
+const APP_ROUTE_PUSH_FALLBACK_MS = 800;
 
 let activeNavigation: ActiveMainNavigation | null = null;
+let pushAppRoutePollTimer: number | undefined;
 
 export function getActiveMainNavigation() {
   return activeNavigation;
@@ -94,36 +98,90 @@ export function isWithinSameLayoutSection(current: string, target: string) {
   return false;
 }
 
-/** Game / instance settings use a persistent layout — skip full-page fade when entering from anywhere. */
+/** Tab switches inside the same layout (e.g. /game-settings → /game-settings/export), not home → game-settings. */
 export function shouldUseLightweightAppNavigation(current: string, target: string) {
   const normalizedCurrent = normalizeAppPathname(current);
   const normalizedTarget = normalizeAppPathname(target);
   if (normalizedCurrent === normalizedTarget) return false;
-  return (
-    isSharedLayoutRoute(normalizedTarget) ||
-    isWithinSameLayoutSection(normalizedCurrent, normalizedTarget)
-  );
+  return isWithinSameLayoutSection(normalizedCurrent, normalizedTarget);
+}
+
+/**
+ * Shared-layout tab / category links (settings, game-settings): use hard navigation immediately.
+ * In Tauri + static export, `router.push` often never updates `location.pathname` until assign.
+ */
+export function pushAppRouteLightweight(href: string) {
+  if (typeof window === "undefined") return;
+
+  if (pushAppRoutePollTimer !== undefined) {
+    window.clearInterval(pushAppRoutePollTimer);
+    pushAppRoutePollTimer = undefined;
+  }
+
+  const pushHref = toAppHref(href);
+  const targetPathname = normalizeAppPathname(href);
+  const from = normalizeAppPathname(window.location.pathname);
+
+  if (from === targetPathname) {
+    return;
+  }
+
+  animTrace("Nav/pushAppRouteLightweight", "assign", {
+    href,
+    pushHref,
+    targetPathname,
+    from,
+  });
+  window.location.assign(pushHref);
 }
 
 /** Client navigation with trailing-slash href; falls back to `location.assign` when push stalls. */
 export function pushAppRoute(router: AppRouterInstance, href: string) {
   const pushHref = toAppHref(href);
   const targetPathname = normalizeAppPathname(href);
+  animTrace("Nav/pushAppRoute", "push", {
+    href,
+    pushHref,
+    targetPathname,
+    from: typeof window !== "undefined" ? window.location.pathname : "",
+  });
   router.push(pushHref);
 
   if (typeof window === "undefined") return;
 
-  window.setTimeout(() => {
+  if (pushAppRoutePollTimer !== undefined) {
+    window.clearInterval(pushAppRoutePollTimer);
+    pushAppRoutePollTimer = undefined;
+  }
+
+  const startedAt = Date.now();
+  pushAppRoutePollTimer = window.setInterval(() => {
     if (pathnameMatchesNavigationTarget(window.location.pathname, targetPathname)) {
+      if (pushAppRoutePollTimer !== undefined) {
+        window.clearInterval(pushAppRoutePollTimer);
+        pushAppRoutePollTimer = undefined;
+      }
+      animTrace("Nav/pushAppRoute", "settled", {
+        targetPathname,
+        elapsedMs: Date.now() - startedAt,
+      });
       return;
+    }
+    if (Date.now() - startedAt < APP_ROUTE_PUSH_FALLBACK_MS) {
+      return;
+    }
+    if (pushAppRoutePollTimer !== undefined) {
+      window.clearInterval(pushAppRoutePollTimer);
+      pushAppRoutePollTimer = undefined;
     }
     appLog.warn("nav", "pushAppRoute assign fallback", {
       pushHref,
       pathname: window.location.pathname,
       targetPathname,
+      elapsedMs: Date.now() - startedAt,
     });
     window.location.assign(pushHref);
-  }, APP_ROUTE_PUSH_FALLBACK_MS);
+  }, APP_ROUTE_PUSH_POLL_MS);
 }
 
 export function isDescendantAppPath(ancestor: string, descendant: string) {
@@ -278,7 +336,7 @@ export function navigateWithMainTransition(
 
   const pushHref = toAppHref(href);
   if (shouldUseLightweightAppNavigation(currentPathname, targetPathname)) {
-    pushAppRoute(router, href);
+    pushAppRouteLightweight(href);
     return;
   }
 
@@ -321,6 +379,18 @@ export function navigateWithMainTransition(
 
   root.style.transition = `opacity ${FADE_OUT_MS}ms ease-out`;
   root.style.opacity = "0";
+
+  if (isTauriRuntime()) {
+    animTrace("Nav/navigateWithMainTransition", "tauri-assign-after-fade", {
+      targetPathname,
+      pushHref,
+      from: currentPathname,
+    });
+    window.setTimeout(() => {
+      window.location.assign(pushHref);
+    }, FADE_OUT_MS);
+    return;
+  }
 
   const main = document.querySelector<HTMLElement>("main");
   router.push(pushHref);
@@ -378,38 +448,23 @@ export function createInAppLinkHandler(
     const currentPathname = normalizeAppPathname(window.location.pathname);
 
     if (shouldUseLightweightAppNavigation(currentPathname, targetPathname)) {
-      // #region agent log
-      fetch("http://127.0.0.1:7931/ingest/39fb5222-8319-46c5-a5ae-7bfa2ec61c80", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "966db3" },
-        body: JSON.stringify({
-          sessionId: "966db3",
-          hypothesisId: "H3",
-          location: "main-navigation-transition.ts:createInAppLinkHandler",
-          message: "nav lightweight pushAppRoute",
-          data: { currentPathname, targetPathname, href },
-          timestamp: Date.now(),
-        }),
-      }).catch(() => {});
-      // #endregion
-      pushAppRoute(router, href);
+      animTrace("Nav/createInAppLinkHandler", "lightweight", {
+        currentPathname,
+        targetPathname,
+        href,
+        lightweight: true,
+        sameSection: isWithinSameLayoutSection(currentPathname, targetPathname),
+      });
+      pushAppRouteLightweight(href);
       return;
     }
 
-    // #region agent log
-    fetch("http://127.0.0.1:7931/ingest/39fb5222-8319-46c5-a5ae-7bfa2ec61c80", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "966db3" },
-      body: JSON.stringify({
-        sessionId: "966db3",
-        hypothesisId: "H3",
-        location: "main-navigation-transition.ts:createInAppLinkHandler",
-        message: "nav full navigateWithMainTransition",
-        data: { currentPathname, targetPathname, href },
-        timestamp: Date.now(),
-      }),
-    }).catch(() => {});
-    // #endregion
+    animTrace("Nav/createInAppLinkHandler", "full-transition", {
+      currentPathname,
+      targetPathname,
+      href,
+      lightweight: false,
+    });
     navigateWithMainTransition(router, href, options);
   };
 }

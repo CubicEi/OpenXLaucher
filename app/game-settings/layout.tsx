@@ -9,7 +9,8 @@ import {
   GAME_SETTINGS_CORE_HREF,
   GAME_SETTINGS_FEATURE_NAV,
 } from "./feature-nav";
-import { SharedSectionRouteTransition } from "@/components/layout/shared-section-route-transition";
+import { SectionContentMotion } from "@/components/layout/section-content-motion";
+import { useAnimRenderTrace } from "@/lib/animation-trace-hooks";
 import {
   createInAppLinkHandler,
   normalizeAppPathname,
@@ -34,6 +35,8 @@ export default function GameSettingsLayout({
   const router = useRouter();
   const currentPath = normalizeAppPathname(pathname);
   const { t } = useI18n();
+
+  useAnimRenderTrace("GameSettingsLayout", { currentPath });
 
   useEffect(() => {
     for (const item of NAV_ITEMS) {
@@ -69,9 +72,9 @@ export default function GameSettingsLayout({
         </div>
       </div>
       <div className="flex-1 overflow-hidden">
-        <SharedSectionRouteTransition debugSegment="game-settings" className="h-full w-full">
+        <SectionContentMotion segment="game-settings" className="h-full w-full">
           {children}
-        </SharedSectionRouteTransition>
+        </SectionContentMotion>
       </div>
     </div>
   );

@@ -3,12 +3,11 @@
 import { useEffect } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { motion } from "framer-motion";
 import { cn } from "@/lib/utils";
 import { useI18n, type TranslationKey } from "@/components/i18n/use-i18n";
 import { Settings, Sparkles, Download, SlidersHorizontal } from "lucide-react";
-import { fadeSlideUp } from "@/lib/motion";
-import { SettingsCategoryMotion } from "@/components/settings/settings-category-motion";
+import { SectionContentMotion } from "@/components/layout/section-content-motion";
+import { useAnimRenderTrace } from "@/lib/animation-trace-hooks";
 import {
   createInAppLinkHandler,
   normalizeAppPathname,
@@ -55,7 +54,7 @@ export default function SettingsLayout({
   const pathname = usePathname();
   const router = useRouter();
   const currentPath = normalizeAppPathname(pathname);
-  const categoryTransitionKey = currentPath;
+  useAnimRenderTrace("SettingsLayout", { currentPath });
 
   useEffect(() => {
     for (const item of NAV_ITEMS) {
@@ -65,12 +64,7 @@ export default function SettingsLayout({
 
   return (
     <div className="relative h-full overflow-hidden">
-      <motion.div
-        variants={fadeSlideUp}
-        initial="initial"
-        animate="animate"
-        className="border-b border-border bg-background/60 px-5 py-3 backdrop-blur"
-      >
+      <div className="border-b border-border bg-background/60 px-5 py-3 backdrop-blur">
         <div className="flex items-center gap-2">
           <div className="flex size-7 items-center justify-center rounded-lg bg-primary/10 text-primary">
             <Settings className="size-3.5" />
@@ -80,17 +74,11 @@ export default function SettingsLayout({
             <p className="text-xs text-muted-foreground">{t(PAGE_COPY.description)}</p>
           </div>
         </div>
-      </motion.div>
+      </div>
 
       <div className="flex h-[calc(100%-54px)]">
         <nav className="hidden w-52 shrink-0 border-r border-border bg-background/30 p-3 md:block">
-          <motion.div
-            variants={fadeSlideUp}
-            initial="initial"
-            animate="animate"
-            transition={{ delay: 0.04 }}
-            className="sticky top-0 space-y-1"
-          >
+          <div className="sticky top-0 space-y-1">
             <div className="px-2 pb-1.5 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
               {t(PAGE_COPY.category)}
             </div>
@@ -114,14 +102,14 @@ export default function SettingsLayout({
                 <span>{t(item.label)}</span>
               </Link>
             ))}
-          </motion.div>
+          </div>
         </nav>
 
         <main className="flex h-full min-h-0 flex-1 flex-col overflow-hidden px-4 py-4 md:px-6">
           <div className="mx-auto flex min-h-0 w-full max-w-2xl flex-1 flex-col overflow-y-auto">
-            <SettingsCategoryMotion routeKey={categoryTransitionKey}>
+            <SectionContentMotion segment="settings" className="space-y-4">
               {children}
-            </SettingsCategoryMotion>
+            </SectionContentMotion>
           </div>
         </main>
       </div>

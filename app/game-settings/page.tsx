@@ -370,26 +370,7 @@ export default function GameSettings() {
                         size="sm"
                         className="shrink-0"
                         disabled={!isConfigured || !effectiveVersionDirName}
-                        onClick={() => {
-                          // #region agent log
-                          fetch("http://127.0.0.1:7931/ingest/39fb5222-8319-46c5-a5ae-7bfa2ec61c80", {
-                            method: "POST",
-                            headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "966db3" },
-                            body: JSON.stringify({
-                              sessionId: "966db3",
-                              hypothesisId: "H3",
-                              location: "game-settings/page.tsx:exportStartButton",
-                              message: "direct router.push export (no createInAppLinkHandler)",
-                              data: {
-                                from: window.location.pathname,
-                                target: "/game-settings/export",
-                              },
-                              timestamp: Date.now(),
-                            }),
-                          }).catch(() => {});
-                          // #endregion
-                          router.push("/game-settings/export");
-                        }}
+                        onClick={() => router.push("/game-settings/export")}
                       >
                         {t("gameSettings.exportInstanceStart")}
                       </Button>
