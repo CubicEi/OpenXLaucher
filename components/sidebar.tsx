@@ -174,16 +174,19 @@ export function Sidebar({ className }: SidebarProps) {
       )}
     >
       <ThemeSlot registry={slots} owner={snapshot.activeOwner} slotId="app.sidebar.header" onError={reportThemeError} />
-      <ThemeSlot registry={slots} owner={snapshot.activeOwner} slotId="app.sidebar.navigation" onError={reportThemeError}>
-        <nav className="flex flex-1 flex-col items-center gap-2 p-2">
-          {topNavItems.map((item) => (
-            <NavButton key={item.href} item={item} isActive={isActive(item.href)} isExactActive={isExactActive(item.href)} />
-          ))}
-        </nav>
-      </ThemeSlot>
+      {/* Explicit flex-1 wrapper so footer stays bottom-pinned even if ThemeSlot wrappers change */}
+      <div className="flex min-h-0 flex-1 flex-col">
+        <ThemeSlot registry={slots} owner={snapshot.activeOwner} slotId="app.sidebar.navigation" onError={reportThemeError}>
+          <nav className="flex flex-1 flex-col items-center gap-2 p-2">
+            {topNavItems.map((item) => (
+              <NavButton key={item.href} item={item} isActive={isActive(item.href)} isExactActive={isExactActive(item.href)} />
+            ))}
+          </nav>
+        </ThemeSlot>
+      </div>
 
       <ThemeSlot registry={slots} owner={snapshot.activeOwner} slotId="app.sidebar.footer" onError={reportThemeError}>
-        <div className="flex flex-col items-center gap-2 border-t border-border p-2">
+        <div className="flex shrink-0 flex-col items-center gap-2 border-t border-border p-2">
           <SidebarLaunchButton />
           {bottomNavItems.map((item) => (
             <NavButton key={item.href} item={item} isActive={isActive(item.href)} isExactActive={isExactActive(item.href)} />

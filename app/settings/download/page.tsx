@@ -1,9 +1,12 @@
 "use client";
 
 import { DownloadSection } from "@/components/settings/section-download";
-import { useAnimRenderTrace } from "@/lib/animation-trace-hooks";
+import { PageEnterItem } from "@/components/layout/page-enter";
 
 export default function SettingsDownloadPage() {
-  useAnimRenderTrace("SettingsDownloadPage");
-  return <DownloadSection />;
+  return (
+    <PageEnterItem>
+      <DownloadSection />
+    </PageEnterItem>
+  );
 }

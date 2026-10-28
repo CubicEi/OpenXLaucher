@@ -2,14 +2,17 @@
 
 import { LanguageSection } from "@/components/settings/section-language";
 import { UpdateEntrySection } from "@/components/settings/section-update-entry";
-import { useAnimRenderTrace } from "@/lib/animation-trace-hooks";
+import { PageEnterItem } from "@/components/layout/page-enter";
 
 export default function SettingsGeneralPage() {
-  useAnimRenderTrace("SettingsGeneralPage");
   return (
     <>
-      <LanguageSection />
-      <UpdateEntrySection />
+      <PageEnterItem>
+        <LanguageSection />
+      </PageEnterItem>
+      <PageEnterItem>
+        <UpdateEntrySection />
+      </PageEnterItem>
     </>
   );
 }

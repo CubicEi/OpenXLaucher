@@ -85,3 +85,39 @@ export const staggerItem: Variants = {
     transition: { duration: 0.2, ease: "easeOut" },
   },
 };
+
+/** Page enter container — children stagger top-to-bottom / left-to-right in DOM order. */
+export const pageEnterContainer: Variants = {
+  initial: {},
+  animate: {
+    transition: {
+      staggerChildren: 0.055,
+      delayChildren: 0.02,
+    },
+  },
+};
+
+/** Page enter item — in-place float up (no horizontal slide). */
+export const pageEnterItem: Variants = {
+  initial: { opacity: 0, y: 12 },
+  animate: {
+    opacity: 1,
+    y: 0,
+    transition: { duration: 0.22, ease: "easeOut" },
+  },
+};
+
+/** Single-block page float (no child stagger). */
+export const pageEnterBlock: Variants = {
+  initial: { opacity: 0, y: 16 },
+  animate: {
+    opacity: 1,
+    y: 0,
+    transition: { duration: 0.25, ease: "easeOut" },
+  },
+};
+
+export function prefersReducedMotion() {
+  if (typeof window === "undefined") return false;
+  return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+}

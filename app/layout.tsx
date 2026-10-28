@@ -17,6 +17,7 @@ import { StartupUpdateNotifier } from "@/components/settings/startup-update-noti
 import { StartupJavaScan } from "@/components/settings/startup-java-scan";
 import { JavaIncompatibleDialog } from "@/components/launch/java-incompatible-dialog";
 import { GameExitErrorDialog } from "@/components/launch/game-exit-error-dialog";
+import { APPEARANCE_BOOTSTRAP_SCRIPT } from "@/lib/appearance-bootstrap-script";
 
 export const metadata: Metadata = {
   title: "OpenXLauncher",
@@ -30,8 +31,12 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="zh-CN" suppressHydrationWarning>
+      <head>
+        <script
+          dangerouslySetInnerHTML={{ __html: APPEARANCE_BOOTSTRAP_SCRIPT }}
+        />
+      </head>
       <body className="antialiased h-screen flex flex-col overflow-hidden bg-background">
-        
         <ThemeProvider
           attribute="class"
           defaultTheme="system"
@@ -46,7 +51,6 @@ export default function RootLayout({
                       <RetargetInstallListener />
                       <TooltipProvider>
                         <ThemeRuntimeProvider>
-                          {/* 非关键全局能力在首屏可交互后再加载 */}
                           <DeferredGlobalFeatures />
                           <StartupRuntimeDependencyNotifier />
                           <StartupUpdateNotifier />

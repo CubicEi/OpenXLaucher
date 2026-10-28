@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useTheme } from "next-themes";
 import {
   useSettings,
@@ -12,15 +12,26 @@ import {
   BG_OPACITY_MAX,
   type ThemeMode,
   type HomeMode,
+  type ThemeColor,
 } from "@/components/settings/settings-provider";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { ImagePlus, RotateCcw, Sparkles, Type, X, Layout } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useI18n } from "@/components/i18n/use-i18n";
 import { ThemeSwitcher } from "@/components/settings/theme-switcher";
+import { getSessionThemeColor } from "@/lib/appearance-palette";
 
 // ============================================================
 // 主题模式（浅色 / 深色 / 跟随系统）
@@ -69,61 +80,107 @@ function ThemeModeRow({
 // 主题色：简约自定义调色盘
 // ============================================================
 function ThemeColorRow({
-  value,
-  onChange,
+  savedValue,
+  onApply,
 }: {
-  value: string; // "default" 或 oklch 字符串
-  onChange: (v: string) => void;
+  /** Persisted theme color (may differ from session-active until restart). */
+  savedValue: ThemeColor;
+  onApply: (v: ThemeColor) => void;
 }) {
   const { t } = useI18n();
-  const currentColor = value === "default" ? "#1f1f1f" : oklchToHex(value) ?? "#1f1f1f";
+  const sessionActive = getSessionThemeColor();
+  const [draft, setDraft] = useState<ThemeColor>(savedValue);
+  const [restartOpen, setRestartOpen] = useState(false);
+
+  useEffect(() => {
+    setDraft(savedValue);
+  }, [savedValue]);
+
+  const previewColor =
+    draft === "default" ? "#1f1f1f" : oklchToHex(draft) ?? "#1f1f1f";
+  const canApply = draft !== savedValue;
+  const pendingRestart = savedValue !== sessionActive;
 
   const onCustomColor = (hex: string) => {
     const oklch = hexToOklch(hex);
-    if (oklch) onChange(oklch);
+    if (oklch) setDraft(oklch);
+  };
+
+  const handleApply = () => {
+    onApply(draft);
+    setRestartOpen(true);
   };
 
   return (
     <div className="space-y-2.5">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-2">
         <Label className="font-medium text-sm">{t("settings.appearance.themeColor")}</Label>
+        <Button
+          type="button"
+          size="sm"
+          className="h-7 px-2.5 text-xs shrink-0"
+          disabled={!canApply}
+          onClick={handleApply}
+        >
+          {t("settings.appearance.applyThemeColor")}
+        </Button>
       </div>
 
       <div className="flex items-center gap-3 rounded-lg border border-border bg-card p-2.5">
-        {/* 简约拾色器：一个方色块 */}
         <label className="relative shrink-0 cursor-pointer">
           <input
             type="color"
-            value={currentColor}
+            value={previewColor}
             onChange={(e) => onCustomColor(e.target.value)}
             className="h-8 w-8 cursor-pointer appearance-none rounded-md border border-border bg-transparent p-0"
           />
         </label>
 
-        {/* 水平色条：直观展示主色 */}
         <div
           className="h-2 flex-1 rounded-full"
-          style={{ backgroundColor: currentColor }}
+          style={{ backgroundColor: previewColor }}
         />
 
-        {/* 当前 HEX */}
         <span className="shrink-0 font-mono text-xs text-muted-foreground">
-          {currentColor.toUpperCase()}
+          {previewColor.toUpperCase()}
         </span>
 
-        {/* 重置 */}
-        {value !== "default" && (
+        {draft !== "default" && (
           <Button
             type="button"
             variant="ghost"
             size="sm"
-            onClick={() => onChange("default")}
+            onClick={() => setDraft("default")}
             className="h-7 px-2 text-xs shrink-0"
           >
             {t("settings.appearance.reset")}
           </Button>
         )}
       </div>
+
+      <p className="text-[11px] text-muted-foreground">
+        {pendingRestart
+          ? t("settings.appearance.themeColorRestartDescription")
+          : t("settings.appearance.themeColorApplyHint")}
+      </p>
+
+      <AlertDialog open={restartOpen} onOpenChange={setRestartOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {t("settings.appearance.themeColorRestartTitle")}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {t("settings.appearance.themeColorRestartDescription")}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogAction onClick={() => setRestartOpen(false)}>
+              {t("common.confirm")}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
@@ -379,8 +436,8 @@ export function AppearanceSection() {
         <div className="h-px bg-border" />
 
         <ThemeColorRow
-          value={appearance.themeColor}
-          onChange={(v) => update("appearance", { themeColor: v })}
+          savedValue={appearance.themeColor}
+          onApply={(v) => update("appearance", { themeColor: v })}
         />
 
         <div className="h-px bg-border" />

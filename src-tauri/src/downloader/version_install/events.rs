@@ -162,6 +162,20 @@ pub fn emit_download_progress(
     legacy: LegacyEventFamily,
 ) {
     let label = stage_label(stage);
+    let detail = message.clone().filter(|m| !m.is_empty() && m.as_str() != label.as_str());
+    let stage_text = match (&label, &detail) {
+        (l, Some(d)) if !l.is_empty() => Some(format!("{} · {}", l, d)),
+        (l, _) if !l.is_empty() => Some(l.clone()),
+        (_, Some(d)) => Some(d.clone()),
+        _ => None,
+    };
+    super::session::record_download_progress(
+        session_id,
+        percent,
+        stage_text.clone(),
+        detail.clone().or(stage_text.clone()),
+        speed,
+    );
     let payload = VersionInstallProgressPayload {
         session_id: session_id.to_string(),
         task_id: download_task_id,
@@ -202,6 +216,14 @@ pub fn emit_install_progress(
     message: Option<String>,
 ) {
     let label = stage_label(stage);
+    let detail = message.clone().filter(|m| !m.is_empty() && m.as_str() != label.as_str());
+    let stage_text = match (&label, &detail) {
+        (l, Some(d)) if !l.is_empty() => Some(format!("{} · {}", l, d)),
+        (l, _) if !l.is_empty() => Some(l.clone()),
+        (_, Some(d)) => Some(d.clone()),
+        _ => None,
+    };
+    super::session::record_install_progress(session_id, stage_text.clone(), detail.or(stage_text));
     let payload = VersionInstallProgressPayload {
         session_id: session_id.to_string(),
         task_id: install_task_id,
@@ -228,6 +250,16 @@ pub fn emit_task_finished(
     instance_name: Option<String>,
     legacy: LegacyEventFamily,
 ) {
+    let cancelled = !success
+        && error
+            .as_deref()
+            .is_some_and(|e| e == "已取消" || e.eq_ignore_ascii_case("cancelled"));
+    super::session::record_role_finished(
+        session_id,
+        matches!(role, TaskRole::Download),
+        success,
+        cancelled,
+    );
     let payload = VersionInstallFinishedPayload {
         session_id: session_id.to_string(),
         task_id,

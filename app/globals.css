@@ -172,12 +172,32 @@ body {
   position: relative;
   isolation: isolate;
   background-color: var(--background);
-  transition: background-color 0.3s ease;
   -webkit-user-select: none;
   -moz-user-select: none;
   -ms-user-select: none;
   user-select: none;
   /* 基准字号由 JS 动态写入 style.fontSize */
+}
+
+/* 主题就绪后再开背景过渡，避免启动调色闪一下 */
+html[data-theme-ready] body {
+  transition: background-color 0.3s ease;
+}
+
+/* 页面入场闸门：首帧隐藏，ready 后由 Framer 接管。
+   仅改 opacity/transform，不参与文档流高度（fill 模式用 absolute inset）。 */
+[data-page-enter]:not([data-enter-ready]) {
+  opacity: 0 !important;
+  transform: translateY(16px);
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-page-enter]:not([data-enter-ready]) {
+    opacity: 1 !important;
+    transform: none;
+    pointer-events: auto;
+  }
 }
 
 /* 恢复交互元素的文本选择能力 */

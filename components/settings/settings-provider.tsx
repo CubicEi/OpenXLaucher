@@ -1,6 +1,13 @@
 "use client";
 
 import * as React from "react";
+import {
+  lockSessionThemeColor,
+  markThemeReady,
+  reapplySessionThemeColorToDom,
+  resolveIsDark,
+  type ThemeColor as PaletteThemeColor,
+} from "@/lib/appearance-palette";
 
 // ============================================================
 // 类型定义
@@ -15,11 +22,8 @@ export interface BackgroundConfig {
   blur: number; // 0 ~ 20（整数 px）
 }
 
-// 自定义主题色：
-//   "default" = 使用 shadcn 原主题色
-//   其他字符串 = 用户选择的 oklch 色值（如 "oklch(0.6 0.2 155)"）
-//   会自动派生整站配色方案
-export type ThemeColor = "default" | string;
+// 自定义主题色：仅启动时写入 DOM，会话内锁定；外观页「应用」后需重启
+export type ThemeColor = PaletteThemeColor;
 
 export interface AppearanceSettings {
   themeId: string;
@@ -193,177 +197,8 @@ interface SettingsContextValue {
 const SettingsContext = React.createContext<SettingsContextValue | null>(null);
 
 // ============================================================
-// oklch 颜色工具 —— 从单个主色自动生成整站配色
+// DOM 应用函数（主题色见 lib/appearance-palette — 仅启动锁定）
 // ============================================================
-function parseOklch(value: string): { l: number; c: number; h: number } | null {
-  // 解析 "oklch(0.6 0.2 155)" 或 "oklch(0.6 0.2 155 / 1)"
-  const m = value.match(/oklch\(\s*([\d.]+)\s+([\d.]+)\s+([\d.]+)/);
-  if (!m) return null;
-  return { l: parseFloat(m[1]), c: parseFloat(m[2]), h: parseFloat(m[3]) };
-}
-
-function makeOklch(l: number, c: number, h: number, alpha?: number): string {
-  if (alpha !== undefined && alpha < 1) {
-    return `oklch(${l.toFixed(3)} ${c.toFixed(3)} ${h.toFixed(3)} / ${alpha.toFixed(2)})`;
-  }
-  return `oklch(${l.toFixed(3)} ${c.toFixed(3)} ${h.toFixed(3)})`;
-}
-
-// 根据给定的主色 oklch 生成整站配色方案
-function derivePalette(primaryOklch: string, isDark: boolean) {
-  const primary = parseOklch(primaryOklch);
-  if (!primary) {
-    // 解析失败，回退到默认 shadcn 配色
-    return isDark ? DEFAULT_DARK : DEFAULT_LIGHT;
-  }
-
-  const { l, c, h } = primary;
-
-  if (!isDark) {
-    // 浅色模式 —— 背景/卡片也带有主色的氛围（保持 h，用极低 c）
-    const backgroundC = Math.min(0.008, c * 0.04); // 极低饱和度
-    const cardC = Math.min(0.005, c * 0.025);
-    const surfaceC = Math.min(0.012, c * 0.06);
-    const borderC = Math.min(0.02, c * 0.1);
-    const foregroundC = Math.min(0.01, c * 0.05);
-    const mutedC = Math.min(0.018, c * 0.09);
-    const accentC = Math.min(0.05, c * 0.22);
-
-    return {
-      background: makeOklch(0.995, backgroundC, h),
-      foreground: makeOklch(0.15, foregroundC, h),
-      card: makeOklch(0.995, cardC, h),
-      cardForeground: makeOklch(0.15, foregroundC, h),
-      popover: makeOklch(0.995, cardC, h),
-      popoverForeground: makeOklch(0.15, foregroundC, h),
-      primary: primaryOklch,
-      primaryForeground: l < 0.55 ? makeOklch(0.99, 0.005, h) : makeOklch(0.15, foregroundC, h),
-      secondary: makeOklch(0.96, surfaceC, h),
-      secondaryForeground: makeOklch(0.25, Math.min(0.1, c * 0.45), h),
-      muted: makeOklch(0.955, surfaceC, h),
-      mutedForeground: makeOklch(0.5, mutedC, h),
-      accent: makeOklch(0.95, accentC, h),
-      accentForeground: makeOklch(0.25, Math.min(0.12, c * 0.5), h),
-      border: makeOklch(0.91, borderC, h),
-      input: makeOklch(0.91, borderC, h),
-      ring: makeOklch(l + 0.1, c, h),
-    };
-  } else {
-    // 深色模式
-    const cardC = Math.min(0.04, c * 0.2);
-    return {
-      background: makeOklch(0.15, Math.min(0.03, c * 0.15), h),
-      foreground: makeOklch(0.98, 0.005, h),
-      card: makeOklch(0.22, cardC, h),
-      cardForeground: makeOklch(0.98, 0.005, h),
-      popover: makeOklch(0.22, cardC, h),
-      popoverForeground: makeOklch(0.98, 0.005, h),
-      primary: makeOklch(Math.min(0.92, l + 0.2), c, h),
-      primaryForeground: makeOklch(0.22, cardC, h),
-      secondary: makeOklch(0.28, Math.min(0.05, c * 0.25), h),
-      secondaryForeground: makeOklch(0.92, c * 0.2, h),
-      muted: makeOklch(0.3, Math.min(0.04, c * 0.2), h),
-      mutedForeground: makeOklch(0.75, Math.min(0.08, c * 0.4), h),
-      accent: makeOklch(0.26, Math.min(0.05, c * 0.25), h),
-      accentForeground: makeOklch(0.9, Math.min(0.08, c * 0.4), h),
-      // 深色模式下使用不透明描边色（等价于半透明白色叠加在 card 上的结果），
-      // 避免 WebKitGTK 对半透明 1px 圆角描边的抗锯齿问题导致的“粗糙”边缘
-      border: makeOklch(0.314, cardC * 0.88, h),
-      input: makeOklch(0.36, cardC * 0.82, h),
-      ring: makeOklch(Math.min(0.78, l + 0.15), c, h),
-    };
-  }
-}
-
-// 默认 shadcn 主题色
-const DEFAULT_LIGHT = {
-  background: "oklch(1 0 0)",
-  foreground: "oklch(0.147 0.004 49.25)",
-  card: "oklch(1 0 0)",
-  cardForeground: "oklch(0.147 0.004 49.25)",
-  popover: "oklch(1 0 0)",
-  popoverForeground: "oklch(0.147 0.004 49.25)",
-  primary: "oklch(0.216 0.006 56.043)",
-  primaryForeground: "oklch(0.985 0.001 106.423)",
-  secondary: "oklch(0.97 0.001 106.424)",
-  secondaryForeground: "oklch(0.216 0.006 56.043)",
-  muted: "oklch(0.97 0.001 106.424)",
-  mutedForeground: "oklch(0.553 0.013 58.071)",
-  accent: "oklch(0.97 0.001 106.424)",
-  accentForeground: "oklch(0.216 0.006 56.043)",
-  border: "oklch(0.923 0.003 48.717)",
-  input: "oklch(0.923 0.003 48.717)",
-  ring: "oklch(0.709 0.01 56.259)",
-};
-
-const DEFAULT_DARK = {
-  background: "oklch(0.147 0.004 49.25)",
-  foreground: "oklch(0.985 0.001 106.423)",
-  card: "oklch(0.216 0.006 56.043)",
-  cardForeground: "oklch(0.985 0.001 106.423)",
-  popover: "oklch(0.216 0.006 56.043)",
-  popoverForeground: "oklch(0.985 0.001 106.423)",
-  primary: "oklch(0.923 0.003 48.717)",
-  primaryForeground: "oklch(0.216 0.006 56.043)",
-  secondary: "oklch(0.268 0.007 34.298)",
-  secondaryForeground: "oklch(0.985 0.001 106.423)",
-  muted: "oklch(0.268 0.007 34.298)",
-  mutedForeground: "oklch(0.709 0.01 56.259)",
-  accent: "oklch(0.268 0.007 34.298)",
-  accentForeground: "oklch(0.985 0.001 106.423)",
-  border: "oklch(0.294 0.005 56.043)",
-  input: "oklch(0.334 0.005 56.043)",
-  ring: "oklch(0.553 0.013 58.071)",
-};
-
-// ============================================================
-// DOM 应用函数
-// ============================================================
-
-// 应用主题色到 CSS 变量
-function applyThemeColorToDom(themeColor: ThemeColor, effectiveIsDark: boolean) {
-  const root = document.documentElement;
-
-  let colors;
-  if (themeColor === "default") {
-    colors = effectiveIsDark ? DEFAULT_DARK : DEFAULT_LIGHT;
-  } else {
-    colors = derivePalette(themeColor, effectiveIsDark);
-  }
-
-  // 页面与容器
-  root.style.setProperty("--background", colors.background);
-  root.style.setProperty("--foreground", colors.foreground);
-  root.style.setProperty("--card", colors.card);
-  root.style.setProperty("--card-foreground", colors.cardForeground);
-  root.style.setProperty("--popover", colors.popover);
-  root.style.setProperty("--popover-foreground", colors.popoverForeground);
-
-  // 强调色
-  root.style.setProperty("--primary", colors.primary);
-  root.style.setProperty("--primary-foreground", colors.primaryForeground);
-  root.style.setProperty("--secondary", colors.secondary);
-  root.style.setProperty("--secondary-foreground", colors.secondaryForeground);
-  root.style.setProperty("--muted", colors.muted);
-  root.style.setProperty("--muted-foreground", colors.mutedForeground);
-  root.style.setProperty("--accent", colors.accent);
-  root.style.setProperty("--accent-foreground", colors.accentForeground);
-
-  // 边框与输入
-  root.style.setProperty("--border", colors.border);
-  root.style.setProperty("--input", colors.input);
-  root.style.setProperty("--ring", colors.ring);
-
-  // 侧栏颜色（随主题色变化）
-  root.style.setProperty("--sidebar", colors.card);
-  root.style.setProperty("--sidebar-foreground", colors.foreground);
-  root.style.setProperty("--sidebar-primary", colors.primary);
-  root.style.setProperty("--sidebar-primary-foreground", colors.primaryForeground);
-  root.style.setProperty("--sidebar-accent", colors.muted);
-  root.style.setProperty("--sidebar-accent-foreground", colors.foreground);
-  root.style.setProperty("--sidebar-border", colors.border);
-  root.style.setProperty("--sidebar-ring", colors.ring);
-}
 
 // 应用背景图
 function applyBackgroundToDom(bg: BackgroundConfig, effectiveIsDark: boolean) {
@@ -480,19 +315,34 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
     };
   }, []);
 
-  // 每次设置变化都应用到 DOM 并持久化
+  // Lock session theme color once (bootstrap already painted; do not recolor on draft edits)
+  React.useEffect(() => {
+    if (!ready) return;
+    const bootAttr = document.documentElement.getAttribute("data-session-theme-color");
+    const locked =
+      bootAttr && bootAttr.length > 0
+        ? (bootAttr as ThemeColor)
+        : settings.appearance.themeColor;
+    lockSessionThemeColor(locked);
+    markThemeReady();
+    // Intentionally only when settings become ready — never unlock mid-session
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ready]);
+
+  // Persist + apply non-theme-color appearance (mode / font / background)
   React.useEffect(() => {
     if (!ready) return;
 
-    // 当 themeMode 为 system 时，使用 DOM 上实际的 .dark class 状态来判断深色/浅色
-    // 避免 next-themes 管理的系统主题被 settings 中的旧值覆盖
-    const effectiveIsDark = settings.appearance.themeMode === "system"
-      ? document.documentElement.classList.contains("dark")
-      : settings.appearance.themeMode === "dark";
+    const effectiveIsDark =
+      settings.appearance.themeMode === "system"
+        ? document.documentElement.classList.contains("dark") ||
+          resolveIsDark("system")
+        : settings.appearance.themeMode === "dark";
 
     document.documentElement.lang = settings.general.language;
     applyThemeModeToDom(settings.appearance.themeMode);
-    applyThemeColorToDom(settings.appearance.themeColor, effectiveIsDark);
+    // Theme color CSS vars: session-locked — never apply settings.appearance.themeColor here
+    reapplySessionThemeColorToDom(effectiveIsDark);
     applyFontSizeToDom(settings.appearance.fontSize);
     applyBackgroundToDom(settings.appearance.background, effectiveIsDark);
 
@@ -515,20 +365,20 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
       });
   }, [ready, settings.download]);
 
-  // 监听 html 上的 .dark class 变化（与 next-themes / mode-toggle 协作）
+  // .dark toggles: re-paint with session-locked theme color only
   React.useEffect(() => {
     if (!ready) return;
 
     const root = document.documentElement;
     const observer = new MutationObserver(() => {
       const externalIsDark = root.classList.contains("dark");
-      applyThemeColorToDom(settings.appearance.themeColor, externalIsDark);
+      reapplySessionThemeColorToDom(externalIsDark);
       applyBackgroundToDom(settings.appearance.background, externalIsDark);
     });
 
     observer.observe(root, { attributes: true, attributeFilter: ["class"] });
     return () => observer.disconnect();
-  }, [settings, ready]);
+  }, [settings.appearance.background, ready]);
 
   const update = React.useCallback(<K extends keyof LauncherSettings>(
     section: K,

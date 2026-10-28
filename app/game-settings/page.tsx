@@ -19,7 +19,6 @@ import {
   Loader2,
   type LucideIcon,
 } from "lucide-react";
-import { motion } from "framer-motion";
 import { useLaunchContext } from "@/components/launch/launch-provider";
 import { SELECT_VERSION_PATH } from "@/components/launch/version-selector-panel";
 import { InstanceNameDialog } from "@/components/download/instance-name-dialog";
@@ -27,7 +26,7 @@ import {
   invalidateInstancesCache,
   useInstances,
 } from "@/hooks/use-instances";
-import { fadeSlideUp } from "@/lib/motion";
+import { PageEnterItem } from "@/components/layout/page-enter";
 import { Button } from "@/components/ui/button";
 import {
   AlertDialog,
@@ -232,12 +231,7 @@ export default function GameSettings() {
   return (
     <div className="flex h-full w-full min-h-0 flex-col overflow-hidden bg-background">
       <div className="mx-auto flex h-full min-h-0 w-full max-w-[1600px] flex-1 flex-col gap-4 p-4 md:p-5">
-        <motion.div
-          variants={fadeSlideUp}
-          initial="initial"
-          animate="animate"
-          className="flex shrink-0 items-center gap-2 rounded-2xl border border-border bg-card/80 p-3 shadow-sm backdrop-blur-sm"
-        >
+        <PageEnterItem className="flex shrink-0 items-center gap-2 rounded-2xl border border-border bg-card/80 p-3 shadow-sm backdrop-blur-sm">
           <button
             type="button"
             onClick={() => navigateWithMainTransition(router, SELECT_VERSION_PATH)}
@@ -291,15 +285,11 @@ export default function GameSettings() {
               </Button>
             )}
           </div>
-        </motion.div>
+        </PageEnterItem>
 
         <div className="flex min-h-0 flex-1 flex-col gap-4">
           <div className="flex min-h-0 flex-1 flex-col gap-4 md:flex-row md:items-stretch">
-            <motion.section
-              variants={fadeSlideUp}
-              initial="initial"
-              animate="animate"
-              transition={{ delay: 0.05 }}
+            <PageEnterItem
               aria-label={t("gameSettings.coreSettings")}
               className="flex min-h-[12rem] min-w-0 flex-[2] flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-sm md:min-h-0"
             >
@@ -370,7 +360,9 @@ export default function GameSettings() {
                         size="sm"
                         className="shrink-0"
                         disabled={!isConfigured || !effectiveVersionDirName}
-                        onClick={() => router.push("/game-settings/export")}
+                        onClick={() =>
+                          navigateWithMainTransition(router, "/game-settings/export")
+                        }
                       >
                         {t("gameSettings.exportInstanceStart")}
                       </Button>
@@ -378,13 +370,9 @@ export default function GameSettings() {
                   </ul>
                 )}
               </div>
-            </motion.section>
+            </PageEnterItem>
 
-            <motion.nav
-              variants={fadeSlideUp}
-              initial="initial"
-              animate="animate"
-              transition={{ delay: 0.1 }}
+            <PageEnterItem
               aria-label={t("gameSettings.featureEntries")}
               className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-sm md:flex-[1]"
             >
@@ -419,7 +407,7 @@ export default function GameSettings() {
                   );
                 })}
               </div>
-            </motion.nav>
+            </PageEnterItem>
           </div>
         </div>
       </div>

@@ -6,10 +6,14 @@ import { usePathname, useRouter } from "next/navigation";
 import { cn } from "@/lib/utils";
 import { useI18n, type TranslationKey } from "@/components/i18n/use-i18n";
 import { Settings, Sparkles, Download, SlidersHorizontal } from "lucide-react";
-import { SectionContentMotion } from "@/components/layout/section-content-motion";
-import { useAnimRenderTrace } from "@/lib/animation-trace-hooks";
+import {
+  PageEnter,
+  PageEnterChrome,
+  PageEnterItem,
+} from "@/components/layout/page-enter";
 import {
   createInAppLinkHandler,
+  getPageTransitionKey,
   normalizeAppPathname,
   onInAppLinkPointerDown,
   toAppHref,
@@ -54,7 +58,6 @@ export default function SettingsLayout({
   const pathname = usePathname();
   const router = useRouter();
   const currentPath = normalizeAppPathname(pathname);
-  useAnimRenderTrace("SettingsLayout", { currentPath });
 
   useEffect(() => {
     for (const item of NAV_ITEMS) {
@@ -64,6 +67,7 @@ export default function SettingsLayout({
 
   return (
     <div className="relative h-full overflow-hidden">
+      {/* Title bar + bottom rule — static */}
       <div className="border-b border-border bg-background/60 px-5 py-3 backdrop-blur">
         <div className="flex items-center gap-2">
           <div className="flex size-7 items-center justify-center rounded-lg bg-primary/10 text-primary">
@@ -77,39 +81,53 @@ export default function SettingsLayout({
       </div>
 
       <div className="flex h-[calc(100%-54px)]">
+        {/* Vertical rule via border-r — static; category chips stagger once on section enter */}
         <nav className="hidden w-52 shrink-0 border-r border-border bg-background/30 p-3 md:block">
           <div className="sticky top-0 space-y-1">
             <div className="px-2 pb-1.5 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
               {t(PAGE_COPY.category)}
             </div>
-            {NAV_ITEMS.map((item) => (
-              <Link
-                key={item.href}
-                href={toAppHref(item.href)}
-                onPointerDown={onInAppLinkPointerDown}
-                onClick={createInAppLinkHandler(router, item.href, {
-                  skipIfSamePath: true,
-                })}
-                suppressHydrationWarning
-                className={cn(
-                  "flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-xs transition-colors",
-                  currentPath === normalizeAppPathname(item.href)
-                    ? "bg-primary/10 text-primary font-medium"
-                    : "text-foreground/80 hover:bg-accent/40",
-                )}
-              >
-                {item.icon}
-                <span>{t(item.label)}</span>
-              </Link>
-            ))}
+            <PageEnterChrome
+              sectionKey={getPageTransitionKey(currentPath)}
+              className="space-y-1"
+            >
+              {NAV_ITEMS.map((item) => (
+                <PageEnterItem key={item.href}>
+                  <Link
+                    href={toAppHref(item.href)}
+                    onPointerDown={onInAppLinkPointerDown}
+                    onClick={createInAppLinkHandler(router, item.href, {
+                      skipIfSamePath: true,
+                    })}
+                    suppressHydrationWarning
+                    className={cn(
+                      "flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-xs transition-colors",
+                      currentPath === normalizeAppPathname(item.href)
+                        ? "bg-primary/10 text-primary font-medium"
+                        : "text-foreground/80 hover:bg-accent/40",
+                    )}
+                  >
+                    {item.icon}
+                    <span>{t(item.label)}</span>
+                  </Link>
+                </PageEnterItem>
+              ))}
+            </PageEnterChrome>
           </div>
         </nav>
 
         <main className="flex h-full min-h-0 flex-1 flex-col overflow-hidden px-4 py-4 md:px-6">
-          <div className="mx-auto flex min-h-0 w-full max-w-2xl flex-1 flex-col overflow-y-auto">
-            <SectionContentMotion segment="settings" className="space-y-4">
+          <div
+            data-section-content
+            className="mx-auto flex min-h-0 w-full max-w-2xl flex-1 flex-col overflow-y-auto"
+          >
+            <PageEnter
+              enterKey={currentPath}
+              stagger
+              className="space-y-4"
+            >
               {children}
-            </SectionContentMotion>
+            </PageEnter>
           </div>
         </main>
       </div>

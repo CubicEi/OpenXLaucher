@@ -11,7 +11,8 @@ use super::plan::{
     InstallPlan, LoaderSelection, VersionInstallPlanInput,
 };
 use super::session::{
-    build_session, cancel_session_by_id, cancel_session_by_task_id, VersionInstallSessionStart,
+    build_session, cancel_session_by_id, cancel_session_by_task_id,
+    list_active_version_install_tasks, ActiveDownloadTaskDto, VersionInstallSessionStart,
 };
 
 #[tauri::command]
@@ -40,6 +41,12 @@ pub async fn start_version_install_session(
 #[tauri::command]
 pub async fn cancel_version_install_session(sessionId: String) -> Result<(), String> {
     cancel_session_by_id(&sessionId)
+}
+
+/// Snapshot of in-flight version-install tasks for UI remount hydration.
+#[tauri::command(rename_all = "camelCase")]
+pub async fn list_active_download_tasks() -> Result<Vec<ActiveDownloadTaskDto>, String> {
+    Ok(list_active_version_install_tasks())
 }
 
 /// Cancel by either download or install task id (also used by legacy cancel shims).

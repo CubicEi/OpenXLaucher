@@ -9,10 +9,14 @@ import {
   GAME_SETTINGS_CORE_HREF,
   GAME_SETTINGS_FEATURE_NAV,
 } from "./feature-nav";
-import { SectionContentMotion } from "@/components/layout/section-content-motion";
-import { useAnimRenderTrace } from "@/lib/animation-trace-hooks";
+import {
+  PageEnter,
+  PageEnterChrome,
+  PageEnterItem,
+} from "@/components/layout/page-enter";
 import {
   createInAppLinkHandler,
+  getPageTransitionKey,
   normalizeAppPathname,
   onInAppLinkPointerDown,
   toAppHref,
@@ -36,8 +40,6 @@ export default function GameSettingsLayout({
   const currentPath = normalizeAppPathname(pathname);
   const { t } = useI18n();
 
-  useAnimRenderTrace("GameSettingsLayout", { currentPath });
-
   useEffect(() => {
     for (const item of NAV_ITEMS) {
       router.prefetch(toAppHref(item.href));
@@ -46,35 +48,43 @@ export default function GameSettingsLayout({
 
   return (
     <div className="h-full flex flex-col">
-      {/* 顶部导航栏 */}
+      {/* Top bar + border-b fixed; tab chips L→R float once on section enter */}
       <div className="shrink-0 flex items-center gap-2 px-3 py-2 border-b bg-background/80 backdrop-blur-sm">
-        {/* 子页面 Tab 导航 */}
-        <div className="flex gap-0.5 overflow-x-auto">
+        <PageEnterChrome
+          sectionKey={getPageTransitionKey(currentPath)}
+          className="flex min-w-0 flex-1 gap-0.5 overflow-x-auto overflow-y-hidden no-scrollbar"
+        >
           {NAV_ITEMS.map((item) => (
-            <Link
-              key={item.href}
-              href={toAppHref(item.href)}
-              onPointerDown={onInAppLinkPointerDown}
-              onClick={createInAppLinkHandler(router, item.href, {
-                skipIfSamePath: true,
-              })}
-              suppressHydrationWarning
-              className={cn(
-                "px-3 py-1 rounded-md text-xs font-medium transition-colors whitespace-nowrap",
-                currentPath === normalizeAppPathname(item.href)
-                  ? "bg-accent text-accent-foreground"
-                  : "text-muted-foreground hover:text-foreground hover:bg-accent/50"
-              )}
-            >
-              {t(item.label)}
-            </Link>
+            <PageEnterItem key={item.href} className="shrink-0">
+              <Link
+                href={toAppHref(item.href)}
+                onPointerDown={onInAppLinkPointerDown}
+                onClick={createInAppLinkHandler(router, item.href, {
+                  skipIfSamePath: true,
+                })}
+                suppressHydrationWarning
+                className={cn(
+                  "px-3 py-1 rounded-md text-xs font-medium transition-colors whitespace-nowrap block",
+                  currentPath === normalizeAppPathname(item.href)
+                    ? "bg-accent text-accent-foreground"
+                    : "text-muted-foreground hover:text-foreground hover:bg-accent/50",
+                )}
+              >
+                {t(item.label)}
+              </Link>
+            </PageEnterItem>
           ))}
-        </div>
+        </PageEnterChrome>
       </div>
-      <div className="flex-1 overflow-hidden">
-        <SectionContentMotion segment="game-settings" className="h-full w-full">
+      <div data-section-content className="flex-1 min-h-0 overflow-hidden">
+        <PageEnter
+          enterKey={currentPath}
+          stagger={false}
+          fill
+          className="h-full w-full"
+        >
           {children}
-        </SectionContentMotion>
+        </PageEnter>
       </div>
     </div>
   );

@@ -46,21 +46,24 @@ export function ThemeShell({ children }: { children: ReactNode }) {
     <>
       <TitleBar />
       <ThemeRecoveryControl />
-      <div className="flex flex-1 overflow-hidden">
+      <div className="flex min-h-0 flex-1 overflow-hidden">
         <Sidebar />
-        <main className="flex-1 overflow-hidden [view-transition-name:page-content]">
+        <main className="relative flex min-h-0 flex-1 flex-col overflow-hidden [view-transition-name:page-content]">
           <ThemeSlot registry={slots} owner={owner} slotId="page.header" onError={reportThemeError} />
           <ThemeSlot registry={slots} owner={owner} slotId="page.header.actions" onError={reportThemeError} />
           <ThemeSlot registry={slots} owner={owner} slotId="app.content.before" onError={reportThemeError} />
-          <ThemeRoute
-            registry={routes}
-            owner={owner}
-            routeId={routeIdFromPathname(pathname)}
-            pathname={pathname}
-            onError={reportThemeError}
-          >
-            <PageTransition>{children}</PageTransition>
-          </ThemeRoute>
+          {/* flex-1 pane: PageEnter fill (absolute inset) needs a definite height */}
+          <div className="relative min-h-0 flex-1 overflow-hidden">
+            <ThemeRoute
+              registry={routes}
+              owner={owner}
+              routeId={routeIdFromPathname(pathname)}
+              pathname={pathname}
+              onError={reportThemeError}
+            >
+              <PageTransition>{children}</PageTransition>
+            </ThemeRoute>
+          </div>
           <ThemeSlot registry={slots} owner={owner} slotId="app.content.after" onError={reportThemeError} />
           <ThemeSlot registry={slots} owner={owner} slotId="page.footer" onError={reportThemeError} />
         </main>

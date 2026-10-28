@@ -139,11 +139,71 @@ pub struct VersionInstallSessionStart {
     pub java_path: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ActiveDownloadTaskDto {
+    pub task_id: u64,
+    pub label: String,
+    pub mc_version: String,
+    pub status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub progress: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stage: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub speed_bps: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub role: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub progress_mode: Option<String>,
+    pub started_at: u64,
+}
+
+#[derive(Debug, Clone)]
+struct RoleSnapshot {
+    status: String,
+    percent: Option<f64>,
+    stage: Option<String>,
+    detail: Option<String>,
+    speed: Option<f64>,
+}
+
+impl RoleSnapshot {
+    fn downloading() -> Self {
+        Self {
+            status: "downloading".into(),
+            percent: None,
+            stage: None,
+            detail: None,
+            speed: None,
+        }
+    }
+
+    fn queued() -> Self {
+        Self {
+            status: "queued".into(),
+            percent: None,
+            stage: None,
+            detail: Some("等待下载完成".into()),
+            speed: None,
+        }
+    }
+}
+
 struct SessionEntry {
     cancel: Arc<AtomicBool>,
     download_task_id: u64,
     install_task_id: u64,
     ledger: Arc<RollbackLedger>,
+    display_name: String,
+    mc_version: String,
+    started_at_ms: u64,
+    download: RoleSnapshot,
+    install: RoleSnapshot,
 }
 
 fn sessions() -> &'static Mutex<HashMap<String, SessionEntry>> {
@@ -156,7 +216,19 @@ fn task_index() -> &'static Mutex<HashMap<u64, String>> {
     INSTANCE.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
 pub fn register_session(session: &InstallSession) {
+    let mc_version = session
+        .plan
+        .mc_version()
+        .unwrap_or("unknown")
+        .to_string();
     {
         let mut map = sessions().lock().unwrap();
         map.insert(
@@ -166,6 +238,11 @@ pub fn register_session(session: &InstallSession) {
                 download_task_id: session.download_task_id,
                 install_task_id: session.install_task_id,
                 ledger: session.ledger.clone(),
+                display_name: session.display_name.clone(),
+                mc_version,
+                started_at_ms: now_ms(),
+                download: RoleSnapshot::downloading(),
+                install: RoleSnapshot::queued(),
             },
         );
     }
@@ -174,6 +251,156 @@ pub fn register_session(session: &InstallSession) {
         idx.insert(session.download_task_id, session.session_id.clone());
         idx.insert(session.install_task_id, session.session_id.clone());
     }
+}
+
+/// Keep last-known progress so a remounted UI can restore rows.
+pub fn record_download_progress(
+    session_id: &str,
+    percent: f64,
+    stage_label: Option<String>,
+    detail: Option<String>,
+    speed: Option<f64>,
+) {
+    let Ok(mut map) = sessions().lock() else {
+        return;
+    };
+    let Some(entry) = map.get_mut(session_id) else {
+        return;
+    };
+    if entry.download.status == "success"
+        || entry.download.status == "error"
+        || entry.download.status == "cancelled"
+    {
+        return;
+    }
+    entry.download.status = "downloading".into();
+    entry.download.percent = Some(percent);
+    if let Some(s) = stage_label {
+        entry.download.stage = Some(s);
+    }
+    if let Some(d) = detail {
+        entry.download.detail = Some(d);
+    }
+    entry.download.speed = speed;
+}
+
+pub fn record_install_progress(
+    session_id: &str,
+    stage_label: Option<String>,
+    detail: Option<String>,
+) {
+    let Ok(mut map) = sessions().lock() else {
+        return;
+    };
+    let Some(entry) = map.get_mut(session_id) else {
+        return;
+    };
+    if entry.install.status == "success"
+        || entry.install.status == "error"
+        || entry.install.status == "cancelled"
+    {
+        return;
+    }
+    entry.install.status = "downloading".into();
+    if let Some(s) = stage_label {
+        entry.install.stage = Some(s);
+    }
+    if let Some(d) = detail {
+        entry.install.detail = Some(d);
+    }
+}
+
+pub fn record_role_finished(
+    session_id: &str,
+    role_download: bool,
+    success: bool,
+    cancelled: bool,
+) {
+    let Ok(mut map) = sessions().lock() else {
+        return;
+    };
+    let Some(entry) = map.get_mut(session_id) else {
+        return;
+    };
+    let status = if cancelled {
+        "cancelled"
+    } else if success {
+        "success"
+    } else {
+        "error"
+    };
+    if role_download {
+        entry.download.status = status.into();
+        entry.download.speed = None;
+        if success {
+            entry.download.percent = Some(100.0);
+            if entry.install.status == "queued" {
+                entry.install.status = "downloading".into();
+            }
+        }
+    } else {
+        entry.install.status = status.into();
+        if success {
+            entry.install.percent = Some(100.0);
+        }
+    }
+}
+
+fn download_label(display_name: &str) -> String {
+    let name = display_name.trim();
+    let name = if name.is_empty() { "版本" } else { name };
+    format!("下载 {} 文件", name)
+}
+
+fn install_label(display_name: &str) -> String {
+    let name = display_name.trim();
+    let name = if name.is_empty() { "版本" } else { name };
+    format!("安装 {}", name)
+}
+
+/// Active version-install rows for UI remount hydration.
+pub fn list_active_version_install_tasks() -> Vec<ActiveDownloadTaskDto> {
+    let Ok(map) = sessions().lock() else {
+        return Vec::new();
+    };
+    let mut out = Vec::with_capacity(map.len() * 2);
+    for (session_id, entry) in map.iter() {
+        let stage_or_detail = |snap: &RoleSnapshot| {
+            snap.stage
+                .clone()
+                .or_else(|| snap.detail.clone())
+        };
+        out.push(ActiveDownloadTaskDto {
+            task_id: entry.download_task_id,
+            label: download_label(&entry.display_name),
+            mc_version: entry.mc_version.clone(),
+            status: entry.download.status.clone(),
+            progress: entry.download.percent,
+            stage: stage_or_detail(&entry.download),
+            detail: entry.download.detail.clone(),
+            speed_bps: entry.download.speed,
+            role: Some("download".into()),
+            session_id: Some(session_id.clone()),
+            progress_mode: Some("percent".into()),
+            started_at: entry.started_at_ms,
+        });
+        out.push(ActiveDownloadTaskDto {
+            task_id: entry.install_task_id,
+            label: install_label(&entry.display_name),
+            mc_version: entry.mc_version.clone(),
+            status: entry.install.status.clone(),
+            progress: entry.install.percent,
+            stage: stage_or_detail(&entry.install),
+            detail: entry.install.detail.clone(),
+            speed_bps: None,
+            role: Some("install".into()),
+            session_id: Some(session_id.clone()),
+            progress_mode: Some("indeterminate".into()),
+            started_at: entry.started_at_ms.saturating_add(1),
+        });
+    }
+    out.sort_by(|a, b| b.started_at.cmp(&a.started_at));
+    out
 }
 
 pub fn unregister_session(session_id: &str) {

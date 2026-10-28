@@ -515,23 +515,108 @@ function DownloadProviderInner({ children }: { children: React.ReactNode }) {
   );
   startVersionInstallSessionRef.current = startVersionInstallSession;
 
-  /** ========== 空闲时预热事件监听 ========== */
+  /** ========== 先拉任务列表（快），监听并行预热（慢，不挡首屏） ========== */
   useEffect(() => {
     if (!isTauriRuntime()) return;
 
     let cancelled = false;
     listenerOwnerActiveRef.current = true;
-    const warmUp = () => {
-      void ensureDownloadListeners().catch((error) => {
-        if (!cancelled) console.error("注册下载事件监听失败:", error);
+
+    type ActiveDownloadTaskDto = {
+      taskId: number;
+      label: string;
+      mcVersion: string;
+      status: DownloadTaskStatus;
+      progress?: number;
+      stage?: string;
+      detail?: string;
+      speedBps?: number;
+      role?: "download" | "install";
+      sessionId?: string;
+      progressMode?: "percent" | "indeterminate";
+      startedAt: number;
+    };
+
+    const STATUS_SET = new Set<DownloadTaskStatus>([
+      "queued",
+      "downloading",
+      "success",
+      "warning",
+      "error",
+      "cancelled",
+    ]);
+
+    const applyRestoredRows = (rows: ActiveDownloadTaskDto[]) => {
+      const restored: DownloadTask[] = [];
+      for (const row of rows) {
+        if (isTaskDismissed(row.taskId)) continue;
+        const status = STATUS_SET.has(row.status) ? row.status : "downloading";
+        restored.push({
+          clientId: `backend-${row.taskId}`,
+          taskId: row.taskId,
+          label: row.label,
+          mcVersion: row.mcVersion || "",
+          status,
+          progress: row.progress,
+          stage: row.stage,
+          detail: row.detail,
+          speedBps: row.speedBps,
+          role: row.role,
+          sessionId: row.sessionId,
+          progressMode: row.progressMode,
+          startedAt: row.startedAt || Date.now(),
+        });
+        if (row.role === "download" && (status === "downloading" || status === "queued")) {
+          registerVanillaQueueUnlock(row.taskId);
+          isDownloadingRef.current = true;
+        }
+      }
+      if (restored.length === 0) return;
+
+      setTasks((prev) => {
+        if (prev.length === 0) return restored;
+        const byId = new Map(prev.map((t) => [t.taskId, t]));
+        for (const row of restored) {
+          const existing = byId.get(row.taskId);
+          if (!existing) {
+            byId.set(row.taskId, row);
+            continue;
+          }
+          byId.set(row.taskId, {
+            ...existing,
+            label: existing.label || row.label,
+            mcVersion: existing.mcVersion || row.mcVersion,
+            status: existing.status === "queued" ? row.status : existing.status,
+            progress: existing.progress ?? row.progress,
+            stage: existing.stage ?? row.stage,
+            detail: existing.detail ?? row.detail,
+            speedBps: existing.speedBps ?? row.speedBps,
+            role: existing.role ?? row.role,
+            sessionId: existing.sessionId ?? row.sessionId,
+            progressMode: existing.progressMode ?? row.progressMode,
+          });
+        }
+        return Array.from(byId.values()).sort((a, b) => b.startedAt - a.startedAt);
       });
     };
-    const timeoutId = window.setTimeout(warmUp, 0);
+
+    // List first — do not wait for dozens of event listens / dynamic import.
+    void invoke<ActiveDownloadTaskDto[]>("list_active_download_tasks")
+      .then((rows) => {
+        if (cancelled || !Array.isArray(rows) || rows.length === 0) return;
+        applyRestoredRows(rows);
+      })
+      .catch((error) => {
+        if (!cancelled) console.error("拉取活跃任务失败:", error);
+      });
+
+    void ensureDownloadListeners().catch((error) => {
+      if (!cancelled) console.error("注册下载事件监听失败:", error);
+    });
 
     return () => {
       cancelled = true;
       listenerOwnerActiveRef.current = false;
-      window.clearTimeout(timeoutId);
       unlistensRef.current.forEach((fn) => fn());
       unlistensRef.current = [];
       listenerSetupRef.current = null;

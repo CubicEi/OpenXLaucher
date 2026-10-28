@@ -31,7 +31,8 @@ use downloader::download_runtime_config::{
 use handler::custom_download::{cancel_custom_download, start_custom_download};
 use downloader::dwPatch::{cancel_download, download_patcher};
 use downloader::version_install::{
-    cancel_version_install_session, check_java_for_mc_version, start_version_install_session,
+    cancel_version_install_session, check_java_for_mc_version, list_active_download_tasks,
+    start_version_install_session,
 };
 use downloader::version_fetcher::classify_minecraft_versions;
 use handler::cache_paths::{
@@ -266,6 +267,7 @@ pub fn run() {
             check_java_for_mc_version,
             start_version_install_session,
             cancel_version_install_session,
+            list_active_download_tasks,
             get_liteloader_versions,
             download_and_install_liteloader,
             cancel_liteloader_download,

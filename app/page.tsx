@@ -3,7 +3,6 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
-import { motion } from "framer-motion";
 import {
   ArrowRight,
   Boxes,
@@ -22,6 +21,7 @@ import { useAccountContext } from "@/components/accounts/account-provider";
 import { LaunchStatusBadge } from "@/components/launch/launch-status-badge";
 import { useLaunchContext } from "@/components/launch/launch-provider";
 import { VersionSelectorDialog } from "@/components/launch/version-selector-dialog";
+import { PageEnter, PageEnterItem } from "@/components/layout/page-enter";
 import { useSettings } from "@/components/settings/settings-provider";
 import { useI18n } from "@/components/i18n/use-i18n";
 import { Badge } from "@/components/ui/badge";
@@ -116,8 +116,12 @@ export default function Home() {
 
   return (
     <div className="h-full overflow-y-auto">
-      <div className="mx-auto flex min-h-full max-w-[1600px] flex-col gap-4 p-4 md:p-5">
+      <PageEnter
+        stagger
+        className="mx-auto flex min-h-full max-w-[1600px] flex-col gap-4 p-4 md:p-5"
+      >
         {homeMode === "full" && (
+          <PageEnterItem>
           <header className="flex flex-wrap items-start justify-between gap-3">
             <div>
               <p className="text-xs font-medium text-primary">OpenXLauncher</p>
@@ -130,16 +134,12 @@ export default function Home() {
             </div>
             <LaunchStatusBadge status={status} className="mt-1" />
           </header>
+          </PageEnterItem>
         )}
 
         {homeMode === "simple" ? (
           <div className="flex justify-end">
-            <motion.aside
-              initial={{ opacity: 0, y: 8 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: 0.1, duration: 0.3 }}
-              className="lg:sticky lg:top-0 w-[320px]"
-            >
+            <PageEnterItem className="lg:sticky lg:top-0 w-[320px]">
               <Card className="overflow-hidden border shadow-sm">
                 <CardHeader className="pb-2">
                   <CardTitle>{t("home.accountsAndCharacters")}</CardTitle>
@@ -194,16 +194,12 @@ export default function Home() {
                   </CardContent>
                 </div>
               </Card>
-            </motion.aside>
+            </PageEnterItem>
           </div>
         ) : (
           <div className="grid min-h-0 grid-cols-[minmax(0,1fr)_320px] items-start gap-4">
             <section className="flex min-w-0 flex-col gap-4">
-              <motion.div
-                initial={{ opacity: 0, y: 8 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.3 }}
-              >
+              <PageEnterItem>
                 <Card className="relative min-h-[280px] overflow-hidden border-primary/20 bg-gradient-to-br from-primary/12 via-card to-card shadow-sm">
                     <div className="pointer-events-none absolute -right-12 -top-16 size-52 rounded-full bg-primary/10 blur-3xl" />
                     <CardContent className="relative flex h-full min-h-[280px] flex-col p-5 sm:p-6">
@@ -284,8 +280,9 @@ export default function Home() {
                       )}
                     </CardContent>
                 </Card>
-              </motion.div>
+              </PageEnterItem>
 
+              <PageEnterItem>
               <Card size="sm" className="shadow-sm">
                 <CardHeader className="pb-1">
                   <CardTitle>{t("home.quickAccess")}</CardTitle>
@@ -337,14 +334,10 @@ export default function Home() {
                   </div>
                 </CardContent>
               </Card>
+              </PageEnterItem>
             </section>
 
-            <motion.aside
-              initial={{ opacity: 0, y: 8 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: 0.1, duration: 0.3 }}
-              className="sticky top-0 w-[320px] shrink-0"
-            >
+            <PageEnterItem className="sticky top-0 w-[320px] shrink-0">
               <Card className="overflow-hidden border shadow-sm">
                 <CardHeader className="pb-2">
                   <CardTitle>{t("home.accountsAndCharacters")}</CardTitle>
@@ -399,10 +392,10 @@ export default function Home() {
                   </CardContent>
                 </div>
               </Card>
-            </motion.aside>
+            </PageEnterItem>
           </div>
         )}
-      </div>
+      </PageEnter>
 
       <AccountSwitcher
         open={isProfileSelectorOpen}
