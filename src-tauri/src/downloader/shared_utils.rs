@@ -780,6 +780,37 @@ pub fn cleanup_vanilla_version_dir_after_combined(
     remove_vanilla_version_dir_tree(&vanilla_dir);
 }
 
+/// 整合包合并实例后删除中间 loader / 原版版本目录（与组合安装 `STAGE_CLEANUP` 行为一致）。
+pub fn cleanup_after_modpack_merge(
+    minecraft_path: &Path,
+    mc_version: &str,
+    instance_name: &str,
+    loader_version_name: &str,
+    has_mod_loader: bool,
+    downloaded_vanilla_this_run: bool,
+    vanilla_pre_existed: bool,
+) {
+    if has_mod_loader {
+        if loader_version_name != instance_name {
+            cleanup_loader_version_dir(loader_version_name, minecraft_path);
+        }
+        scrub_vanilla_staging_dir(mc_version, minecraft_path);
+        cleanup_vanilla_version_dir_after_combined(
+            mc_version,
+            minecraft_path,
+            instance_name,
+            downloaded_vanilla_this_run,
+            vanilla_pre_existed,
+        );
+        let leftover = minecraft_path.join("versions").join(mc_version);
+        if leftover.is_dir() && instance_name != mc_version && !vanilla_pre_existed {
+            let _ = trash::delete(&leftover);
+        }
+    } else if instance_name != mc_version {
+        cleanup_vanilla_version_dir(mc_version, minecraft_path);
+    }
+}
+
 /// 把原版/加载器版本目录里的 mods/*.jar 复制到实例的 mods/ 目录。
 ///
 /// 用于 Fabric API、Quilt API、叠加安装的 OptiFine 等以 mod 形式安装的文件，

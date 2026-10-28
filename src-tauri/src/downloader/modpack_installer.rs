@@ -1,4 +1,5 @@
 use crate::downloader::concurrent_download::{self, DownloadTask};
+use crate::downloader::shared_utils::cleanup_after_modpack_merge;
 use anyhow::{anyhow, bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -557,6 +558,45 @@ fn recommend_fabric_loader_version(mc_version: &str, requested_version: &str) ->
     requested_version.to_string()
 }
 
+/// Result of the install-only / full modpack pipeline (used for post-merge cleanup).
+#[derive(Debug, Clone)]
+pub struct ModpackInstallOutcome {
+    pub instance_name: String,
+    pub mc_version: String,
+    pub loader_version_name: String,
+    pub has_mod_loader: bool,
+    pub file_count: usize,
+}
+
+fn vanilla_version_complete(mc_version: &str, minecraft_path: &Path) -> bool {
+    let version_dir = minecraft_path.join("versions").join(mc_version);
+    version_dir
+        .join(format!("{}.json", mc_version))
+        .exists()
+        && version_dir.join(format!("{}.jar", mc_version)).exists()
+}
+
+fn build_install_outcome(
+    parsed: &ParsedModpack,
+    instance_name: &str,
+    final_version_name: &str,
+    file_count: usize,
+) -> ModpackInstallOutcome {
+    let has_mod_loader = !matches!(parsed.loader_type, ModpackLoaderType::Vanilla);
+    let loader_version_name = if has_mod_loader {
+        final_version_name.to_string()
+    } else {
+        parsed.mc_version.clone()
+    };
+    ModpackInstallOutcome {
+        instance_name: instance_name.to_string(),
+        mc_version: parsed.mc_version.clone(),
+        loader_version_name,
+        has_mod_loader,
+        file_count,
+    }
+}
+
 /// Which portion of the modpack pipeline to run (dual-task session uses Download then Install).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ModpackPhase {
@@ -602,10 +642,17 @@ pub async fn install_modpack_after_download(
     zip_path: &Path,
     minecraft_path: &Path,
     java_path: Option<&str>,
-) -> Result<(String, usize)> {
+) -> Result<ModpackInstallOutcome> {
     let parsed = parse_modpack_from_zip(zip_path)?;
-    install_parsed_modpack(&parsed, minecraft_path, None, java_path, ModpackPhase::InstallOnly)
-        .await
+    let instance_name = sanitize_instance_name(&format!("{}-{}", parsed.name, parsed.mc_version));
+    finalize_modpack_instance(
+        &parsed,
+        &instance_name,
+        minecraft_path,
+        java_path,
+        None,
+    )
+    .await
 }
 
 pub async fn install_parsed_modpack(
@@ -616,16 +663,10 @@ pub async fn install_parsed_modpack(
     phase: ModpackPhase,
 ) -> Result<(String, usize)> {
     let instance_name = sanitize_instance_name(&format!("{}-{}", parsed.name, parsed.mc_version));
+    let vanilla_pre_at_start = vanilla_version_complete(&parsed.mc_version, minecraft_path);
 
     if phase == ModpackPhase::InstallOnly {
-        return finalize_modpack_instance(
-            parsed,
-            &instance_name,
-            minecraft_path,
-            java_path,
-            progress_tx,
-        )
-        .await;
+        bail!("InstallOnly 请使用 install_modpack_after_download");
     }
 
     let version_dir = minecraft_path.join("versions").join(&instance_name);
@@ -1151,6 +1192,16 @@ pub async fn install_parsed_modpack(
         progress_tx.as_ref(),
         total_files,
     )?;
+    let outcome = build_install_outcome(parsed, &instance_name, &final_version_name, task_count);
+    cleanup_after_modpack_merge(
+        minecraft_path,
+        &outcome.mc_version,
+        &outcome.instance_name,
+        &outcome.loader_version_name,
+        outcome.has_mod_loader,
+        !vanilla_pre_at_start,
+        vanilla_pre_at_start,
+    );
     println!(
         "[Modpack] 整合包安装完成: {} (版本名: {})",
         parsed.name, instance_name
@@ -1164,7 +1215,7 @@ async fn finalize_modpack_instance(
     minecraft_path: &Path,
     java_path: Option<&str>,
     progress_tx: Option<tokio::sync::mpsc::Sender<(usize, usize, String, String)>>,
-) -> Result<(String, usize)> {
+) -> Result<ModpackInstallOutcome> {
     let task_count: usize = parsed
         .external_files
         .iter()
@@ -1203,7 +1254,7 @@ async fn finalize_modpack_instance(
         "[Modpack] 整合包安装阶段完成: {} (版本名: {})",
         parsed.name, instance_name
     );
-    Ok((instance_name.to_string(), task_count))
+    Ok(build_install_outcome(parsed, instance_name, &final_version_name, task_count))
 }
 
 fn merge_modpack_instance(

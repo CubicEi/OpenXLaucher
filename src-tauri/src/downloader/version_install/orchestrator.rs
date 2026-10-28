@@ -14,7 +14,7 @@ use crate::downloader::optifine_installer;
 use crate::downloader::original_dwl::{process_version, ProgressUpdate};
 use crate::downloader::quilt_installer;
 use crate::downloader::shared_utils::{
-    cleanup_loader_version_dir, cleanup_vanilla_version_dir,
+    cleanup_after_modpack_merge, cleanup_loader_version_dir, cleanup_vanilla_version_dir,
     cleanup_vanilla_version_dir_after_combined, copy_version_mods_to_instance,
     create_vanilla_instance, merge_version_jsons_to_instance, sanitize_instance_name,
     scrub_vanilla_staging_dir,
@@ -471,6 +471,24 @@ async fn download_modpack_files(
     let cancel = session.cancel.clone();
     ensure_not_cancelled(&cancel)?;
 
+    let parsed_for_flags =
+        modpack_installer::parse_modpack_from_zip(Path::new(zip_path)).map_err(|e| e.to_string())?;
+    let mc_for_flags = parsed_for_flags.mc_version.clone();
+    let vanilla_json = session
+        .minecraft_path
+        .join("versions")
+        .join(&mc_for_flags)
+        .join(format!("{}.json", mc_for_flags));
+    let vanilla_jar = session
+        .minecraft_path
+        .join("versions")
+        .join(&mc_for_flags)
+        .join(format!("{}.jar", mc_for_flags));
+    let vanilla_pre_at_download_start = vanilla_json.exists() && vanilla_jar.exists();
+    if vanilla_pre_at_download_start {
+        let _ = std::fs::write(session.staging_root.join("vanilla_pre_existed.flag"), b"1");
+    }
+
     let (tx, mut rx) = tokio::sync::mpsc::channel::<(usize, usize, String, String)>(64);
     let app2 = app.clone();
     let sid = session.session_id.clone();
@@ -536,6 +554,9 @@ async fn download_modpack_files(
 
     match result {
         Ok((instance_name, _count)) => {
+            if !vanilla_pre_at_download_start {
+                let _ = std::fs::write(session.staging_root.join("vanilla_downloaded.flag"), b"1");
+            }
             // Stash instance name via created path for install worker
             session
                 .ledger
@@ -607,7 +628,7 @@ async fn run_install_worker(
         .map_err(|e| e.to_string());
         ensure_not_cancelled(&cancel)?;
         return match install_result {
-            Ok((instance_name, _)) => {
+            Ok(outcome) => {
                 emit_install_progress(
                     &app,
                     &session.session_id,
@@ -622,6 +643,23 @@ async fn run_install_worker(
                     STAGE_CLEANUP,
                     None,
                 );
+                let downloaded_vanilla = session
+                    .staging_root
+                    .join("vanilla_downloaded.flag")
+                    .exists();
+                let vanilla_pre_existed = session
+                    .staging_root
+                    .join("vanilla_pre_existed.flag")
+                    .exists();
+                cleanup_after_modpack_merge(
+                    &session.minecraft_path,
+                    &outcome.mc_version,
+                    &outcome.instance_name,
+                    &outcome.loader_version_name,
+                    outcome.has_mod_loader,
+                    downloaded_vanilla,
+                    vanilla_pre_existed,
+                );
                 emit_install_progress(
                     &app,
                     &session.session_id,
@@ -629,7 +667,7 @@ async fn run_install_worker(
                     STAGE_DONE,
                     None,
                 );
-                Ok(Some(instance_name))
+                Ok(Some(outcome.instance_name))
             }
             Err(e) => Err(e),
         };
