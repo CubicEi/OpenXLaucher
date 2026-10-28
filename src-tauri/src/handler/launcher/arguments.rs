@@ -1748,6 +1748,7 @@ pub(super) fn build_jvm_arguments_inner(
     // 因固定的 `-Xmn768m` 产生不合理的初始化压力。
     let young_generation_mb = 768_u64.min((effective_max_memory_mb / 3).max(256));
     let mut args: Vec<String> = vec![
+        crate::app_paths::jvm_hs_err_file_arg(),
         format!("-Xmn{young_generation_mb}m"),
         format!("-Xmx{effective_max_memory_mb}m"),
     ];

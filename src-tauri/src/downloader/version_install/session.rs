@@ -444,6 +444,30 @@ pub fn cancel_session_by_id(session_id: &str) -> Result<(), String> {
     }
 }
 
+/// Cancel every in-flight session and roll back incomplete files before process exit/restart.
+pub fn cancel_all_sessions_and_rollback() {
+    let drained: Vec<(String, SessionEntry)> = {
+        let Ok(mut map) = sessions().lock() else {
+            return;
+        };
+        map.drain().collect()
+    };
+    {
+        let Ok(mut idx) = task_index().lock() else {
+            return;
+        };
+        idx.clear();
+    }
+    for (session_id, entry) in drained {
+        entry.cancel.store(true, Ordering::SeqCst);
+        println!(
+            "[VersionInstall] restart cancel+rollback session {} (download={}, install={})",
+            session_id, entry.download_task_id, entry.install_task_id
+        );
+        entry.ledger.rollback();
+    }
+}
+
 pub fn cancel_session_by_task_id(task_id: u64) -> Result<(), String> {
     let session_id = {
         let idx = task_index().lock().map_err(|e| e.to_string())?;

@@ -145,6 +145,19 @@ pub fn portable_logs_dir() -> PathBuf {
     portable_data_dir().join("logs")
 }
 
+/// JVM 崩溃时默认在进程工作目录写 `hs_err_pid*.log`；重定向到 OpenX/logs，避免污染启动器 exe 目录。
+pub fn jvm_hs_err_file_arg() -> String {
+    let dir = portable_logs_dir();
+    let _ = std::fs::create_dir_all(&dir);
+    let path = dir.join("hs_err_%p.log");
+    let s = path.to_string_lossy();
+    if s.contains(' ') {
+        format!(r#"-XX:ErrorFile="{}""#, s)
+    } else {
+        format!("-XX:ErrorFile={s}")
+    }
+}
+
 pub fn portable_bridge_dir() -> PathBuf {
     portable_data_dir().join("bridge")
 }

@@ -17,7 +17,7 @@ import {
 import { useI18n } from "@/components/i18n/use-i18n";
 
 const RANGE_CLASS =
-  "accent-primary h-1.5 flex-1 cursor-pointer appearance-none rounded-full bg-muted";
+  "accent-primary h-1.5 w-full min-w-0 cursor-pointer appearance-none rounded-full bg-muted";
 
 function totalWorkersSliderValue(maxTotalWorkers: number) {
   if (maxTotalWorkers === DOWNLOAD_MAX_TOTAL_WORKERS_UNLIMITED) {
@@ -81,14 +81,14 @@ export function DownloadSection() {
           </div>
 
           <div className="space-y-3 rounded-lg border p-3">
-            <div className="flex items-center justify-between gap-2">
-              <div>
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0 flex-1">
                 <Label className="text-sm font-medium">{t("settings.download.workersPerFile")}</Label>
                 <p className="mt-1 text-xs text-muted-foreground">
                   {t("settings.download.workersPerFileDescription")}
                 </p>
               </div>
-              <span className="shrink-0 font-mono text-xs text-muted-foreground">{workersPerFile}</span>
+              <span className="shrink-0 pt-0.5 font-mono text-xs text-muted-foreground">{workersPerFile}</span>
             </div>
             <input
               type="range"
@@ -104,14 +104,14 @@ export function DownloadSection() {
           </div>
 
           <div className="space-y-3 rounded-lg border p-3">
-            <div className="flex items-center justify-between gap-2">
-              <div>
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0 flex-1">
                 <Label className="text-sm font-medium">{t("settings.download.maxTotalWorkers")}</Label>
                 <p className="mt-1 text-xs text-muted-foreground">
                   {t("settings.download.maxTotalWorkersDescription")}
                 </p>
               </div>
-              <span className="shrink-0 font-mono text-xs text-muted-foreground">{totalLabel}</span>
+              <span className="shrink-0 pt-0.5 font-mono text-xs text-muted-foreground">{totalLabel}</span>
             </div>
             <input
               type="range"

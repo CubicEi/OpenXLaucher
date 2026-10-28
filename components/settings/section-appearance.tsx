@@ -21,6 +21,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import {
   AlertDialog,
   AlertDialogAction,
+  AlertDialogCancel,
   AlertDialogContent,
   AlertDialogDescription,
   AlertDialogFooter,
@@ -28,9 +29,11 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { ImagePlus, RotateCcw, Palette, Type, X, Layout } from "lucide-react";
+import { invoke } from "@tauri-apps/api/core";
 import { cn } from "@/lib/utils";
 import { useI18n } from "@/components/i18n/use-i18n";
 import { ThemeSwitcher } from "@/components/settings/theme-switcher";
+import { useDownloadManager } from "@/components/download/download-provider";
 import { getSessionThemeColor } from "@/lib/appearance-palette";
 
 // ============================================================
@@ -88,9 +91,11 @@ function ThemeColorRow({
   onApply: (v: ThemeColor) => void;
 }) {
   const { t } = useI18n();
+  const { tasks, cancelDownload } = useDownloadManager();
   const sessionActive = getSessionThemeColor();
   const [draft, setDraft] = useState<ThemeColor>(savedValue);
   const [restartOpen, setRestartOpen] = useState(false);
+  const [restarting, setRestarting] = useState(false);
 
   useEffect(() => {
     setDraft(savedValue);
@@ -98,7 +103,7 @@ function ThemeColorRow({
 
   const previewColor =
     draft === "default" ? "#1f1f1f" : oklchToHex(draft) ?? "#1f1f1f";
-  const canApply = draft !== savedValue;
+  const canApply = draft !== savedValue && !restarting;
   const pendingRestart = savedValue !== sessionActive;
 
   const onCustomColor = (hex: string) => {
@@ -106,9 +111,35 @@ function ThemeColorRow({
     if (oklch) setDraft(oklch);
   };
 
+  /** Open confirm only — do not persist yet so Cancel keeps pre-apply draft. */
   const handleApply = () => {
-    onApply(draft);
     setRestartOpen(true);
+  };
+
+  const handleCancelRestart = () => {
+    setRestartOpen(false);
+    // Draft stays as chosen before Apply; settings were not saved.
+  };
+
+  const handleConfirmRestart = async () => {
+    if (restarting) return;
+    setRestarting(true);
+    try {
+      onApply(draft);
+      const activeIds = [
+        ...new Set(
+          tasks
+            .filter((task) => task.status === "downloading" || task.status === "queued")
+            .map((task) => task.taskId),
+        ),
+      ];
+      await Promise.allSettled(activeIds.map((id) => cancelDownload(id)));
+      await invoke("restart_launcher_cmd");
+    } catch (e) {
+      console.error("重启启动器失败:", e);
+      setRestarting(false);
+      setRestartOpen(false);
+    }
   };
 
   return (
@@ -164,7 +195,14 @@ function ThemeColorRow({
           : t("settings.appearance.themeColorApplyHint")}
       </p>
 
-      <AlertDialog open={restartOpen} onOpenChange={setRestartOpen}>
+      <AlertDialog
+        open={restartOpen}
+        onOpenChange={(open) => {
+          if (restarting) return;
+          if (!open) handleCancelRestart();
+          else setRestartOpen(true);
+        }}
+      >
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>
@@ -175,8 +213,17 @@ function ThemeColorRow({
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogAction onClick={() => setRestartOpen(false)}>
-              {t("common.confirm")}
+            <AlertDialogCancel disabled={restarting} onClick={handleCancelRestart}>
+              {t("common.cancel")}
+            </AlertDialogCancel>
+            <AlertDialogAction
+              disabled={restarting}
+              onClick={(e) => {
+                e.preventDefault();
+                void handleConfirmRestart();
+              }}
+            >
+              {t("settings.appearance.themeColorRestartConfirm")}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

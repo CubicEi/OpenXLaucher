@@ -361,6 +361,52 @@ impl InstallPlan {
         }
         out
     }
+
+    pub fn to_input(&self, retarget_source_instance: Option<String>) -> VersionInstallPlanInput {
+        match self {
+            Self::Combined {
+                mc_version,
+                selections,
+                instance_name,
+            } => VersionInstallPlanInput::Combined {
+                mc_version: mc_version.clone(),
+                selections: selections
+                    .iter()
+                    .map(|s| CombinedSelectionInput {
+                        loader_type: s.loader_type.clone(),
+                        version: s.version.clone(),
+                    })
+                    .collect(),
+                instance_name: instance_name.clone(),
+                retarget_source_instance,
+            },
+            Self::VanillaOnly {
+                mc_version,
+                instance_name,
+            } => VersionInstallPlanInput::VanillaOnly {
+                mc_version: mc_version.clone(),
+                instance_name: instance_name.clone(),
+                retarget_source_instance,
+            },
+            Self::SingleLoader {
+                loader_type,
+                mc_version,
+                loader_version,
+                api_version,
+                instance_name,
+            } => VersionInstallPlanInput::SingleLoader {
+                loader_type: loader_type.clone(),
+                mc_version: mc_version.clone(),
+                loader_version: loader_version.clone(),
+                api_version: api_version.clone(),
+                instance_name: instance_name.clone(),
+                retarget_source_instance,
+            },
+            Self::Modpack { zip_path } => VersionInstallPlanInput::Modpack {
+                zip_path: zip_path.clone(),
+            },
+        }
+    }
 }
 
 pub fn is_mod_loader(loader_type: &str) -> bool {

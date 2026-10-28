@@ -119,7 +119,7 @@ export const BG_BLUR_MAX = 20;
 export const BG_OPACITY_MIN = 0;
 export const BG_OPACITY_MAX = 100;
 
-const STORAGE_KEY = "openxlauncher:settings:v4";
+export const SETTINGS_STORAGE_KEY = "openxlauncher:settings:v4";
 const LEGACY_STORAGE_KEYS = [
   "openxlauncher:settings:v3",
   "rtlauncher:settings:v4",
@@ -265,7 +265,7 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
     };
 
     try {
-      const current = localStorage.getItem(STORAGE_KEY);
+      const current = localStorage.getItem(SETTINGS_STORAGE_KEY);
       let legacyRaw: string | null = null;
       let legacyKey: string | null = null;
       if (!current) {
@@ -347,7 +347,7 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
     applyBackgroundToDom(settings.appearance.background, effectiveIsDark);
 
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
+      localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(settings));
     } catch (e) {
       console.warn("[settings] 写入失败", e);
     }

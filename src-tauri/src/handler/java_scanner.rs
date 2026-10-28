@@ -75,6 +75,7 @@ fn try_show_settings(detect_exe: &str, java_path: &str) -> Option<ValidatedJava>
     // 使用 -version 而不是 -XshowSettings:properties，避免某些Java版本对额外参数的兼容性问题
     let mut cmd = command_no_window(detect_exe);
     let output = cmd
+        .arg(crate::app_paths::jvm_hs_err_file_arg())
         .arg("-version")
         // 清除全局 JAVA_* 选项环境变量，避免混入 --add-opens 等参数导致
         // 识别失败（尤其 Java 8 不识别 --add-opens 时 java -version 会直接报错）。
@@ -117,6 +118,7 @@ fn try_show_settings(detect_exe: &str, java_path: &str) -> Option<ValidatedJava>
 fn try_version_flag(detect_exe: &str, java_path: &str) -> Option<ValidatedJava> {
     let mut cmd = command_no_window(detect_exe);
     let output = cmd
+        .arg(crate::app_paths::jvm_hs_err_file_arg())
         .arg("-version")
         // 同上：清除全局 JAVA_* 选项环境变量，确保 java -version 结果可信
         .env_remove("JAVA_TOOL_OPTIONS")

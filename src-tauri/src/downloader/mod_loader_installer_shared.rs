@@ -1807,6 +1807,7 @@ pub async fn install(
         let cp_sep = ":";
         let cp_str = cp_entries.join(cp_sep);
         let mut cmd = Command::new(&cfg.java_executable_path);
+        cmd.arg(crate::app_paths::jvm_hs_err_file_arg());
         cmd.arg("-cp");
         cmd.arg(&cp_str);
         cmd.arg(&main_class);

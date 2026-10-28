@@ -4,6 +4,7 @@ use std::{io::Read, sync::OnceLock};
 /// 运行 java -version 并提取大版本号（第一个 . 之前的数字）
 pub(super) fn get_java_major_version(java_path: &str) -> String {
     let output = std::process::Command::new(java_path)
+        .arg(crate::app_paths::jvm_hs_err_file_arg())
         .arg("-version")
         // 清除可能注入 --add-opens 等参数的全局 JAVA_* 选项环境变量：
         // 这些选项会让部分 JVM（尤其是 Java 8，不识别 --add-opens）在

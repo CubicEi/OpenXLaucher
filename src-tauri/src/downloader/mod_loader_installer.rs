@@ -746,6 +746,7 @@ pub async fn run_processors_async(
         };
         let args: Vec<String> = proc.args.iter().map(|a| substitute(a, &data_map)).collect();
         let mut cmd = Command::new(java_bin);
+        cmd.arg(crate::app_paths::jvm_hs_err_file_arg());
         if let Some(cls) = &main_class {
             cmd.arg("-cp");
             cmd.arg(local_paths.join(if cfg!(windows) { ";" } else { ":" }));

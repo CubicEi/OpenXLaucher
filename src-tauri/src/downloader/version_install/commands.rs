@@ -10,8 +10,9 @@ use super::orchestrator::spawn_session;
 use super::plan::{
     InstallPlan, LoaderSelection, VersionInstallPlanInput,
 };
+use super::restart;
 use super::session::{
-    build_session, cancel_session_by_id, cancel_session_by_task_id,
+    build_session, cancel_all_sessions_and_rollback, cancel_session_by_id, cancel_session_by_task_id,
     list_active_version_install_tasks, ActiveDownloadTaskDto, VersionInstallSessionStart,
 };
 
@@ -47,6 +48,41 @@ pub async fn cancel_version_install_session(sessionId: String) -> Result<(), Str
 #[tauri::command(rename_all = "camelCase")]
 pub async fn list_active_download_tasks() -> Result<Vec<ActiveDownloadTaskDto>, String> {
     Ok(list_active_version_install_tasks())
+}
+
+/// Cancel in-flight installs (with rollback), then restart the app (theme color apply, etc.).
+#[tauri::command]
+pub fn restart_launcher_cmd(app: AppHandle) -> Result<(), String> {
+    // Do not resume tasks after theme-color restart — cancel + roll back incomplete work.
+    restart::clear_pending_restart_plans();
+    cancel_all_sessions_and_rollback();
+    app.restart();
+    #[allow(unreachable_code)]
+    Ok(())
+}
+
+/// Re-queue version installs saved before an intentional restart.
+pub async fn resume_pending_version_install_sessions(app: AppHandle) {
+    let plans = restart::take_pending_restart_plans();
+    for plan in plans {
+        let resolved = match InstallPlan::from_input(plan) {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("[VersionInstall] skip resume after restart: {}", e);
+                continue;
+            }
+        };
+        if let Err(e) = start_with_plan(
+            app.clone(),
+            resolved.plan,
+            resolved.retarget_source_instance,
+            LegacyEventFamily::None,
+        )
+        .await
+        {
+            eprintln!("[VersionInstall] resume after restart failed: {}", e);
+        }
+    }
 }
 
 /// Cancel by either download or install task id (also used by legacy cancel shims).

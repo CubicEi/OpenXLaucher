@@ -7,14 +7,16 @@ pub mod modpack_rollback;
 pub mod orchestrator;
 pub mod plan;
 pub mod progress_network;
+pub mod restart;
 pub mod rollback;
 pub mod session;
 pub mod stages;
 
 pub use commands::{
     cancel_by_task_id, cancel_version_install_session, check_java_for_mc_version,
-    list_active_download_tasks, start_combined_legacy, start_loader_legacy, start_modpack_legacy,
-    start_vanilla_legacy, start_version_install_session,
+    list_active_download_tasks, restart_launcher_cmd, resume_pending_version_install_sessions,
+    start_combined_legacy, start_loader_legacy, start_modpack_legacy, start_vanilla_legacy,
+    start_version_install_session,
 };
 pub use events::LegacyEventFamily;
 pub use plan::{InstallPlan, LoaderSelection};

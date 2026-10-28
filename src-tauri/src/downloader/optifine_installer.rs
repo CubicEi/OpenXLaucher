@@ -484,6 +484,7 @@ fn run_patcher(
 ) -> Result<()> {
     println!("[OptiFine] 调用 optifine.Patcher 修补原版 jar");
     let status = Command::new("java")
+        .arg(crate::app_paths::jvm_hs_err_file_arg())
         .arg("-cp")
         .arg(installer_path)
         .arg("optifine.Patcher")

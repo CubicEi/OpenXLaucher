@@ -32,6 +32,7 @@ use handler::custom_download::{cancel_custom_download, start_custom_download};
 use downloader::dwPatch::{cancel_download, download_patcher};
 use downloader::version_install::{
     cancel_version_install_session, check_java_for_mc_version, list_active_download_tasks,
+    restart_launcher_cmd, resume_pending_version_install_sessions,
     start_version_install_session,
 };
 use downloader::version_fetcher::classify_minecraft_versions;
@@ -268,6 +269,7 @@ pub fn run() {
             start_version_install_session,
             cancel_version_install_session,
             list_active_download_tasks,
+            restart_launcher_cmd,
             get_liteloader_versions,
             download_and_install_liteloader,
             cancel_liteloader_download,
@@ -378,6 +380,10 @@ pub fn run() {
             themes::commands::report_theme_store_initialization(
                 themes::commands::initialize_theme_store(app.handle()),
             );
+            let resume_app = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                resume_pending_version_install_sessions(resume_app).await;
+            });
             #[cfg(not(target_os = "macos"))]
             app.handle().plugin(tauri_plugin_single_instance::init(
                 |app: &tauri::AppHandle, args, _cwd| {
