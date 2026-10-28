@@ -3,6 +3,7 @@
 pub mod commands;
 pub mod events;
 pub mod java_check;
+pub mod modpack_rollback;
 pub mod orchestrator;
 pub mod plan;
 pub mod progress_network;

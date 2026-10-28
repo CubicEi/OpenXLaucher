@@ -531,6 +531,7 @@ function DownloadProviderInner({ children }: { children: React.ReactNode }) {
       stage?: string;
       detail?: string;
       speedBps?: number;
+      bytesDownloaded?: number;
       role?: "download" | "install";
       sessionId?: string;
       progressMode?: "percent" | "indeterminate";
@@ -561,6 +562,7 @@ function DownloadProviderInner({ children }: { children: React.ReactNode }) {
           stage: row.stage,
           detail: row.detail,
           speedBps: row.speedBps,
+          bytesDownloaded: row.bytesDownloaded,
           role: row.role,
           sessionId: row.sessionId,
           progressMode: row.progressMode,
@@ -591,6 +593,7 @@ function DownloadProviderInner({ children }: { children: React.ReactNode }) {
             stage: existing.stage ?? row.stage,
             detail: existing.detail ?? row.detail,
             speedBps: existing.speedBps ?? row.speedBps,
+            bytesDownloaded: existing.bytesDownloaded ?? row.bytesDownloaded,
             role: existing.role ?? row.role,
             sessionId: existing.sessionId ?? row.sessionId,
             progressMode: existing.progressMode ?? row.progressMode,

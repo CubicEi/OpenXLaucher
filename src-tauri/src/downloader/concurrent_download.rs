@@ -1,6 +1,7 @@
 #[allow(unused_imports)]
 pub use crate::downloader::modular_download::{
-    download_all, download_all_with_bytes, download_all_with_file_info, download_file, download_one,
+    download_all, download_all_with_bytes, download_all_with_file_info,
+    download_all_with_file_info_and_bytes, download_file, download_one,
     DownloadFailure, DownloadResult, DownloadTask, SingleDownloadResult, MAX_CONCURRENT_FILES,
     THROTTLE_MS_AFTER_FILE,
 };

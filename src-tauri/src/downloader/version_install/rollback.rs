@@ -42,6 +42,13 @@ impl RollbackLedger {
         }
     }
 
+    pub fn is_pre_existing(&self, path: &Path) -> bool {
+        self.pre_existing
+            .lock()
+            .ok()
+            .is_some_and(|g| g.contains(&path.to_path_buf()))
+    }
+
     /// Snapshot existing version dirs under minecraft/versions.
     pub fn snapshot_versions_root(&self, minecraft_path: &Path) {
         let versions = minecraft_path.join("versions");

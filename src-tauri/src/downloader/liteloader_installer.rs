@@ -623,7 +623,7 @@ async fn download_all_libraries(
 
     println!("[LiteLoader] 总共需要下载 {} 个文件", tasks.len());
 
-    let res = concurrent_download::download_all(tasks, None).await;
+    let res = concurrent_download::download_all(tasks, None, None).await;
     println!(
         "[LiteLoader] 库下载完成: 成功 {} 个, 失败 {} 个",
         res.success_count,

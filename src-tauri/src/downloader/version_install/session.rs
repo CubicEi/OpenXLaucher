@@ -155,6 +155,8 @@ pub struct ActiveDownloadTaskDto {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub speed_bps: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub bytes_downloaded: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub role: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub session_id: Option<String>,
@@ -170,6 +172,7 @@ struct RoleSnapshot {
     stage: Option<String>,
     detail: Option<String>,
     speed: Option<f64>,
+    downloaded: Option<u64>,
 }
 
 impl RoleSnapshot {
@@ -180,6 +183,7 @@ impl RoleSnapshot {
             stage: None,
             detail: None,
             speed: None,
+            downloaded: None,
         }
     }
 
@@ -190,6 +194,7 @@ impl RoleSnapshot {
             stage: None,
             detail: Some("等待下载完成".into()),
             speed: None,
+            downloaded: None,
         }
     }
 }
@@ -260,6 +265,7 @@ pub fn record_download_progress(
     stage_label: Option<String>,
     detail: Option<String>,
     speed: Option<f64>,
+    downloaded: Option<u64>,
 ) {
     let Ok(mut map) = sessions().lock() else {
         return;
@@ -282,6 +288,9 @@ pub fn record_download_progress(
         entry.download.detail = Some(d);
     }
     entry.download.speed = speed;
+    if downloaded.is_some() {
+        entry.download.downloaded = downloaded;
+    }
 }
 
 pub fn record_install_progress(
@@ -379,6 +388,7 @@ pub fn list_active_version_install_tasks() -> Vec<ActiveDownloadTaskDto> {
             stage: stage_or_detail(&entry.download),
             detail: entry.download.detail.clone(),
             speed_bps: entry.download.speed,
+            bytes_downloaded: entry.download.downloaded,
             role: Some("download".into()),
             session_id: Some(session_id.clone()),
             progress_mode: Some("percent".into()),
@@ -393,6 +403,7 @@ pub fn list_active_version_install_tasks() -> Vec<ActiveDownloadTaskDto> {
             stage: stage_or_detail(&entry.install),
             detail: entry.install.detail.clone(),
             speed_bps: None,
+            bytes_downloaded: None,
             role: Some("install".into()),
             session_id: Some(session_id.clone()),
             progress_mode: Some("indeterminate".into()),

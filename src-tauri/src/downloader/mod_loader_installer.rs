@@ -339,7 +339,7 @@ pub async fn download_libraries_async(
         tasks.len(),
         already_existing
     );
-    let result = crate::downloader::concurrent_download::download_all(tasks, None).await;
+    let result = crate::downloader::concurrent_download::download_all(tasks, None, None).await;
     for failure in &result.failures {
         println!(
             "  警告：库 {} 下载失败：{}",
@@ -705,7 +705,7 @@ pub async fn run_processors_async(
         }
         if !pre_tasks.is_empty() {
             println!("  预热并行下载 {} 个 processor 依赖库", pre_tasks.len());
-            let _ = crate::downloader::concurrent_download::download_all(pre_tasks, None).await;
+            let _ = crate::downloader::concurrent_download::download_all(pre_tasks, None, None).await;
         }
     }
     let mut ran = 0usize;

@@ -534,6 +534,7 @@ async fn install_legacy_forge(
     cfg: &LoaderInstallerConfig,
     _progress_tx: Option<tokio::sync::mpsc::Sender<f64>>,
     _wait_for_original: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+    cancel: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
 ) -> Result<String> {
     fn find_entry_idx(archive: &mut ZipArchive<fs::File>, target: &str) -> Option<usize> {
         for i in 0..archive.len() {
@@ -914,7 +915,7 @@ async fn install_legacy_forge(
     }
     println!("[Legacy] 实际需要下载 {} 个库", download_tasks.len());
     if !download_tasks.is_empty() {
-        let result = concurrent_download::download_all(download_tasks, None).await;
+        let result = concurrent_download::download_all(download_tasks, None, cancel.clone()).await;
         println!(
             "[Legacy] 下载完成: 成功 {} / 失败 {}",
             result.success_count,
@@ -970,7 +971,12 @@ pub async fn install(
     progress_tx: Option<tokio::sync::mpsc::Sender<f64>>,
     byte_batch_tx: Option<tokio::sync::mpsc::Sender<(u64, u64)>>,
     wait_for_original: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+    cancel: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
 ) -> Result<String> {
+    use std::sync::atomic::Ordering;
+    if cancel.as_ref().is_some_and(|c| c.load(Ordering::SeqCst)) {
+        bail!("已取消");
+    }
     if !cfg.installer_jar_path.exists() {
         bail!(
             "找不到 Loader 安装器 JAR: {}",
@@ -1015,6 +1021,7 @@ pub async fn install(
             cfg,
             progress_tx,
             wait_for_original,
+            cancel.clone(),
         )
         .await;
     }
@@ -1751,7 +1758,10 @@ pub async fn install(
         .as_ref()
         .map(|outer| crate::downloader::install_progress::attach_download_progress_scaler(outer.clone()));
     let result =
-        concurrent_download::download_all_with_bytes(lib_tasks, dl_tx, byte_tracker).await;
+        concurrent_download::download_all_with_bytes(lib_tasks, dl_tx, byte_tracker, cancel.clone()).await;
+    if cancel.as_ref().is_some_and(|c| c.load(std::sync::atomic::Ordering::SeqCst)) {
+        bail!("已取消");
+    }
     println!(
         "下载完成: 成功 {} / 失败 {}",
         result.success_count,
@@ -1766,6 +1776,9 @@ pub async fn install(
     crate::downloader::install_progress::emit_install_phase_start(&progress_tx);
     if let Some(ready) = wait_for_original {
         while !ready.load(std::sync::atomic::Ordering::SeqCst) {
+            if cancel.as_ref().is_some_and(|c| c.load(std::sync::atomic::Ordering::SeqCst)) {
+                bail!("已取消");
+            }
             tokio::time::sleep(std::time::Duration::from_millis(200)).await;
         }
     }

@@ -56,6 +56,7 @@ pub async fn install_quilt_loader(
         &minecraft_path.to_string_lossy().to_string(),
         None,
         None,
+        None,
     )
     .await
     .map_err(|e| format!("安装 Quilt Loader 失败: {}", e))?;

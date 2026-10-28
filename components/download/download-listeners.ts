@@ -383,9 +383,19 @@ function makeProgressHandler(
       });
     }
     // #endregion
-    const speedBps = estimateSpeedBps(task_id, payload.downloaded, payload.speed);
-    const bytesDownloaded =
-      typeof payload.downloaded === "number" ? payload.downloaded : undefined;
+    const networkBytes =
+      typeof payload.downloaded === "number" && Number.isFinite(payload.downloaded)
+        ? payload.downloaded
+        : undefined;
+    const backendSpeed =
+      typeof payload.speed === "number" &&
+      Number.isFinite(payload.speed) &&
+      payload.speed > 0
+        ? payload.speed
+        : undefined;
+    const speedBps =
+      backendSpeed ?? estimateSpeedBps(task_id, networkBytes, backendSpeed);
+    const bytesDownloaded = networkBytes;
 
     if (isCompleted) clearSpeedSample(task_id);
 
@@ -888,15 +898,21 @@ export async function setupAllDownloadListeners(
         typeof payload.percent === "number" && Number.isFinite(payload.percent)
           ? payload.percent
           : undefined;
+      const networkBytes =
+        typeof payload.downloaded === "number" && Number.isFinite(payload.downloaded)
+          ? payload.downloaded
+          : undefined;
+      const backendSpeed =
+        typeof payload.speed === "number" &&
+        Number.isFinite(payload.speed) &&
+        payload.speed > 0
+          ? payload.speed
+          : undefined;
       const speedBps = isInstall
         ? undefined
-        : estimateSpeedBps(
-            taskId,
-            typeof payload.downloaded === "number" ? payload.downloaded : undefined,
-            typeof payload.speed === "number" ? payload.speed : undefined
-          );
-      const bytesDownloaded =
-        typeof payload.downloaded === "number" ? payload.downloaded : undefined;
+        : backendSpeed ??
+          estimateSpeedBps(taskId, networkBytes, backendSpeed);
+      const bytesDownloaded = networkBytes;
 
       setTasks((prev) => {
         if (isTaskDismissed(taskId)) return prev;

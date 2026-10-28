@@ -26,6 +26,7 @@ use super::events::{
     emit_download_progress, emit_install_progress, emit_session_started, emit_task_finished,
     TaskRole, VersionInstallSessionStartedPayload,
 };
+use super::modpack_rollback::rollback_modpack_after_failure;
 use super::plan::{ArtifactKind, InstallPlan, LoaderSelection};
 use super::progress_network::{
     credit_bucket_empty, map_into_bucket, ProgressBucket, VANILLA_END,
@@ -131,6 +132,14 @@ async fn run_session_workers(app: AppHandle, session: InstallSession) {
     let dl_err = dl_res.err();
 
     if cancelled || dl_err.is_some() || !ins_success {
+        if let InstallPlan::Modpack { zip_path } = &session.plan {
+            rollback_modpack_after_failure(
+                &session.minecraft_path,
+                &session.staging_root,
+                Path::new(zip_path),
+                session.ledger.as_ref(),
+            );
+        }
         session.ledger.rollback();
     } else {
         session.ledger.cleanup_temp_only();
@@ -487,26 +496,40 @@ async fn download_modpack_files(
     let vanilla_pre_at_download_start = vanilla_json.exists() && vanilla_jar.exists();
     if vanilla_pre_at_download_start {
         let _ = std::fs::write(session.staging_root.join("vanilla_pre_existed.flag"), b"1");
+    } else {
+        let _ = std::fs::write(session.staging_root.join("vanilla_downloaded.flag"), b"1");
+        session.ledger.mark_created(
+            session
+                .minecraft_path
+                .join("versions")
+                .join(&mc_for_flags),
+        );
     }
 
-    let (tx, mut rx) = tokio::sync::mpsc::channel::<(usize, usize, String, String)>(64);
+    let modpack_instance_name = sanitize_instance_name(&format!(
+        "{}-{}",
+        parsed_for_flags.name, parsed_for_flags.mc_version
+    ));
+    session.ledger.mark_created(
+        session
+            .minecraft_path
+            .join("versions")
+            .join(&modpack_instance_name),
+    );
+
+    let (tx, mut rx) = tokio::sync::mpsc::channel::<modpack_installer::ModpackProgressEvent>(64);
     let app2 = app.clone();
     let sid = session.session_id.clone();
     let tid = session.download_task_id;
     let legacy = session.legacy;
     let cancel_fwd = cancel.clone();
     tokio::spawn(async move {
-        while let Some((downloaded, total, fname, stage_hint)) = rx.recv().await {
+        while let Some(ev) = rx.recv().await {
             if cancel_fwd.load(Ordering::SeqCst) {
                 break;
             }
-            let percent = if total == 0 {
-                0.0
-            } else {
-                (downloaded as f64 / total as f64) * 100.0
-            };
-            let percent = percent.clamp(0.0, 99.5);
-            let hint = stage_hint.to_ascii_lowercase();
+            let percent = modpack_installer::modpack_ui_percent(&ev);
+            let hint = ev.stage.to_ascii_lowercase();
             let stage = if hint.contains("原版") || hint.contains("minecraft") {
                 STAGE_VANILLA
             } else if hint.contains("加载器")
@@ -516,15 +539,16 @@ async fn download_modpack_files(
                 || hint.contains("quilt")
                 || hint.contains("optifine")
                 || hint.contains("liteloader")
+                || hint.contains("modloader")
             {
                 STAGE_LOADER_INSTALLER
             } else {
                 STAGE_COMMUNITY
             };
-            let message = if !fname.is_empty() {
-                Some(fname)
-            } else if !stage_hint.is_empty() {
-                Some(stage_hint)
+            let message = if !ev.file_name.is_empty() {
+                Some(ev.file_name)
+            } else if !ev.stage.is_empty() {
+                Some(ev.stage)
             } else {
                 None
             };
@@ -534,8 +558,8 @@ async fn download_modpack_files(
                 tid,
                 percent,
                 stage,
-                None,
-                Some(downloaded as u64),
+                ev.speed_bps,
+                ev.network_bytes,
                 message,
                 legacy,
             );
@@ -543,30 +567,52 @@ async fn download_modpack_files(
     });
 
     let minecraft_dir = session.minecraft_path.clone();
-    let _java = session.java_path.as_deref();
-    let result = modpack_installer::download_modpack_from_zip(
-        Path::new(zip_path),
+    let java = session.java_path.as_deref();
+    let tx_core = tx.clone();
+    let core_result = modpack_installer::download_modpack_core(
+        &parsed_for_flags,
         &minecraft_dir,
-        Some(tx),
+        java,
+        Some(tx_core),
+        Some(cancel.clone()),
     )
     .await
     .map_err(|e| e.to_string());
 
-    match result {
-        Ok((instance_name, _count)) => {
-            if !vanilla_pre_at_download_start {
-                let _ = std::fs::write(session.staging_root.join("vanilla_downloaded.flag"), b"1");
+    match core_result {
+        Ok((instance_name, loader_ver, loader_hint)) => {
+            if loader_ver != instance_name && !loader_ver.is_empty() {
+                session.ledger.mark_created(
+                    minecraft_dir.join("versions").join(&loader_ver),
+                );
             }
-            // Stash instance name via created path for install worker
-            session
-                .ledger
-                .mark_created(minecraft_dir.join("versions").join(&instance_name));
+            let _ = std::fs::write(
+                session.staging_root.join("modpack_instance_name.txt"),
+                &instance_name,
+            );
+            let _ = std::fs::write(
+                session.staging_root.join("modpack_loader_version.txt"),
+                &loader_ver,
+            );
+            let _ = std::fs::write(
+                session.staging_root.join("modpack_loader_hint.txt"),
+                &loader_hint,
+            );
             session.artifacts.mark_ready(ArtifactKind::Vanilla);
             session.artifacts.mark_ready(ArtifactKind::LoaderInstaller);
+            println!(
+                "[Modpack] 核心下载完成，安装任务可合并；开始并行下载社区资源"
+            );
+            modpack_installer::download_modpack_community(
+                &parsed_for_flags,
+                &minecraft_dir,
+                Some(tx),
+                Some(cancel.clone()),
+            )
+            .await
+            .map_err(|e| e.to_string())?;
+            ensure_not_cancelled(&cancel)?;
             session.artifacts.mark_ready(ArtifactKind::ModpackFiles);
-            // Store instance name in a side channel: write a marker file in staging
-            let marker = session.staging_root.join("modpack_instance_name.txt");
-            let _ = std::fs::write(&marker, &instance_name);
             emit_download_progress(
                 app,
                 &session.session_id,
@@ -582,6 +628,7 @@ async fn download_modpack_files(
         }
         Err(e) => {
             session.artifacts.mark_failed(ArtifactKind::ModpackFiles);
+            session.artifacts.mark_failed(ArtifactKind::LoaderInstaller);
             Err(e)
         }
     }
@@ -593,7 +640,7 @@ async fn run_install_worker(
 ) -> Result<Option<String>, String> {
     let cancel = session.cancel.clone();
 
-    // Modpack: download worker already installed; just finish stages.
+    // Modpack: core (vanilla + loader) in download worker; merge after core ready; community in parallel.
     if matches!(&session.plan, InstallPlan::Modpack { .. }) {
         emit_install_progress(
             &app,
@@ -604,7 +651,11 @@ async fn run_install_worker(
         );
         session
             .artifacts
-            .wait(ArtifactKind::ModpackFiles, &cancel)
+            .wait(ArtifactKind::Vanilla, &cancel)
+            .await?;
+        session
+            .artifacts
+            .wait(ArtifactKind::LoaderInstaller, &cancel)
             .await?;
         ensure_not_cancelled(&cancel)?;
         let zip_path = session
@@ -615,27 +666,19 @@ async fn run_install_worker(
             &app,
             &session.session_id,
             session.install_task_id,
-            STAGE_LOADER,
+            STAGE_MERGE,
             None,
         );
-        let java = session.java_path.as_deref();
         let install_result = modpack_installer::install_modpack_after_download(
             Path::new(zip_path),
             &session.minecraft_path,
-            java,
+            &session.staging_root,
         )
         .await
         .map_err(|e| e.to_string());
         ensure_not_cancelled(&cancel)?;
         return match install_result {
             Ok(outcome) => {
-                emit_install_progress(
-                    &app,
-                    &session.session_id,
-                    session.install_task_id,
-                    STAGE_MERGE,
-                    None,
-                );
                 emit_install_progress(
                     &app,
                     &session.session_id,
@@ -969,6 +1012,7 @@ async fn install_loaders(
         );
 
         let original_ready = Arc::new(AtomicBool::new(true)); // vanilla already ready
+        let loader_cancel = Some(session.cancel.clone());
         let name = match loader_type.as_str() {
             "forge" => forge_installer::install_forge(
                 mc_version,
@@ -978,6 +1022,7 @@ async fn install_loaders(
                 None,
                 None,
                 Some(original_ready),
+                loader_cancel.clone(),
             )
             .await
             .map_err(|e| e.to_string())?,
@@ -989,6 +1034,7 @@ async fn install_loaders(
                 None,
                 None,
                 Some(original_ready),
+                loader_cancel.clone(),
             )
             .await
             .map_err(|e| e.to_string())?,
@@ -999,6 +1045,7 @@ async fn install_loaders(
                 true,
                 None,
                 None,
+                loader_cancel.clone(),
             )
             .await
             .map_err(|e| e.to_string())?,
@@ -1008,6 +1055,7 @@ async fn install_loaders(
                 &mc_path_str,
                 None,
                 None,
+                loader_cancel.clone(),
             )
             .await
             .map_err(|e| e.to_string())?,

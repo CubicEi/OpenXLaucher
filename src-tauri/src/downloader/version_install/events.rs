@@ -175,6 +175,7 @@ pub fn emit_download_progress(
         stage_text.clone(),
         detail.clone().or(stage_text.clone()),
         speed,
+        downloaded,
     );
     let payload = VersionInstallProgressPayload {
         session_id: session_id.to_string(),

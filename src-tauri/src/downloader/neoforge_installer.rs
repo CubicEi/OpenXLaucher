@@ -6,6 +6,8 @@ use crate::http_client::shared_client;
 use anyhow::{anyhow, Result};
 use serde::Deserialize;
 use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 #[derive(Debug, Deserialize, Clone)]
 struct NeoForgeBmclEntry {
     #[serde(default)]
@@ -250,7 +252,9 @@ async fn download_installer(
     neoforge_version: &str,
     mc_dir: &PathBuf,
     progress_tx: Option<tokio::sync::mpsc::Sender<f64>>,
+    cancel: Option<Arc<AtomicBool>>,
 ) -> Result<PathBuf> {
+    use std::sync::atomic::Ordering;
     let cache_dir = mc_dir.join("cache").join("neoforge_installer");
     std::fs::create_dir_all(&cache_dir).ok();
     let file_name = format!("neoforge-{}-installer.jar", neoforge_version);
@@ -303,7 +307,7 @@ async fn download_installer(
         });
         inner
     });
-    match concurrent_download::download_file(&task, byte_tx, None).await {
+    match concurrent_download::download_file(&task, byte_tx, cancel.clone()).await {
         concurrent_download::SingleDownloadResult::Success { path, .. } => Ok(path),
         concurrent_download::SingleDownloadResult::Failed { error, .. } => {
             Err(anyhow::anyhow!("下载 NeoForge Installer JAR 失败: {}", error))
@@ -318,13 +322,14 @@ pub async fn install_neoforge(
     progress_tx: Option<tokio::sync::mpsc::Sender<f64>>,
     byte_batch_tx: Option<tokio::sync::mpsc::Sender<(u64, u64)>>,
     wait_for_original: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+    cancel: Option<Arc<AtomicBool>>,
 ) -> Result<String> {
     let mc_path = PathBuf::from(mc_dir);
     if let Some(tx) = progress_tx.as_ref() {
         let _ = tx.try_send(0.0);
     }
     let installer_jar =
-        download_installer(neoforge_version, &mc_path, progress_tx.clone()).await?;
+        download_installer(neoforge_version, &mc_path, progress_tx.clone(), cancel.clone()).await?;
     let java_executable = if java_path.is_empty() {
         let auto = shared::pick_java_executable(mc_version);
         println!("[NeoForge] 自动探测 Java: {} (java_path 为空)", auto);
@@ -344,5 +349,13 @@ pub async fn install_neoforge(
             "https://libraries.minecraft.net/".to_string(),
         ],
     };
-    shared::install(&cfg, &mc_path, progress_tx, byte_batch_tx, wait_for_original).await
+    shared::install(
+        &cfg,
+        &mc_path,
+        progress_tx,
+        byte_batch_tx,
+        wait_for_original,
+        cancel,
+    )
+    .await
 }

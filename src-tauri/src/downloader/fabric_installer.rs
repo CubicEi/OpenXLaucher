@@ -6,6 +6,8 @@ use anyhow::{anyhow, Result};
 use serde_json;
 use std::fs;
 use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 use tokio::sync::mpsc;
 
 /// 获取 Fabric Loader 版本列表
@@ -53,7 +55,12 @@ pub async fn install_fabric_loader(
     use_mirror: bool,
     progress_tx: Option<mpsc::Sender<f64>>,
     byte_batch_tx: Option<mpsc::Sender<(u64, u64)>>,
+    cancel: Option<Arc<AtomicBool>>,
 ) -> Result<String> {
+    use std::sync::atomic::Ordering;
+    if cancel.as_ref().is_some_and(|c| c.load(Ordering::SeqCst)) {
+        return Err(anyhow!("已取消"));
+    }
     if let Some(tx) = progress_tx.as_ref() {
         let _ = tx.try_send(0.0);
     }
@@ -99,6 +106,7 @@ pub async fn install_fabric_loader(
         mc_folder_path,
         progress_tx.clone(),
         byte_batch_tx,
+        cancel,
     )
     .await?;
     install_progress::emit_install_phase_start(&progress_tx);
@@ -163,7 +171,7 @@ pub async fn install_fabric_api(
     let dl_tx = progress_tx
         .as_ref()
         .map(|outer| install_progress::attach_download_progress_scaler(outer.clone()));
-    let result = concurrent_download::download_all(vec![task], dl_tx).await;
+    let result = concurrent_download::download_all(vec![task], dl_tx, None).await;
     if !result.failures.is_empty() {
         let f = &result.failures[0];
         return Err(anyhow!("下载 Fabric API 失败: {}", f.error));
@@ -181,6 +189,7 @@ async fn download_libraries(
     mc_folder_path: &str,
     progress_tx: Option<mpsc::Sender<f64>>,
     byte_batch_tx: Option<mpsc::Sender<(u64, u64)>>,
+    cancel: Option<Arc<AtomicBool>>,
 ) -> Result<()> {
     let mut tasks = Vec::new();
     for lib in libraries {
@@ -219,7 +228,11 @@ async fn download_libraries(
     let dl_tx = progress_tx
         .as_ref()
         .map(|outer| install_progress::attach_download_progress_scaler(outer.clone()));
-    let result = concurrent_download::download_all_with_bytes(tasks, dl_tx, byte_tracker).await;
+    let result =
+        concurrent_download::download_all_with_bytes(tasks, dl_tx, byte_tracker, cancel.clone()).await;
+    if crate::downloader::modular_download::is_download_cancelled(&cancel) {
+        return Err(anyhow!("已取消"));
+    }
     if !result.failures.is_empty() {
         eprintln!("\n以下文件下载失败:");
         for f in &result.failures {

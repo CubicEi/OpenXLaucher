@@ -4,13 +4,6 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { useLaunchContext, DEFAULT_INITIAL_JVM_ARGS } from "@/components/launch/launch-provider";
 import { useAccountContext } from "@/components/accounts/account-provider";
 import { VersionSelectorDialog } from "@/components/launch/version-selector-dialog";
@@ -521,29 +514,35 @@ ${result}
             <Gauge className="size-3" />
             {t("launch.config.processPriority")}
           </Label>
-          <Select
-            value={config.processPriority || "medium"}
-            onValueChange={(value) =>
-              updateConfig({
-                processPriority: value as LaunchConfig["processPriority"],
-              })
-            }
-          >
-            <SelectTrigger size="sm" className="h-8 w-full text-xs">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="low" className="text-xs">
-                {t("launch.config.processPriorityLow")}
-              </SelectItem>
-              <SelectItem value="medium" className="text-xs">
-                {t("launch.config.processPriorityMedium")}
-              </SelectItem>
-              <SelectItem value="high" className="text-xs">
-                {t("launch.config.processPriorityHigh")}
-              </SelectItem>
-            </SelectContent>
-          </Select>
+          <div className="flex w-full gap-1 rounded-lg bg-muted p-1">
+            {(
+              [
+                { value: "low", label: t("launch.config.processPriorityLow") },
+                { value: "medium", label: t("launch.config.processPriorityMedium") },
+                { value: "high", label: t("launch.config.processPriorityHigh") },
+              ] as const
+            ).map(({ value, label }) => {
+              const selected = (config.processPriority || "medium") === value;
+              return (
+                <button
+                  key={value}
+                  type="button"
+                  className={`flex-1 rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
+                    selected
+                      ? "bg-background text-foreground shadow-sm"
+                      : "text-muted-foreground hover:text-foreground"
+                  }`}
+                  onClick={() =>
+                    updateConfig({
+                      processPriority: value,
+                    })
+                  }
+                >
+                  {label}
+                </button>
+              );
+            })}
+          </div>
         </div>
 
         {/* 最大内存 */}

@@ -13,6 +13,10 @@ use super::download_runtime_config;
 
 pub const MAX_CONCURRENT_FILES: usize = 24;
 pub const THROTTLE_MS_AFTER_FILE: u64 = 0;
+
+pub fn is_download_cancelled(cancel: &Option<Arc<AtomicBool>>) -> bool {
+    cancel.as_ref().is_some_and(|c| c.load(Ordering::SeqCst))
+}
 const SMART_INITIAL_CONCURRENCY: usize = 5;
 const SMART_MIN_CONCURRENCY: usize = 2;
 pub(crate) const SMART_MAX_CONCURRENCY: usize = 12;
@@ -2095,6 +2099,15 @@ pub async fn download_all_with_file_info(
     tasks: Vec<DownloadTask>,
     on_file_done: Option<mpsc::Sender<(usize, usize, String)>>,
 ) -> DownloadResult {
+    download_all_with_file_info_and_bytes(tasks, on_file_done, None, None).await
+}
+
+pub async fn download_all_with_file_info_and_bytes(
+    tasks: Vec<DownloadTask>,
+    on_file_done: Option<mpsc::Sender<(usize, usize, String)>>,
+    byte_tracker: Option<crate::downloader::install_progress::ByteBatchTracker>,
+    cancel: Option<Arc<AtomicBool>>,
+) -> DownloadResult {
     let total = tasks.len();
     if total == 0 {
         return DownloadResult {
@@ -2102,9 +2115,9 @@ pub async fn download_all_with_file_info(
             failures: Vec::new(),
         };
     }
-    
+
     let done_counter = Arc::new(AtomicU64::new(0));
-    
+
     let (success_count, failures) = smart_batch_download(
         tasks,
         total,
@@ -2115,10 +2128,11 @@ pub async fn download_all_with_file_info(
             }
         },
         Option::<fn(f64) -> ()>::None,
-        None,
+        byte_tracker,
+        cancel,
     )
     .await;
-    
+
     DownloadResult {
         success_count,
         failures,
@@ -2128,8 +2142,9 @@ pub async fn download_all_with_file_info(
 pub async fn download_all(
     tasks: Vec<DownloadTask>,
     progress_tx: Option<mpsc::Sender<f64>>,
+    cancel: Option<Arc<AtomicBool>>,
 ) -> DownloadResult {
-    download_all_with_bytes(tasks, progress_tx, None).await
+    download_all_with_bytes(tasks, progress_tx, None, cancel).await
 }
 
 /// Like `download_all`, but also forwards per-file byte progress `(downloaded, total)` when known.
@@ -2137,6 +2152,7 @@ pub async fn download_all_with_bytes(
     tasks: Vec<DownloadTask>,
     progress_tx: Option<mpsc::Sender<f64>>,
     byte_tracker: Option<crate::downloader::install_progress::ByteBatchTracker>,
+    cancel: Option<Arc<AtomicBool>>,
 ) -> DownloadResult {
     let total = tasks.len();
     if total == 0 {
@@ -2159,6 +2175,7 @@ pub async fn download_all_with_bytes(
             }
         }),
         byte_tracker,
+        cancel,
     )
     .await;
 
@@ -2289,6 +2306,7 @@ async fn smart_batch_download(
     on_any_done: impl Fn(usize, usize, String) + Clone + Send + Sync + 'static,
     on_percent: Option<impl Fn(f64) + Clone + Send + Sync + 'static>,
     byte_tracker: Option<crate::downloader::install_progress::ByteBatchTracker>,
+    cancel: Option<Arc<AtomicBool>>,
 ) -> (usize, Vec<DownloadFailure>) {
     if tasks.is_empty() {
         return (0, Vec::new());
@@ -2365,6 +2383,11 @@ async fn smart_batch_download(
 
     let mut spawn_count: u64 = 0;
     loop {
+        if is_download_cancelled(&cancel) {
+            println!("[SmartDownload] 已取消，停止调度新下载");
+            break;
+        }
+
         let current_concurrency = concurrency.load(Ordering::SeqCst) as usize;
         let current_in_flight = in_flight.load(Ordering::SeqCst) as usize;
         let done_count = done_counter.load(Ordering::SeqCst) as usize;
@@ -2438,9 +2461,20 @@ async fn smart_batch_download(
                 let file_prog = byte_tracker
                     .clone()
                     .map(|t| t.file_progress_sender(fname.clone()));
+                let cancel_spawn = cancel.clone();
                 tokio::spawn(async move {
                     let _conn_permit = conn_sem_clone.acquire_owned().await;
-                    let result = download_file(&task, file_prog, None).await;
+                    if is_download_cancelled(&cancel_spawn) {
+                        in_flight_clone.fetch_sub(1, Ordering::SeqCst);
+                        let _ = done_tx_clone.send((
+                            false,
+                            fname.clone(),
+                            "已取消".to_string(),
+                            Vec::new(),
+                        ));
+                        return;
+                    }
+                    let result = download_file(&task, file_prog, cancel_spawn).await;
                     in_flight_clone.fetch_sub(1, Ordering::SeqCst);
 
                     match result {

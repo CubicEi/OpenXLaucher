@@ -61,6 +61,7 @@ pub async fn install_fabric_loader(
         use_mirror,
         None,
         None,
+        None,
     )
     .await
     .map_err(|e| format!("安装 Fabric Loader 失败: {}", e))?;

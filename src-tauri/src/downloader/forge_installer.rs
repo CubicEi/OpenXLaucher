@@ -5,6 +5,8 @@ use anyhow::{bail, Context, Result};
 use regex::Regex;
 use serde::Deserialize;
 use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 #[derive(Debug, Deserialize, Clone)]
 struct ForgeBmclEntry {
     #[serde(default)]
@@ -173,7 +175,9 @@ async fn download_installer(
     forge_version: &str,
     mc_dir: &PathBuf,
     progress_tx: Option<tokio::sync::mpsc::Sender<f64>>,
+    cancel: Option<Arc<AtomicBool>>,
 ) -> Result<PathBuf> {
+    use std::sync::atomic::Ordering;
     let cache_dir = mc_dir.join("cache").join("forge_installer");
     std::fs::create_dir_all(&cache_dir).ok();
     let forge_only = forge_version
@@ -310,6 +314,9 @@ async fn download_installer(
     }
     let mut last_error: Option<String> = None;
     for (file_name, url) in &candidate_urls {
+        if cancel.as_ref().is_some_and(|c| c.load(Ordering::SeqCst)) {
+            bail!("已取消");
+        }
         let target_path = cache_dir.join(&file_name);
         println!("[Forge] 正在下载: {}", url);
         let task = concurrent_download::DownloadTask {
@@ -331,7 +338,7 @@ async fn download_installer(
             });
             inner
         });
-        match concurrent_download::download_file(&task, byte_tx, None).await {
+        match concurrent_download::download_file(&task, byte_tx, cancel.clone()).await {
             concurrent_download::SingleDownloadResult::Success { path, .. } => {
                 if path.exists() {
                     return Ok(path);
@@ -367,6 +374,7 @@ pub async fn install_forge(
     progress_tx: Option<tokio::sync::mpsc::Sender<f64>>,
     byte_batch_tx: Option<tokio::sync::mpsc::Sender<(u64, u64)>>,
     wait_for_original: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+    cancel: Option<Arc<AtomicBool>>,
 ) -> Result<String> {
     let mc_path = PathBuf::from(mc_dir);
     let normalized_version = if forge_version.contains('-') {
@@ -381,8 +389,14 @@ pub async fn install_forge(
     if let Some(tx) = progress_tx.as_ref() {
         let _ = tx.try_send(0.0);
     }
-    let installer_jar =
-        download_installer(mc_version, &normalized_version, &mc_path, progress_tx.clone()).await?;
+    let installer_jar = download_installer(
+        mc_version,
+        &normalized_version,
+        &mc_path,
+        progress_tx.clone(),
+        cancel.clone(),
+    )
+    .await?;
     let java_executable = if java_path.is_empty() {
         let auto = shared::pick_java_executable(mc_version);
         println!("[Forge] 自动探测 Java: {} (java_path 为空)", auto);
@@ -405,5 +419,13 @@ pub async fn install_forge(
             "https://repo1.maven.org/maven2/".to_string(),
         ],
     };
-    shared::install(&cfg, &mc_path, progress_tx, byte_batch_tx, wait_for_original).await
+    shared::install(
+        &cfg,
+        &mc_path,
+        progress_tx,
+        byte_batch_tx,
+        wait_for_original,
+        cancel,
+    )
+    .await
 }
