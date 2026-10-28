@@ -27,7 +27,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { ImagePlus, RotateCcw, Sparkles, Type, X, Layout } from "lucide-react";
+import { ImagePlus, RotateCcw, Palette, Type, X, Layout } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useI18n } from "@/components/i18n/use-i18n";
 import { ThemeSwitcher } from "@/components/settings/theme-switcher";
@@ -411,7 +411,7 @@ export function AppearanceSection() {
         <div className="flex items-start justify-between gap-4">
           <div>
             <CardTitle className="flex items-center gap-2 text-base">
-              <Sparkles className="size-4 text-primary" />
+              <Palette className="size-4 text-primary" />
               {t("settings.appearance.appearance")}
             </CardTitle>
             <CardDescription className="text-xs mt-1">{t("settings.appearance.themeColorFontSizeAndPageBackground")}</CardDescription>

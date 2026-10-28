@@ -5,7 +5,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { cn } from "@/lib/utils";
 import { useI18n, type TranslationKey } from "@/components/i18n/use-i18n";
-import { Settings, Sparkles, Download, SlidersHorizontal } from "lucide-react";
+import { Settings, Palette, Download, SlidersHorizontal } from "lucide-react";
 import {
   PageEnter,
   PageEnterChrome,
@@ -39,7 +39,7 @@ const NAV_ITEMS: NavItem[] = [
   {
     href: "/settings/appearance",
     label: "settings.page.appearance",
-    icon: <Sparkles className="size-4" />,
+    icon: <Palette className="size-4" />,
   },
 ];
 

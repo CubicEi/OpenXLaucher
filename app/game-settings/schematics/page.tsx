@@ -1,8 +1,12 @@
 "use client";
 
 import React, { useCallback } from "react";
-import { Box } from "lucide-react";
+import { Map } from "lucide-react";
 import { createResourcePage } from "@/components/resource-page-factory";
+import {
+  GAME_SETTINGS_SCHEMATICS_ICON_BG,
+  GAME_SETTINGS_SCHEMATICS_ICON_TEXT,
+} from "@/constants/index";
 import { useRouter } from "next/navigation";
 import { useInstancePath } from "@/hooks/use-instance-path";
 import { invoke } from "@tauri-apps/api/core";
@@ -50,9 +54,9 @@ export default function SchematicsPageWrapper() {
   // 重新用带 viewer 的工厂生成：
   const ViewerResourcePage = createResourcePage({
     title: "panel.schematics",
-    leftIcon: <Box className="size-5 text-rose-500" />,
-    leftIconBg: "bg-rose-500/10",
-    leftIconColor: "text-rose-500",
+    leftIcon: <Map className={`size-5 ${GAME_SETTINGS_SCHEMATICS_ICON_TEXT}`} />,
+    leftIconBg: GAME_SETTINGS_SCHEMATICS_ICON_BG,
+    leftIconColor: GAME_SETTINGS_SCHEMATICS_ICON_TEXT,
     instanceSubdir: "schematics",
     cacheKind: "world",
     extensions: SCHEMATIC_EXTS,

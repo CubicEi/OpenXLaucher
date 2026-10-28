@@ -13,7 +13,7 @@ import {
   UserPlus,
   Users,
 } from "lucide-react";
-import { HOME_GAME_QUICK_ACTIONS, HOME_QUICK_ACTIONS } from "@/constants";
+import { HOME_QUICK_ACCESS_ACTIONS } from "@/constants";
 import { AccountSwitcher } from "@/components/accounts/account-switcher";
 import { SkinCapeManager } from "@/components/accounts/skin-cape-manager";
 import { SkinViewer3D } from "@/components/accounts/skin-viewer-3d";
@@ -289,31 +289,8 @@ export default function Home() {
                   <CardDescription>{t("home.accessCommonFeaturesWithoutNavigatingMultipleMenus")}</CardDescription>
                 </CardHeader>
                 <CardContent>
-                  <div className="grid gap-2 sm:grid-cols-2">
-                    {HOME_QUICK_ACTIONS.map(({ href, titleKey, descriptionKey, icon: Icon, iconClassName }) => (
-                      <Link
-                        key={href}
-                        href={href}
-                        onPointerDown={onInAppLinkPointerDown}
-                        onClick={createInAppLinkHandler(router, href)}
-                        className="group flex min-w-0 items-center gap-3 rounded-xl border border-transparent p-3 transition-colors hover:border-border hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                      >
-                        <span className={`flex size-9 shrink-0 items-center justify-center rounded-xl ${iconClassName}`}>
-                          <Icon className="size-4" />
-                        </span>
-                        <span className="min-w-0 flex-1">
-                          <span className="block text-sm font-medium">{t(titleKey)}</span>
-                          <span className="block truncate text-xs text-muted-foreground">{t(descriptionKey)}</span>
-                        </span>
-                        <ArrowRight className="size-3.5 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
-                      </Link>
-                    ))}
-                  </div>
-
-                  <div className="h-px bg-border my-2" />
-
                   <div className="grid gap-2 grid-cols-[repeat(auto-fill,minmax(min(200px,100%),1fr))]">
-                    {HOME_GAME_QUICK_ACTIONS.map(({ href, titleKey, descriptionKey, icon: Icon, iconClassName }) => (
+                    {HOME_QUICK_ACCESS_ACTIONS.map(({ href, titleKey, descriptionKey, icon: Icon, iconClassName }) => (
                       <Link
                         key={href}
                         href={href}

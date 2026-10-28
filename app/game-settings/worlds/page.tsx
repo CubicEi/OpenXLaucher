@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect } from "react";
 import { motion } from "framer-motion";
-import { Map, ArrowLeft, Sparkles, Flame, Skull, Swords, Copy, Check } from "lucide-react";
+import { Globe, ArrowLeft, Sparkles, Flame, Skull, Swords, Copy, Check } from "lucide-react";
 import ResourcePanel from "@/components/resource-panel";
 import { useResourcePage, ResourcePageFallback } from "@/components/resource-page-factory";
 import { useLaunchContext } from "@/components/launch/launch-provider";
@@ -11,12 +11,16 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { invoke } from "@tauri-apps/api/core";
+import {
+  GAME_SETTINGS_WORLDS_ICON_BG,
+  GAME_SETTINGS_WORLDS_ICON_TEXT,
+} from "@/constants/index";
 
 const WORLDS_CONFIG = {
   title: "panel.worlds" as const,
-  leftIcon: <Map className="size-5 text-amber-500" />,
-  leftIconBg: "bg-amber-500/10",
-  leftIconColor: "text-amber-500",
+  leftIcon: <Globe className={`size-5 ${GAME_SETTINGS_WORLDS_ICON_TEXT}`} />,
+  leftIconBg: GAME_SETTINGS_WORLDS_ICON_BG,
+  leftIconColor: GAME_SETTINGS_WORLDS_ICON_TEXT,
   instanceSubdir: "saves",
   cacheKind: "world",
   extensions: ["zip", "rar", "mcworld"],
@@ -106,7 +110,7 @@ function WorldDetailPage({
         className="flex h-full flex-col items-center justify-center gap-3"
       >
         <div className="size-12 rounded-full bg-muted flex items-center justify-center animate-pulse">
-          <Map className="size-6 text-muted-foreground" />
+          <Globe className="size-6 text-muted-foreground" />
         </div>
         <p className="text-sm text-muted-foreground">加载存档信息...</p>
       </motion.div>
@@ -308,7 +312,7 @@ export default function WorldsPage() {
           className="flex h-full flex-col items-center justify-center gap-3 p-4"
         >
           <div className="size-12 rounded-full bg-muted flex items-center justify-center">
-            <Map className="size-6 text-muted-foreground" />
+            <Globe className="size-6 text-muted-foreground" />
           </div>
           <p className="text-sm font-medium">未配置游戏目录</p>
           <p className="text-xs text-muted-foreground">请先在「启动」页面配置 Minecraft 游戏目录</p>

@@ -17,6 +17,10 @@ import {
 import { useI18n } from "@/components/i18n/use-i18n";
 import { ExportIncludeItem } from "@/components/game-settings/export-include-item";
 import { fadeSlideUp } from "@/lib/motion";
+import {
+  GAME_SETTINGS_EXPORT_ICON_BG,
+  GAME_SETTINGS_EXPORT_ICON_TEXT,
+} from "@/constants/index";
 import { cn } from "@/lib/utils";
 import type { InstanceExportOptions } from "@/types";
 
@@ -236,8 +240,8 @@ export function ExportInstanceForm({
         animate="animate"
         className="flex shrink-0 items-center gap-3"
       >
-        <div className="flex size-9 items-center justify-center rounded-xl bg-sky-500/10">
-          <Package className="size-5 text-sky-500" />
+        <div className={`flex size-9 items-center justify-center rounded-xl ${GAME_SETTINGS_EXPORT_ICON_BG}`}>
+          <Package className={`size-5 ${GAME_SETTINGS_EXPORT_ICON_TEXT}`} />
         </div>
         <div className="min-w-0 flex-1">
           <h1 className="text-lg font-semibold leading-none">

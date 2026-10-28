@@ -8,7 +8,7 @@ import {
   Gamepad2,
   Puzzle,
   Image as ImageIcon,
-  Box,
+  Globe,
   Map,
   Sparkles,
   Database,
@@ -69,7 +69,7 @@ const FEATURE_META: Record<
   },
   "/game-settings/worlds": {
     description: "gameSettings.manageYourWorldSaves",
-    icon: Map,
+    icon: Globe,
   },
   "/game-settings/shaders": {
     description: "gameSettings.configureShaderEffectsAndShaders",
@@ -81,7 +81,7 @@ const FEATURE_META: Record<
   },
   "/game-settings/schematics": {
     description: "gameSettings.manageBuildingSchematicFiles",
-    icon: Box,
+    icon: Map,
   },
   "/game-settings/screenshots": {
     description: "gameSettings.viewScreenshotsSavedInGame",

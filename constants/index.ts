@@ -1,11 +1,10 @@
 import {
   Camera,
   Database,
-  Download,
-  Gamepad2,
   Globe,
+  Image as ImageIcon,
   Map,
-  Palette,
+  Package,
   Puzzle,
   Sparkles,
   type LucideIcon,
@@ -13,6 +12,7 @@ import {
 
 import type { HomeQuickAction } from "@/types";
 import type { TranslationKey } from "@/components/i18n/use-i18n";
+import { GAME_SETTINGS_FEATURE_NAV } from "@/app/game-settings/feature-nav";
 
 /**
  * 动画过渡时长常量 (ms)
@@ -94,19 +94,107 @@ const homeQuickAction = (
   iconClassName: string,
 ): HomeQuickAction => ({ href, titleKey, descriptionKey, icon, iconClassName });
 
-/** 首页上方通用功能入口 */
-export const HOME_QUICK_ACTIONS: HomeQuickAction[] = [
-  homeQuickAction("/download", "home.downloads", "home.gameLoadersAndResources", Download, "bg-sky-500/10 text-sky-600 dark:text-sky-400"),
-  homeQuickAction("/game-settings", "home.gameManagement", "home.modsWorldsAndResourcePacks", Gamepad2, "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"),
-];
+/** 存档管理 accent（游戏设置 · 存档 + 主页快速入口） */
+export const GAME_SETTINGS_WORLDS_ICON_BG = "bg-[#33f1ff]/10";
+export const GAME_SETTINGS_WORLDS_ICON_TEXT = "text-[#33f1ff]";
+export const GAME_SETTINGS_WORLDS_ICON_CLASS = `${GAME_SETTINGS_WORLDS_ICON_BG} ${GAME_SETTINGS_WORLDS_ICON_TEXT}`;
 
-/** 首页游戏资源快捷入口 */
-export const HOME_GAME_QUICK_ACTIONS: HomeQuickAction[] = [
-  homeQuickAction("/game-settings/mods", "home.cardGrid.mods", "home.cardGrid.manageYourMods", Puzzle, "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"),
-  homeQuickAction("/game-settings/screenshots", "home.cardGrid.screenshots", "home.cardGrid.manageGameScreenshots", Camera, "bg-cyan-500/10 text-cyan-600 dark:text-cyan-400"),
-  homeQuickAction("/game-settings/schematics", "home.cardGrid.schematics", "home.cardGrid.manageBuildingDesigns", Map, "bg-teal-500/10 text-teal-600 dark:text-teal-400"),
-  homeQuickAction("/game-settings/resources", "home.cardGrid.resourcePacks", "home.cardGrid.manageGameTextures", Palette, "bg-blue-500/10 text-blue-600 dark:text-blue-400"),
-  homeQuickAction("/game-settings/datapacks", "gameSettings.datapacks", "gameSettings.manageMinecraftDatapacks", Database, "bg-fuchsia-500/10 text-fuchsia-600 dark:text-fuchsia-400"),
-  homeQuickAction("/game-settings/shaders", "home.cardGrid.shaders", "home.cardGrid.enhancedVisualEffects", Sparkles, "bg-violet-500/10 text-violet-600 dark:text-violet-400"),
-  homeQuickAction("/game-settings/worlds", "home.cardGrid.worlds", "home.cardGrid.manageWorldSaves", Globe, "bg-amber-500/10 text-amber-600 dark:text-amber-400"),
-];
+export const GAME_SETTINGS_RESOURCES_ICON_BG = "bg-sky-500/10";
+export const GAME_SETTINGS_RESOURCES_ICON_TEXT = "text-sky-500";
+
+export const GAME_SETTINGS_SCHEMATICS_ICON_BG = "bg-[#db0000]/10";
+export const GAME_SETTINGS_SCHEMATICS_ICON_TEXT = "text-[#db0000]";
+
+/** 游戏设置各子页 ResourcePanel / 页头图标背景（与各 game-settings 子页 page.tsx 一致） */
+export const GAME_SETTINGS_SECTION_ICON_CLASS = {
+  mods: "bg-emerald-500/10 text-emerald-500",
+  resources: `${GAME_SETTINGS_RESOURCES_ICON_BG} ${GAME_SETTINGS_RESOURCES_ICON_TEXT}`,
+  shaders: "bg-violet-500/10 text-violet-600 dark:text-violet-400",
+  worlds: GAME_SETTINGS_WORLDS_ICON_CLASS,
+  datapacks: "bg-amber-500/10 text-amber-500",
+  schematics: `${GAME_SETTINGS_SCHEMATICS_ICON_BG} ${GAME_SETTINGS_SCHEMATICS_ICON_TEXT}`,
+  screenshots: "bg-pink-500/10 text-pink-500",
+} as const;
+
+export const GAME_SETTINGS_EXPORT_ICON_BG = "bg-[#dbdb00]/10";
+export const GAME_SETTINGS_EXPORT_ICON_TEXT = "text-[#dbdb00]";
+export const GAME_SETTINGS_EXPORT_ICON_CLASS = `${GAME_SETTINGS_EXPORT_ICON_BG} ${GAME_SETTINGS_EXPORT_ICON_TEXT}`;
+
+/** 首页 Mod 快捷入口（与游戏设置 · 模组页一致，单独保留 emerald 语义） */
+export const HOME_MOD_QUICK_ICON_CLASS =
+  "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400";
+
+export const HOME_EXPORT_QUICK_ICON_CLASS = GAME_SETTINGS_EXPORT_ICON_CLASS;
+
+const HOME_QUICK_ACTION_BY_HREF: Record<string, HomeQuickAction> = {
+  "/game-settings/export": homeQuickAction(
+    "/game-settings/export",
+    "gameSettings.exportInstance",
+    "gameSettings.exportInstanceHint",
+    Package,
+    HOME_EXPORT_QUICK_ICON_CLASS,
+  ),
+  "/game-settings/mods": homeQuickAction(
+    "/game-settings/mods",
+    "home.cardGrid.mods",
+    "home.cardGrid.manageYourMods",
+    Puzzle,
+    HOME_MOD_QUICK_ICON_CLASS,
+  ),
+  "/game-settings/resources": homeQuickAction(
+    "/game-settings/resources",
+    "home.cardGrid.resourcePacks",
+    "home.cardGrid.manageGameTextures",
+    ImageIcon,
+    GAME_SETTINGS_SECTION_ICON_CLASS.resources,
+  ),
+  "/game-settings/worlds": homeQuickAction(
+    "/game-settings/worlds",
+    "home.cardGrid.worlds",
+    "home.cardGrid.manageWorldSaves",
+    Globe,
+    GAME_SETTINGS_SECTION_ICON_CLASS.worlds,
+  ),
+  "/game-settings/shaders": homeQuickAction(
+    "/game-settings/shaders",
+    "home.cardGrid.shaders",
+    "home.cardGrid.enhancedVisualEffects",
+    Sparkles,
+    GAME_SETTINGS_SECTION_ICON_CLASS.shaders,
+  ),
+  "/game-settings/datapacks": homeQuickAction(
+    "/game-settings/datapacks",
+    "gameSettings.datapacks",
+    "gameSettings.manageMinecraftDatapacks",
+    Database,
+    GAME_SETTINGS_SECTION_ICON_CLASS.datapacks,
+  ),
+  "/game-settings/schematics": homeQuickAction(
+    "/game-settings/schematics",
+    "home.cardGrid.schematics",
+    "home.cardGrid.manageBuildingDesigns",
+    Map,
+    GAME_SETTINGS_SECTION_ICON_CLASS.schematics,
+  ),
+  "/game-settings/screenshots": homeQuickAction(
+    "/game-settings/screenshots",
+    "home.cardGrid.screenshots",
+    "home.cardGrid.manageGameScreenshots",
+    Camera,
+    GAME_SETTINGS_SECTION_ICON_CLASS.screenshots,
+  ),
+};
+
+/** 与游戏设置顶栏子功能顺序一致（不含下载、游戏管理） */
+const HOME_QUICK_ACCESS_HREFS = [
+  ...GAME_SETTINGS_FEATURE_NAV.map((item) => item.href),
+] as const;
+
+export const HOME_QUICK_ACCESS_ACTIONS: HomeQuickAction[] =
+  HOME_QUICK_ACCESS_HREFS.map((href) => {
+    const action = HOME_QUICK_ACTION_BY_HREF[href];
+    if (!action) {
+      throw new Error(`Missing home quick action for ${href}`);
+    }
+    return action;
+  });
