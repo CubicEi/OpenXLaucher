@@ -22,8 +22,28 @@ fn read_package_json_version(manifest_dir: &str) -> String {
     panic!("package.json at {} has no \"version\" field", path.display());
 }
 
+fn rerun_if_icons_changed(manifest_dir: &str) {
+    let icons_dir = Path::new(manifest_dir).join("icons");
+    let stamp = Path::new(manifest_dir).join(".icon-sync-stamp");
+    println!("cargo:rerun-if-changed={}", stamp.display());
+    for name in [
+        "icon.ico",
+        "icon.png",
+        "32x32.png",
+        "64x64.png",
+        "128x128.png",
+        "128x128@2x.png",
+    ] {
+        let p = icons_dir.join(name);
+        if p.exists() {
+            println!("cargo:rerun-if-changed={}", p.display());
+        }
+    }
+}
+
 fn main() {
     let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR");
+    rerun_if_icons_changed(&manifest_dir);
     let version = read_package_json_version(&manifest_dir);
     println!("cargo:rustc-env=LAUNCHER_VERSION={}", version);
     println!("cargo:rerun-if-changed=../package.json");

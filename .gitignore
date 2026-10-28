@@ -90,4 +90,16 @@ gen_latest_json.js
 test_client/
 build.log
 
-build.log
+# Icons — source of truth: /icon/*.svg (regenerate: `pnpm tauri icon icon/icon.svg`)
+# Design / export artifacts not referenced by app or Tauri bundle config
+/icon/*.af
+/icon/icon.png
+# Legacy leftover (not in tauri.conf.json bundle.icon)
+/src-tauri/icons/RTL-B0-1024.png
+# Windows Store (AppX) assets from `tauri icon`; bundle targets use icon.ico/png only
+/src-tauri/icons/Square*.png
+/src-tauri/icons/StoreLogo.png
+# Mobile outputs from `tauri icon` (desktop bundle: deb, nsis, msi, dmg, app)
+/src-tauri/icons/ios/
+/src-tauri/icons/android/
+/src-tauri/.icon-sync-stamp

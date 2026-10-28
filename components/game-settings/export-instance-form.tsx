@@ -17,9 +17,48 @@ import {
 import { useI18n } from "@/components/i18n/use-i18n";
 import { ExportIncludeItem } from "@/components/game-settings/export-include-item";
 import { fadeSlideUp } from "@/lib/motion";
+import { cn } from "@/lib/utils";
 import type { InstanceExportOptions } from "@/types";
 
 const SAVE_SIZE_WARN_BYTES = 512 * 1024 * 1024;
+
+/** 与启动配置「游戏进程优先级」一致的分段切换 */
+function ExportSegment<T extends string>({
+  value,
+  onChange,
+  options,
+  disabled,
+}: {
+  value: T;
+  onChange: (v: T) => void;
+  options: { value: T; label: string }[];
+  disabled?: boolean;
+}) {
+  return (
+    <div className="flex w-full gap-1 rounded-lg bg-muted p-1">
+      {options.map(({ value: optionValue, label }) => {
+        const selected = value === optionValue;
+        return (
+          <button
+            key={optionValue}
+            type="button"
+            disabled={disabled}
+            className={cn(
+              "flex-1 rounded-md px-2 py-1 text-xs font-medium leading-tight transition-colors",
+              selected
+                ? "bg-background text-foreground shadow-sm"
+                : "text-muted-foreground hover:text-foreground",
+              disabled && "pointer-events-none opacity-50",
+            )}
+            onClick={() => onChange(optionValue)}
+          >
+            {label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
 
 export type ExportInstanceFormProps = {
   minecraftPath: string;
@@ -238,29 +277,32 @@ export function ExportInstanceForm({
         transition={{ delay: 0.05 }}
         className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden md:flex-row"
       >
-        {/* 左侧约 1/3：元数据与输出选项 */}
-        <section className="flex min-h-0 w-full flex-col gap-4 overflow-y-auto md:w-1/3 md:shrink-0 md:border-r md:border-border md:pr-4">
-          <div className="grid gap-2">
-            <Label>{t("gameSettings.exportPackName")}</Label>
+        {/* 左侧约 1/3：元数据与输出选项（行距约为默认 80%） */}
+        <section className="flex min-h-0 w-full flex-col gap-3 overflow-y-auto md:w-1/3 md:shrink-0 md:border-r md:border-border md:pr-4">
+          <div className="grid gap-1.5">
+            <Label className="text-xs">{t("gameSettings.exportPackName")}</Label>
             <Input
+              className="h-7 px-2.5 text-xs"
               value={packName}
               onChange={(e) => setPackName(e.target.value)}
               disabled={formDisabled}
             />
           </div>
 
-          <div className="grid gap-2">
-            <Label>{t("gameSettings.exportPackVersion")}</Label>
+          <div className="grid gap-1.5">
+            <Label className="text-xs">{t("gameSettings.exportPackVersion")}</Label>
             <Input
+              className="h-7 px-2.5 text-xs"
               value={packVersion}
               onChange={(e) => setPackVersion(e.target.value)}
               disabled={formDisabled}
             />
           </div>
 
-          <div className="grid gap-2">
-            <Label>{t("gameSettings.exportSummary")}</Label>
+          <div className="grid gap-1.5">
+            <Label className="text-xs">{t("gameSettings.exportSummary")}</Label>
             <Input
+              className="h-7 px-2.5 text-xs"
               value={summary}
               onChange={(e) => setSummary(e.target.value)}
               disabled={formDisabled}
@@ -268,61 +310,37 @@ export function ExportInstanceForm({
             />
           </div>
 
-          <div className="space-y-2">
-            <Label>{t("gameSettings.exportFormat")}</Label>
-            <div className="flex flex-col gap-1.5">
-              <Button
-                type="button"
-                size="sm"
-                className="w-full justify-start"
-                variant={format === "modrinth" ? "default" : "outline"}
-                disabled={formDisabled}
-                onClick={() => setFormat("modrinth")}
-              >
-                Modrinth (.mrpack)
-              </Button>
-              <Button
-                type="button"
-                size="sm"
-                className="w-full justify-start"
-                variant={format === "curseforge" ? "default" : "outline"}
-                disabled={formDisabled}
-                onClick={() => setFormat("curseforge")}
-              >
-                CurseForge (.zip)
-              </Button>
-            </div>
+          <div className="space-y-1.5">
+            <Label className="text-xs">{t("gameSettings.exportFormat")}</Label>
+            <ExportSegment
+              value={format}
+              disabled={formDisabled}
+              onChange={setFormat}
+              options={[
+                { value: "modrinth", label: "Modrinth (.mrpack)" },
+                { value: "curseforge", label: "CurseForge (.zip)" },
+              ]}
+            />
           </div>
 
-          <div className="space-y-2">
-            <Label>{t("gameSettings.exportOutputMode")}</Label>
-            <div className="flex flex-col gap-1.5">
-              <Button
-                type="button"
-                size="sm"
-                className="w-full justify-start"
-                variant={outputMode === "pack_only" ? "default" : "outline"}
-                disabled={formDisabled}
-                onClick={() => setOutputMode("pack_only")}
-              >
-                {t("gameSettings.exportModePackOnly")}
-              </Button>
-              <Button
-                type="button"
-                size="sm"
-                className="w-full justify-start"
-                variant={outputMode === "portable_folder" ? "default" : "outline"}
-                disabled={formDisabled}
-                onClick={() => {
+          <div className="space-y-1.5">
+            <Label className="text-xs">{t("gameSettings.exportOutputMode")}</Label>
+            <ExportSegment
+              value={outputMode}
+              disabled={formDisabled}
+              onChange={(mode) => {
+                if (mode === "portable_folder") {
                   setIncludeLauncher(true);
-                  setOutputMode("portable_folder");
-                }}
-              >
-                {t("gameSettings.exportModePortable")}
-              </Button>
-            </div>
+                }
+                setOutputMode(mode);
+              }}
+              options={[
+                { value: "pack_only", label: t("gameSettings.exportModePackOnly") },
+                { value: "portable_folder", label: t("gameSettings.exportModePortable") },
+              ]}
+            />
             {outputMode === "portable_folder" && (
-              <p className="text-xs text-muted-foreground">
+              <p className="text-[11px] leading-snug text-muted-foreground">
                 {t("gameSettings.exportPortableHint")}
               </p>
             )}

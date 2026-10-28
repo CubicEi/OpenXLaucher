@@ -1,5 +1,14 @@
 
 
+> openxlauncher@1.0.0-pre.2 prebuild D:\programing\MCprojects\OpenXLauncher
+> node scripts/sync-app-icons.mjs --web-only
+
+[sync-app-icons] icon\icon.svg → app\icon.svg
+[sync-app-icons] icon\icon.svg → public\icon\icon.svg
+[sync-app-icons] icon\icon_black.svg → public\icon\icon_black.svg
+[sync-app-icons] icon\icon_white.svg → public\icon\icon_white.svg
+[sync-app-icons] Web assets synced (--web-only, skipped tauri icon).
+
 > openxlauncher@1.0.0-pre.2 build D:\programing\MCprojects\OpenXLauncher
 > next build
 
@@ -8,14 +17,14 @@
   · optimizePackageImports
 
   Creating an optimized production build ...
-✓ Compiled successfully in 24.2s
+✓ Compiled successfully in 14.5s
   Running TypeScript ...
   Collecting page data using 11 workers ...
-  Generating static pages using 11 workers (0/39) ...
-  Generating static pages using 11 workers (9/39) 
-  Generating static pages using 11 workers (19/39) 
-  Generating static pages using 11 workers (29/39) 
-✓ Generating static pages using 11 workers (39/39) in 1694.0ms
+  Generating static pages using 11 workers (0/40) ...
+  Generating static pages using 11 workers (10/40) 
+  Generating static pages using 11 workers (20/40) 
+  Generating static pages using 11 workers (30/40) 
+✓ Generating static pages using 11 workers (40/40) in 1581.2ms
   Finalizing page optimization ...
 
 Route (app)
@@ -39,6 +48,7 @@ Route (app)
 ├ ○ /game-settings/screenshots
 ├ ○ /game-settings/shaders
 ├ ○ /game-settings/worlds
+├ ○ /icon.svg
 ├ ○ /instance-settings/mods
 ├ ○ /instance-settings/resources
 ├ ○ /instance-settings/schematics

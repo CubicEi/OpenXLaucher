@@ -119,6 +119,7 @@ export default function SettingsLayout({
         <main className="flex h-full min-h-0 flex-1 flex-col overflow-hidden px-4 py-4 md:px-6">
           <div
             data-section-content
+            data-settings-page
             className="mx-auto flex min-h-0 w-full max-w-2xl flex-1 flex-col overflow-y-auto"
           >
             <PageEnter

@@ -132,6 +132,15 @@
   --tw-ring-color: color-mix(in oklch, var(--card) 90%, var(--foreground) 10%);
 }
 
+/* 设置页卡片：与游戏设置「核心设置」一致，用 border + shadow-sm，不用 ring 描边（避免边缘偏亮） */
+[data-settings-page] [data-slot="card"] {
+  --tw-ring-width: 0px;
+  --tw-ring-color: transparent;
+  --tw-ring-shadow: 0 0 #0000;
+  border: 1px solid var(--border);
+  box-shadow: 0 1px 2px 0 color-mix(in oklch, var(--foreground) 6%, transparent);
+}
+
 .dark [data-slot="dropdown-menu-content"],
 .dark [data-slot="dropdown-menu-sub-content"],
 .dark [data-slot="select-content"],
@@ -263,7 +272,7 @@ body[data-app-bg="active"] aside[data-app-sidebar] {
   backdrop-filter: blur(8px) saturate(140%);
   -webkit-backdrop-filter: blur(8px) saturate(140%);
 }
-body[data-app-bg="active"] [data-settings-content] + * [data-slot="card"] {
+body[data-app-bg="active"] [data-settings-page] [data-slot="card"] {
   backdrop-filter: blur(8px) saturate(140%);
   -webkit-backdrop-filter: blur(8px) saturate(140%);
   clip-path: inset(0 round var(--radius-2xl));

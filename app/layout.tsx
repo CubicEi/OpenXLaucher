@@ -22,6 +22,9 @@ import { APPEARANCE_BOOTSTRAP_SCRIPT } from "@/lib/appearance-bootstrap-script";
 export const metadata: Metadata = {
   title: "OpenXLauncher",
   description: "OpenXLauncher Desktop App",
+  icons: {
+    icon: [{ url: "/icon/icon.svg", type: "image/svg+xml" }],
+  },
 };
 
 export default function RootLayout({
