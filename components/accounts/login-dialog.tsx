@@ -9,6 +9,7 @@ import { Label } from "@/components/ui/label";
 import { useAccountContext } from "@/components/accounts/account-provider";
 import { X, Globe, User, Loader2, Shield, Check, Copy, AlertCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { isMicrosoftOfficialAuthRejection } from "@/lib/auth";
 import { overlayFade, scaleIn, fadeSlideUp } from "@/lib/motion";
 import type { ThirdPartyProfile, LittleSkinAccount, DeviceCodeInfo } from "@/lib/auth";
 
@@ -47,6 +48,9 @@ export function LoginDialog({
     loginState,
     loginError,
     clearForcedMicrosoftDeviceCode,
+    microsoftLaunchFallbackToken,
+    useMicrosoftLaunchFallbackToken,
+    microsoftLaunchTokenError,
   } = useAccountContext();
 
   const handleClose = () => {
@@ -140,6 +144,10 @@ export function LoginDialog({
   }, [open]);
 
   const isLoading = loginState === "loading";
+
+  const canUseOldLaunchToken =
+    Boolean(microsoftLaunchFallbackToken?.trim()) &&
+    !isMicrosoftOfficialAuthRejection(microsoftLaunchTokenError ?? "");
 
   // Tab content key changes when tab switches or sub-state changes
   const tabContentKey = `${tab}-${msDeviceCode ? "device" : ""}-${tpProfiles ? "profiles" : ""}-${lsProfiles ? "ls-profiles" : ""}`;
@@ -277,7 +285,7 @@ export function LoginDialog({
                       <AlertCircle className="size-4 text-amber-500 shrink-0 mt-0.5" />
                       <p className="text-sm text-amber-700 dark:text-amber-400 leading-relaxed">
                         {forcedMessage ||
-                          "无法获取 Minecraft 登录令牌，登录凭据可能已失效。请完成下方的正版登录，或关闭窗口稍后再试。"}
+                          "无法获取 Minecraft 登录令牌，登录凭据可能已失效。请完成下方的正版登录，或关闭窗口后稍后再试。若使用旧令牌登录，可能无法加入正版验证服务器。"}
                       </p>
                     </div>
                   </div>
@@ -645,6 +653,40 @@ export function LoginDialog({
                     )}
                   </motion.div>
                 </AnimatePresence>
+
+                {forcedMode && (
+                  <div className="space-y-2 pt-2 border-t border-border">
+                    {microsoftLaunchFallbackToken?.trim() && (
+                      <p className="text-xs text-muted-foreground leading-relaxed">
+                        若使用旧令牌登录，可能无法加入正版验证服务器。
+                        {isMicrosoftOfficialAuthRejection(microsoftLaunchTokenError ?? "")
+                          ? " 当前凭据已被官方服务器拒绝，无法使用旧令牌。"
+                          : null}
+                      </p>
+                    )}
+                    <div className="flex gap-2">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className="flex-1"
+                        onClick={handleClose}
+                      >
+                        取消
+                      </Button>
+                      <Button
+                        type="button"
+                        className="flex-1"
+                        disabled={!canUseOldLaunchToken}
+                        onClick={() => {
+                          useMicrosoftLaunchFallbackToken();
+                          onClose();
+                        }}
+                      >
+                        使用旧令牌登录
+                      </Button>
+                    </div>
+                  </div>
+                )}
               </CardContent>
             </Card>
           </motion.div>

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, Suspense } from "react";
 import { motion } from "framer-motion";
 import { Package, Loader2 } from "lucide-react";
 import ResourcePanel from "@/components/resource-panel";
@@ -12,7 +12,9 @@ import { fadeSlideUp } from "@/lib/motion";
 import { useI18n, type TranslationKey } from "@/components/i18n/use-i18n";
 import { useInstanceResourceUpdates } from "@/hooks/use-instance-resource-updates";
 import { cacheKindToUpdateResourceKind } from "@/lib/resource-kind";
-import { ResourceRemoteVersionsDialog } from "@/components/resources/resource-remote-versions-dialog";
+import { ResourceDetailPage } from "@/components/resources/resource-detail-page";
+import { resourceKindReturnPath } from "@/lib/resources/resource-download-navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 
 /**
  * 资源管理页面的配置
@@ -58,6 +60,8 @@ export interface ResourcePageConfig {
   viewerExtensions?: string[];
   /** 启用检查更新 / 远程版本（资源包、光影、数据包等） */
   enableUpdates?: boolean;
+  /** Disable rename on instance column (e.g. mods page). */
+  enableInstanceRename?: boolean;
 }
 
 /**
@@ -69,6 +73,7 @@ export interface ResourcePageExtra {
   mcVersion: string | undefined;
   modLoader: string | undefined;
   instanceDir: string | undefined;
+  modCacheDir: string | undefined;
   minecraftPath: string | undefined;
   versionName: string;
   instanceFiles: { name: string; size: number }[];
@@ -105,8 +110,29 @@ export function createResourcePage(config: ResourcePageConfig): React.FC {
     enableUpdates = false,
   } = config;
 
-  const Component: React.FC = () => {
+  const Component: React.FC = () => (
+    <Suspense
+      fallback={
+        <motion.div
+          variants={fadeSlideUp}
+          initial="initial"
+          animate="animate"
+          className="flex h-full flex-col items-center justify-center gap-3 text-center p-4"
+        >
+          <div className="size-12 rounded-full bg-muted flex items-center justify-center">
+            <Loader2 className="size-6 text-muted-foreground animate-spin" />
+          </div>
+        </motion.div>
+      }
+    >
+      <ResourcePageInner />
+    </Suspense>
+  );
+
+  const ResourcePageInner: React.FC = () => {
     const { t } = useI18n();
+    const router = useRouter();
+    const searchParams = useSearchParams();
     const { config: launcherConfig } = useLaunchContext();
     const { instanceDir, selectedInstance, minecraftPath, configLoaded, loading: instancesScanning } = useInstancePath();
 
@@ -183,10 +209,27 @@ export function createResourcePage(config: ResourcePageConfig): React.FC {
       onRefresh: refresh,
     });
 
-    const [remoteVersionsFile, setRemoteVersionsFile] = useState<string | null>(null);
+    const [detailFile, setDetailFile] = useState<string | null>(null);
     const handleOpenRemoteVersions = useCallback((fileName: string) => {
-      setRemoteVersionsFile(fileName);
+      setDetailFile(fileName);
     }, []);
+
+    useEffect(() => {
+      if (!enableUpdates) return;
+      const resourceFile = searchParams.get("resourceFile")?.trim();
+      if (!resourceFile || detailFile) return;
+      const exists = instanceFiles.some((f) => f.name === resourceFile);
+      if (!exists) return;
+      setDetailFile(resourceFile);
+      router.replace(resourceKindReturnPath(updateResourceKind));
+    }, [
+      enableUpdates,
+      searchParams,
+      detailFile,
+      instanceFiles,
+      router,
+      updateResourceKind,
+    ]);
 
     const blockingInstanceScan = instancesScanning && !instanceDir;
     if (!configLoaded || (configLoaded && !preparingTimeout && blockingInstanceScan)) {
@@ -247,8 +290,23 @@ export function createResourcePage(config: ResourcePageConfig): React.FC {
         ? `${description} · ${updates.checkMessage}`
         : description;
 
+    if (enableUpdates && detailFile && instanceDir && mcVersion) {
+      return (
+        <ResourceDetailPage
+          fileName={detailFile}
+          displayName={simplifyName(detailFile)}
+          instanceDir={instanceDir}
+          instanceSubdir={instanceSubdir}
+          mcVersion={mcVersion}
+          loader={needsModLoader ? (modLoader ?? "") : ""}
+          resourceKind={updateResourceKind}
+          onRefresh={refresh}
+          onBack={() => setDetailFile(null)}
+        />
+      );
+    }
+
     return (
-      <>
       <ResourcePanel
         leftTitle={t(title)}
         leftDescription={leftDescriptionWithUpdates}
@@ -295,29 +353,6 @@ export function createResourcePage(config: ResourcePageConfig): React.FC {
             }
           : {})}
       />
-      {enableUpdates && instanceDir && mcVersion && (
-        <ResourceRemoteVersionsDialog
-          open={remoteVersionsFile !== null}
-          onOpenChange={(open) => {
-            if (!open) setRemoteVersionsFile(null);
-          }}
-          fileName={remoteVersionsFile}
-          displayName={
-            remoteVersionsFile
-              ? simplifyName(remoteVersionsFile)
-              : ""
-          }
-          instanceDir={instanceDir}
-          mcVersion={mcVersion}
-          loader={needsModLoader ? (modLoader ?? "") : ""}
-          resourceKind={updateResourceKind}
-          onInstalled={() => {
-            refresh();
-            setRemoteVersionsFile(null);
-          }}
-        />
-      )}
-      </>
     );
   };
 
@@ -361,6 +396,7 @@ export function useResourcePage(config: ResourcePageConfig): {
     rightIconBg = CACHE_LIBRARY_ICON_BG,
     onOpenViewer,
     viewerExtensions,
+    enableInstanceRename = true,
   } = config;
 
   const { config: launcherConfig } = useLaunchContext();
@@ -440,7 +476,8 @@ export function useResourcePage(config: ResourcePageConfig): {
       onMoveLeftToRight: manager.removeFromInstance,
       onDeleteLeft: manager.deleteFromInstance,
       onDeleteRight: manager.deleteFromCache,
-      onRenameLeft: manager.renameInInstance,
+      onRenameLeft: enableInstanceRename ? manager.renameInInstance : undefined,
+      enableLeftRename: enableInstanceRename,
       onRefresh: manager.refresh,
       onUploadFiles: manager.uploadFiles,
       onOpenInstanceFolder: manager.openInstanceFolderInExplorer,
@@ -456,6 +493,7 @@ export function useResourcePage(config: ResourcePageConfig): {
       mcVersion,
       modLoader,
       instanceDir,
+      modCacheDir: manager.modCacheDir,
       minecraftPath,
       versionName,
       instanceFiles: manager.instanceFiles,

@@ -2,8 +2,10 @@
 
 import ModDetailContent from "./ModDetailContent";
 import { Suspense, useEffect, useState } from "react";
+import { useI18n } from "@/components/i18n/use-i18n";
 
 function ModDetailInner() {
+  const { t } = useI18n();
   const [modId, setModId] = useState<string>("");
 
   useEffect(() => {
@@ -17,7 +19,7 @@ function ModDetailInner() {
   if (!modId) {
     return (
       <div className="flex flex-1 items-center justify-center text-muted-foreground">
-        <p>Please select a mod first</p>
+        <p>{t("download.detail.selectModFirst")}</p>
       </div>
     );
   }
@@ -25,8 +27,9 @@ function ModDetailInner() {
 }
 
 export default function ModDetailPage() {
+  const { t } = useI18n();
   return (
-    <Suspense fallback={<div className="flex flex-1 items-center justify-center text-muted-foreground"><p>Loading...</p></div>}>
+    <Suspense fallback={<div className="flex flex-1 items-center justify-center text-muted-foreground"><p>{t("download.detail.loadingPage")}</p></div>}>
       <ModDetailInner />
     </Suspense>
   );

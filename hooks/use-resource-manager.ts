@@ -85,6 +85,8 @@ export function useResourceManager(
   // 模组元数据缓存（文件名 -> ModInfo）
   instanceModInfo: Map<string, ModInfo>;
   cacheModInfo: Map<string, ModInfo>;
+  /** Mod cache root (mods only), for jar paths outside instance/mods */
+  modCacheDir: string | undefined;
   modsParsing: boolean;
 
   // 操作
@@ -149,6 +151,7 @@ export function useResourceManager(
   // 模组元数据缓存
   const [instanceModInfo, setInstanceModInfo] = useState<Map<string, ModInfo>>(new Map());
   const [cacheModInfo, setCacheModInfo] = useState<Map<string, ModInfo>>(new Map());
+  const [modCacheDir, setModCacheDir] = useState<string | undefined>(undefined);
   const [modsParsing, setModsParsing] = useState(false);
 
   // 搜索
@@ -264,6 +267,7 @@ export function useResourceManager(
   const fetchCacheFiles = useCallback(async () => {
     if (!mcVersion) {
       setCacheFiles([]);
+      setModCacheDir(undefined);
       return;
     }
     setCacheLoading(true);
@@ -288,7 +292,9 @@ export function useResourceManager(
         } catch {
           cacheDirBase = null;
         }
+        setModCacheDir(cacheDirBase ?? undefined);
       } else {
+        setModCacheDir(undefined);
         names = await invoke("list_cached_files", {
           kind: cacheKind,
           mcVersion: mcVersion,
@@ -563,6 +569,7 @@ export function useResourceManager(
     cacheError,
     instanceModInfo,
     cacheModInfo,
+    modCacheDir,
     modsParsing,
     addToInstance,
     removeFromInstance,

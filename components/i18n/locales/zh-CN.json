@@ -205,6 +205,7 @@
       "loaderLoadName": "加载器: {loadName}",
       "gameLaunched": "游戏已启动！",
       "launchFailed": "启动失败",
+      "launchCancelledByUser": "已取消启动准备",
       "modUpdateInProgress": "该实例模组正在更新，请稍后再启动"
     },
     "javaIncompatible": {
@@ -723,7 +724,17 @@
     "exportSavesSizeWarnBody": "当前勾选内容预计超过 512MB，是否继续导出？",
     "exportSavesSizeWarnContinue": "继续导出",
     "exportStart": "导出",
-    "exportCancel": "取消导出"
+    "exportCancel": "取消导出",
+    "modDetail": {
+      "badge": "模组详情",
+      "openInDownload": "在下载中心查看"
+    },
+    "resourceDetail": {
+      "badge": "资源详情",
+      "backToList": "返回列表",
+      "description": "描述",
+      "noDescription": "暂无描述"
+    }
   },
   "checkUpdate": {
     "title": "检查更新",
@@ -857,11 +868,56 @@
       "dataPacks": "数据包",
       "worlds": "世界"
     },
+    "detail": {
+      "selectModFirst": "请先在下载中心选择模组",
+      "loadingPage": "加载中…",
+      "backToSearch": "返回搜索",
+      "backToModDetail": "返回模组详情",
+      "backToResourceDetail": "返回资源详情",
+      "loadingProject": "正在加载项目信息…",
+      "sourceBoth": "Modrinth + CurseForge",
+      "filesFrom": "文件来源：{source}",
+      "mcVersionsFiles": "{versions} 个 MC 版本 · {files} 个文件",
+      "totalDownloads": "总下载量 {count}",
+      "authorLabel": "作者",
+      "updatedLabel": "更新",
+      "typeLabel": "类型",
+      "liveLoadFailed": "在线信息加载失败：{error}",
+      "viewOnModrinth": "在 Modrinth 上查看",
+      "viewOnCurseforge": "在 CurseForge 上查看",
+      "loadingFileList": "正在加载文件列表…",
+      "mcVersion": "MC {version}",
+      "filesCount": "{count} 个文件",
+      "releasesCount": "· {count} 个正式版",
+      "betasCount": "· {count} 个测试版",
+      "release": "正式版",
+      "beta": "测试版",
+      "releaseAria": "正式版",
+      "betaAria": "测试版",
+      "downloading": "下载中",
+      "downloaded": "已下载",
+      "retry": "重试",
+      "cannotConnect": "无法连接数据源",
+      "networkErrorHint": "获取文件列表时发生网络错误。访问海外数据源时可能出现连接中断或超时。",
+      "noModFiles": "暂无可用模组文件",
+      "checkSlugHint": "请检查模组 slug 是否正确，或稍后再试",
+      "reload": "重新加载",
+      "projectType": {
+        "unknown": "未知",
+        "mod": "模组",
+        "modpack": "整合包",
+        "resourcepack": "资源包",
+        "shader": "光影包",
+        "datapack": "数据包",
+        "world": "世界"
+      }
+    },
     "favorites": {
       "title": "收藏夹",
       "savedCount": "已保存 {count} 个可直接下载的 Mod 文件。",
       "downloadAllToCache": "全部下载到 Cache",
       "download": "下载",
+      "addToFavorites": "加入收藏夹",
       "removeFromFavorites": "移出收藏夹",
       "removeFromFavoritesNamed": "移出收藏夹：{name}",
       "empty": "收藏夹还是空的",

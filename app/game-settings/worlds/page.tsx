@@ -347,7 +347,9 @@ export default function WorldsPage() {
   return (
     <ResourcePanel
       {...panel}
-      onOpenModDetail={(fileName) => handleOpenDetail(fileName.replace(/\.(zip|rar|mcworld)$/i, ""))}
+      onOpenModDetail={(fileName, _info, _side) =>
+        handleOpenDetail(fileName.replace(/\.(zip|rar|mcworld)$/i, ""))
+      }
     />
   );
 }

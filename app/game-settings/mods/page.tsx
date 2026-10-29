@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, Suspense } from "react";
 import { motion } from "framer-motion";
 import {
   Puzzle,
@@ -13,7 +13,9 @@ import {
   GitBranch,
   AlertTriangle,
   Users,
+  Loader2,
 } from "lucide-react";
+import { useRouter, useSearchParams } from "next/navigation";
 import ResourcePanel, { ModInfo } from "@/components/resource-panel";
 import { useResourcePage, ResourcePageFallback } from "@/components/resource-page-factory";
 import { fadeSlideUp } from "@/lib/motion";
@@ -21,7 +23,13 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { useI18n } from "@/components/i18n/use-i18n";
 import { ModRemoteVersionsSection } from "@/components/mods/mod-remote-versions-section";
+import { ModCoverImage } from "@/components/mods/mod-cover-image";
 import { useInstanceResourceUpdates } from "@/hooks/use-instance-resource-updates";
+import {
+  buildModAbsolutePath,
+  openModDownloadDetail,
+  type ModFileSide,
+} from "@/lib/mods/mod-download-navigation";
 
 function normalizeModInfo(info: ModInfo, fileName: string): ModInfo {
   const stem = fileName.replace(/\.(jar|litemod|zip)$/i, "");
@@ -46,6 +54,7 @@ const MODS_CONFIG = {
   instanceSubdir: "mods",
   cacheKind: "mod",
   needsModLoader: true,
+  enableInstanceRename: false,
   extensions: ["jar", "litemod", "zip"],
   simplifyName: (name: string) => name.replace(/\.(jar|litemod|zip)$/i, ""),
 };
@@ -56,7 +65,9 @@ const MODS_CONFIG = {
 function ModDetailPage({
   fileName,
   info,
+  fileSide,
   instanceDir,
+  modCacheDir,
   mcVersion,
   modLoader,
   onBack,
@@ -64,13 +75,41 @@ function ModDetailPage({
 }: {
   fileName: string;
   info: ModInfo;
+  fileSide: ModFileSide;
   instanceDir: string;
+  modCacheDir?: string;
   mcVersion: string;
   modLoader: string;
   onBack: () => void;
   onRefresh: () => void;
 }) {
+  const { t } = useI18n();
+  const router = useRouter();
   const safeInfo = normalizeModInfo(info, fileName);
+  const modPath = buildModAbsolutePath(fileName, fileSide, instanceDir, modCacheDir);
+
+  const [openingDownload, setOpeningDownload] = useState(false);
+
+  const openDownloadDetail = async () => {
+    if (!modPath || openingDownload) return;
+    setOpeningDownload(true);
+    try {
+      await openModDownloadDetail({
+        router,
+        modPath,
+        fileName,
+        modSide: fileSide,
+        t,
+      });
+    } catch {
+      (window as Window & { __rt_toast?: (value: string) => void }).__rt_toast?.(
+        t("panel.modUpdateHashMiss"),
+      );
+    } finally {
+      setOpeningDownload(false);
+    }
+  };
+
   return (
     <motion.div
       variants={fadeSlideUp}
@@ -90,7 +129,25 @@ function ModDetailPage({
             {safeInfo.mod_loader && ` · ${safeInfo.mod_loader}`}
           </p>
         </div>
-        <Badge variant="secondary" className="shrink-0 text-xs">模组详情</Badge>
+        <Button
+          type="button"
+          variant="outline"
+          size="icon"
+          className="size-9 shrink-0 bg-background"
+          title={t("gameSettings.modDetail.openInDownload")}
+          aria-label={t("gameSettings.modDetail.openInDownload")}
+          disabled={!modPath || openingDownload}
+          onClick={() => void openDownloadDetail()}
+        >
+          {openingDownload ? (
+            <Loader2 className="size-4 animate-spin" />
+          ) : (
+            <ExternalLink className="size-4" />
+          )}
+        </Button>
+        <Badge variant="secondary" className="shrink-0 text-xs">
+          {t("gameSettings.modDetail.badge")}
+        </Badge>
       </div>
 
       {/* 内容区 */}
@@ -103,9 +160,7 @@ function ModDetailPage({
         <div className="p-5 space-y-5">
           {/* 头部信息卡 */}
           <div className="flex items-start gap-4 pb-5 border-b">
-            <div className="size-14 rounded-2xl bg-emerald-500/10 flex items-center justify-center shrink-0">
-              <Package className="size-7 text-emerald-500" />
-            </div>
+            <ModCoverImage modPath={modPath} modIdHint={safeInfo.mod_id} />
             <div className="flex-1 min-w-0">
               <h2 className="text-2xl font-bold truncate">{safeInfo.name}</h2>
               <p className="mt-1.5 text-sm text-muted-foreground truncate">
@@ -304,6 +359,8 @@ function ModDetailPage({
             fileName={fileName}
             info={safeInfo}
             instanceDir={instanceDir}
+            modCacheDir={modCacheDir}
+            fileSide={fileSide}
             mcVersion={mcVersion}
             modLoader={modLoader}
             onInstalled={onRefresh}
@@ -315,9 +372,44 @@ function ModDetailPage({
 }
 
 export default function ModsPage() {
+  return (
+    <Suspense
+      fallback={
+        <ResourcePageFallback
+          title="pageFactory.loadingConfiguration"
+          subtitle="pageFactory.pleaseWait"
+        />
+      }
+    >
+      <ModsPageContent />
+    </Suspense>
+  );
+}
+
+function ModsPageContent() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const { panel, loadingState, extra } = useResourcePage(MODS_CONFIG);
   const [view, setView] = useState<"list" | "detail">("list");
-  const [selectedDetail, setSelectedDetail] = useState<{ fileName: string; info: ModInfo } | null>(null);
+  const [selectedDetail, setSelectedDetail] = useState<{
+    fileName: string;
+    info: ModInfo;
+    side: "left" | "right";
+  } | null>(null);
+
+  useEffect(() => {
+    const modFile = searchParams.get("modFile")?.trim();
+    if (!modFile || view === "detail") return;
+    const sideParam = searchParams.get("modSide");
+    const side: "left" | "right" =
+      sideParam === "cache" ? "right" : "left";
+    const infoMap = side === "right" ? extra.cacheModInfo : extra.instanceModInfo;
+    const info = infoMap.get(modFile);
+    if (!info) return;
+    setSelectedDetail({ fileName: modFile, info, side });
+    setView("detail");
+    router.replace("/game-settings/mods");
+  }, [searchParams, extra.instanceModInfo, extra.cacheModInfo, view, router]);
 
   const updates = useInstanceResourceUpdates({
     resourceKind: "mod",
@@ -367,7 +459,9 @@ export default function ModsPage() {
       <ModDetailPage
         fileName={selectedDetail.fileName}
         info={selectedDetail.info}
+        fileSide={selectedDetail.side === "right" ? "cache" : "instance"}
         instanceDir={extra.instanceDir ?? ""}
+        modCacheDir={extra.modCacheDir}
         mcVersion={extra.mcVersion ?? ""}
         modLoader={extra.modLoader ?? ""}
         onRefresh={() => extra.refresh()}
@@ -380,8 +474,8 @@ export default function ModsPage() {
   }
 
   // ============ 列表主页面 ============
-  const handleOpenDetail = (fileName: string, info: ModInfo) => {
-    setSelectedDetail({ fileName, info });
+  const handleOpenDetail = (fileName: string, info: ModInfo, side: "left" | "right") => {
+    setSelectedDetail({ fileName, info, side });
     setView("detail");
   };
 

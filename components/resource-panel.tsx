@@ -17,7 +17,6 @@ import {
   Eye,
   Download,
   ArrowUpCircle,
-  Cloud,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -114,7 +113,9 @@ export interface ResourcePanelProps {
   // 右列模组元数据缓存
   rightModInfo?: Map<string, ModInfo>;
   // 模组详情页回调（点击文件名时调用）
-  onOpenModDetail?: (fileName: string, info: ModInfo) => void;
+  onOpenModDetail?: (fileName: string, info: ModInfo, side: "left" | "right") => void;
+  /** Show rename on instance column (mods page disables this). */
+  enableLeftRename?: boolean;
   // 操作
   onMoveRightToLeft?: (fileName: string) => Promise<void>; // 加入实例（cache -> 实例）
   onMoveLeftToRight?: (fileName: string) => Promise<void>; // 移出实例（实例 -> cache）
@@ -172,6 +173,7 @@ export default function ResourcePanel({
   rightBadge,
   rightModInfo,
   onOpenModDetail,
+  enableLeftRename = true,
   onMoveRightToLeft,
   onMoveLeftToRight,
   onDeleteLeft,
@@ -294,17 +296,16 @@ export default function ResourcePanel({
     setRenameValue("");
   };
 
-  const handleOpenDetail = (file: FileItem, infoMap?: Map<string, ModInfo>) => {
+  const handleOpenDetail = (file: FileItem, side: "left" | "right", infoMap?: Map<string, ModInfo>) => {
     if (!onOpenModDetail) return;
     if (infoMap && infoMap.size > 0) {
       const info = infoMap.get(file.name);
       if (info) {
-        onOpenModDetail(file.name, info);
+        onOpenModDetail(file.name, info, side);
         return;
       }
     }
-    // 如果没有模组信息或Map为空，仍然调用回调（用于存档等非模组页面）
-    onOpenModDetail(file.name, {} as ModInfo);
+    onOpenModDetail(file.name, {} as ModInfo, side);
   };
 
   const renderFileList = (
@@ -482,28 +483,12 @@ export default function ResourcePanel({
                         e.stopPropagation();
                         onOpenRemoteVersions(file.name);
                       }}
-                      title={t("panel.remoteVersionsTitle")}
-                    >
-                      <Cloud className="size-3.5" />
-                    </Button>
-                  )}
-                  {/* 查看详情（模组专用）- "!" 字符按钮 */}
-                  {hasDetail && (
-                    <Button
-                      variant="secondary"
-                      size="icon"
-                      className="size-7 shrink-0"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleOpenDetail(file, modInfoMap);
-                      }}
                       title={t("panel.viewDetails")}
                     >
                       <Info className="size-3.5" />
                     </Button>
                   )}
 
-                  {/* 预览（查看器，如投影预览）- 眼睛图标 */}
                   {canViewer && !file.isDir && matchViewer(file.name) && (
                     <Button
                       variant="secondary"
@@ -519,8 +504,22 @@ export default function ResourcePanel({
                     </Button>
                   )}
 
-                  {/* 重命名（仅左列） */}
-                  {canRename && onRenameLeft && (
+                  {hasDetail && (
+                    <Button
+                      variant="secondary"
+                      size="icon"
+                      className="size-7 shrink-0"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleOpenDetail(file, side, modInfoMap);
+                      }}
+                      title={t("panel.viewDetails")}
+                    >
+                      <Info className="size-3.5" />
+                    </Button>
+                  )}
+
+                  {canRename && enableLeftRename && onRenameLeft && (
                     <Button
                       variant="ghost"
                       size="icon"
@@ -532,7 +531,6 @@ export default function ResourcePanel({
                     </Button>
                   )}
 
-                  {/* 移动按钮 - 仅图标，无文字，加粗效果 */}
                   {moveHandler && (
                     <Button
                       variant={side === "right" ? "default" : "secondary"}
@@ -704,7 +702,7 @@ export default function ResourcePanel({
               "left",
               onMoveLeftToRight,
               onDeleteLeft,
-              true,
+              !!onRenameLeft && enableLeftRename,
               leftModInfo,
               onDeleteLeft
                 ? (fileName, displayName) => requestDelete(fileName, displayName, onDeleteLeft)

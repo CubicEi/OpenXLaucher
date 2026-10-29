@@ -2,9 +2,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::{self, Value as JsonValue};
 use std::collections::HashMap;
 use std::fs;
-use std::io::{BufReader, Read};
+use std::io::{BufReader, Read, Seek};
 use std::path::{Path, PathBuf};
 use zip::ZipArchive;
+use base64::{engine::general_purpose::STANDARD, Engine};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModDependency {
     pub mod_id: String,
@@ -109,6 +110,147 @@ fn read_jar_entry(
     entry.read_to_string(&mut content).ok()?;
     Some(content)
 }
+
+fn mime_for_icon_path(path: &str) -> &'static str {
+    let lower = path.to_ascii_lowercase();
+    if lower.ends_with(".jpg") || lower.ends_with(".jpeg") {
+        "image/jpeg"
+    } else if lower.ends_with(".gif") {
+        "image/gif"
+    } else if lower.ends_with(".webp") {
+        "image/webp"
+    } else {
+        "image/png"
+    }
+}
+
+fn read_jar_entry_bytes(archive: &mut ZipArchive<impl Read + Seek>, entry_path: &str) -> Option<Vec<u8>> {
+    let trimmed = entry_path.trim().trim_start_matches('/');
+    if trimmed.is_empty() {
+        return None;
+    }
+    if let Ok(mut entry) = archive.by_name(trimmed) {
+        let mut buf = Vec::new();
+        if entry.read_to_end(&mut buf).is_ok() && !buf.is_empty() {
+            return Some(buf);
+        }
+    }
+    for i in 0..archive.len() {
+        let Ok(mut entry) = archive.by_index(i) else {
+            continue;
+        };
+        let name = entry.name().replace('\\', "/");
+        if name == trimmed || name.ends_with(&format!("/{trimmed}")) {
+            let mut buf = Vec::new();
+            if entry.read_to_end(&mut buf).is_ok() && !buf.is_empty() {
+                return Some(buf);
+            }
+        }
+    }
+    None
+}
+
+/// Read mod logo bytes from jar metadata (`logoFile` / fabric `icon`) and return a data URL.
+pub fn mod_icon_data_url_from_jar(path: &Path) -> Option<String> {
+    let info = parse_mod_file(path).ok()?;
+    let icon_rel = info.icon.filter(|s| !s.trim().is_empty())?;
+    let file = fs::File::open(path).ok()?;
+    let mut reader = BufReader::new(file);
+    let mut archive = ZipArchive::new(&mut reader).ok()?;
+    let bytes = read_jar_entry_bytes(&mut archive, &icon_rel)?;
+    let mime = mime_for_icon_path(&icon_rel);
+    Some(format!("data:{};base64,{}", mime, STANDARD.encode(bytes)))
+}
+
+/// Resource pack icon: `pack.png` inside a zip (or folder).
+pub fn pack_png_data_url_from_path(path: &Path) -> Option<String> {
+    if path.is_dir() {
+        let png = path.join("pack.png");
+        if png.is_file() {
+            let bytes = fs::read(&png).ok()?;
+            if bytes.is_empty() {
+                return None;
+            }
+            return Some(format!(
+                "data:image/png;base64,{}",
+                STANDARD.encode(bytes)
+            ));
+        }
+        return None;
+    }
+    if !path.is_file() {
+        return None;
+    }
+    let file = fs::File::open(path).ok()?;
+    let mut reader = BufReader::new(file);
+    let mut archive = ZipArchive::new(&mut reader).ok()?;
+    let bytes = read_jar_entry_bytes(&mut archive, "pack.png")?;
+    Some(format!(
+        "data:image/png;base64,{}",
+        STANDARD.encode(bytes)
+    ))
+}
+
+fn stringify_mcmeta_description(value: &JsonValue) -> Option<String> {
+    match value {
+        JsonValue::String(s) => {
+            let t = s.trim();
+            if t.is_empty() {
+                None
+            } else {
+                Some(t.to_string())
+            }
+        }
+        JsonValue::Object(map) => {
+            if let Some(JsonValue::String(s)) = map.get("text") {
+                let t = s.trim();
+                if !t.is_empty() {
+                    return Some(t.to_string());
+                }
+            }
+            if let Some(JsonValue::String(s)) = map.get("translate") {
+                let t = s.trim();
+                if !t.is_empty() {
+                    return Some(t.to_string());
+                }
+            }
+            None
+        }
+        JsonValue::Array(items) => {
+            let joined = items
+                .iter()
+                .filter_map(stringify_mcmeta_description)
+                .collect::<Vec<_>>()
+                .join("");
+            let t = joined.trim();
+            if t.is_empty() {
+                None
+            } else {
+                Some(t.to_string())
+            }
+        }
+        _ => None,
+    }
+}
+
+/// Description from `pack.mcmeta` inside a zip or folder.
+pub fn pack_mcmeta_description_from_path(path: &Path) -> Option<String> {
+    let raw = if path.is_dir() {
+        let meta = path.join("pack.mcmeta");
+        fs::read_to_string(meta).ok()?
+    } else if path.is_file() {
+        let file = fs::File::open(path).ok()?;
+        let mut reader = BufReader::new(file);
+        let mut archive = ZipArchive::new(&mut reader).ok()?;
+        read_jar_entry(&mut archive, "pack.mcmeta")?
+    } else {
+        return None;
+    };
+    let json: JsonValue = serde_json::from_str(&raw).ok()?;
+    let desc = json.get("pack")?.get("description")?;
+    stringify_mcmeta_description(desc)
+}
+
 pub fn parse_mod_file(path: &Path) -> Result<ModInfo, String> {
     let file = fs::File::open(path).map_err(|e| format!("打开文件失败: {}", e))?;
     let mut reader = BufReader::new(file);

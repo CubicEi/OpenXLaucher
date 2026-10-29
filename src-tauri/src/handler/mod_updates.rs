@@ -273,7 +273,11 @@ async fn list_remote_versions_impl(
     if mc_version.is_empty() {
         return Err("缺少 Minecraft 版本".to_string());
     }
-    let file_path = instance_dir.join(subdir).join(file_name);
+    let file_path = if subdir.is_empty() {
+        instance_dir.join(file_name)
+    } else {
+        instance_dir.join(subdir).join(file_name)
+    };
     if !file_path.is_file() {
         return Err(format!("文件不存在: {}", file_name));
     }
@@ -316,14 +320,19 @@ pub async fn list_resource_remote_versions(
     mc_version: String,
     loader: String,
     resource_kind: String,
+    storage_subdir: Option<String>,
 ) -> Result<ModRemoteVersionsResponse, String> {
     let kind = parse_update_resource_kind(&resource_kind)?;
     let mc_version = mc_version.trim();
     let loader = effective_loader_for_kind(kind, loader.trim())?;
-    let subdir = kind.dir_name();
+    let subdir_used = match storage_subdir.as_deref() {
+        Some("") => "",
+        Some(s) => s,
+        None => kind.dir_name(),
+    };
     list_remote_versions_impl(
         Path::new(&instance_dir),
-        subdir,
+        subdir_used,
         &file_name,
         mc_version,
         &loader,
@@ -338,8 +347,15 @@ pub async fn list_mod_remote_versions(
     mc_version: String,
     loader: String,
 ) -> Result<ModRemoteVersionsResponse, String> {
-    list_resource_remote_versions(instance_dir, file_name, mc_version, loader, "mod".to_string())
-        .await
+    list_resource_remote_versions(
+        instance_dir,
+        file_name,
+        mc_version,
+        loader,
+        "mod".to_string(),
+        None,
+    )
+    .await
 }
 
 fn to_update_info_from_file(

@@ -43,6 +43,18 @@ pub struct ResolvedPlatform {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ModDownloadResolveTarget {
+    pub slug: String,
+    pub title: String,
+    pub source: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_id: Option<String>,
+    /// registry | modrinth_sha1 | curseforge_fingerprint
+    pub resolved_by: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct RemoteModVersion {
     pub version_number: String,
     pub release_type: String,
@@ -1035,4 +1047,249 @@ pub async fn list_compatible_versions(
     }
 
     Vec::new()
+}
+
+fn bytes_to_data_url(mime: &str, bytes: &[u8]) -> String {
+    use base64::{engine::general_purpose::STANDARD, Engine};
+    format!(
+        "data:{};base64,{}",
+        mime.split(';').next().unwrap_or(mime).trim(),
+        STANDARD.encode(bytes)
+    )
+}
+
+async fn download_image_data_url(client: &reqwest::Client, url: &str) -> Option<String> {
+    let url = url.trim();
+    if url.is_empty() {
+        return None;
+    }
+    let resp = get_with_retry(client, url, None).await.ok()?;
+    if !resp.status().is_success() {
+        return None;
+    }
+    let mime = resp
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("image/png")
+        .to_string();
+    let bytes = resp.bytes().await.ok()?;
+    Some(bytes_to_data_url(&mime, &bytes))
+}
+
+async fn modrinth_project_icon_http_url(client: &reqwest::Client, slug: &str) -> Option<String> {
+    let slug = slug.trim();
+    if slug.is_empty() {
+        return None;
+    }
+    let url = format!(
+        "https://api.modrinth.com/v2/project/{}",
+        urlencoding::encode(slug)
+    );
+    let resp = get_with_retry(client, &url, None).await.ok()?;
+    if !resp.status().is_success() {
+        return None;
+    }
+    let json: serde_json::Value = resp.json().await.ok()?;
+    json.get("icon_url")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+        .filter(|s| !s.is_empty())
+}
+
+async fn curseforge_mod_icon_http_url(mod_id: i64) -> Option<String> {
+    if mod_id <= 0 {
+        return None;
+    }
+    let client = curseforge_client().await;
+    let url = format!("https://api.curseforge.com/v1/mods/{}", mod_id);
+    let resp = get_with_retry(&client, &url, None).await.ok()?;
+    if !resp.status().is_success() {
+        return None;
+    }
+    let json: serde_json::Value = resp.json().await.ok()?;
+    json.get("data")
+        .and_then(|data| data.get("logo"))
+        .and_then(|logo| {
+            logo
+                .get("thumbnailUrl")
+                .or_else(|| logo.get("url"))
+                .and_then(|v| v.as_str())
+        })
+        .map(|s| s.to_string())
+        .filter(|s| !s.is_empty())
+}
+
+async fn cover_data_url_from_platform_match(path: &Path) -> Option<String> {
+    use crate::handler::mod_file_registry::lookup_by_sha1;
+    use crate::handler::mod_platform_probe::platform_try_order;
+
+    if let Some(sha1) = file_sha1_hex(path) {
+        if let Some(binding) = lookup_by_sha1(&sha1) {
+            if binding.source == "modrinth" {
+                let client = modrinth_client().await;
+                if let Some(icon_url) =
+                    modrinth_project_icon_http_url(&client, &binding.project_slug).await
+                {
+                    if let Some(data_url) = download_image_data_url(&client, &icon_url).await {
+                        return Some(data_url);
+                    }
+                }
+            } else if binding.source == "curseforge" {
+                if let Some(id_str) = binding.project_id.as_ref() {
+                    if let Ok(mod_id) = id_str.parse::<i64>() {
+                        if let Some(icon_url) = curseforge_mod_icon_http_url(mod_id).await {
+                            let client = curseforge_client().await;
+                            if let Some(data_url) = download_image_data_url(&client, &icon_url).await
+                            {
+                                return Some(data_url);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let try_order = platform_try_order().await.ok()?;
+    let digests = build_update_check_digest_cache(&[path.to_path_buf()]);
+    let snapshot = resolve_installed_file(path, &try_order, Some(&digests)).await?;
+    match snapshot.source.as_str() {
+        "modrinth" => {
+            let client = modrinth_client().await;
+            let icon_url = modrinth_project_icon_http_url(&client, &snapshot.slug).await?;
+            download_image_data_url(&client, &icon_url).await
+        }
+        "curseforge" => {
+            let mod_id = snapshot.project_id.as_ref()?.parse::<i64>().ok()?;
+            let icon_url = curseforge_mod_icon_http_url(mod_id).await?;
+            let client = curseforge_client().await;
+            download_image_data_url(&client, &icon_url).await
+        }
+        _ => None,
+    }
+}
+
+/// Mod cover for UI: jar logo → registry/SHA/fingerprint → Modrinth slug hint.
+#[tauri::command]
+pub async fn get_mod_cover_data_url(
+    mod_path: String,
+    mod_id_hint: Option<String>,
+) -> Result<Option<String>, String> {
+    use crate::handler::mod_parser::mod_icon_data_url_from_jar;
+
+    let path = PathBuf::from(mod_path.trim());
+    if !path.is_file() {
+        return Ok(None);
+    }
+
+    if let Some(data_url) = mod_icon_data_url_from_jar(&path) {
+        return Ok(Some(data_url));
+    }
+
+    if let Some(data_url) = cover_data_url_from_platform_match(&path).await {
+        return Ok(Some(data_url));
+    }
+
+    if let Some(hint) = mod_id_hint.map(|s| s.trim().to_string()).filter(|s| !s.is_empty()) {
+        let client = modrinth_client().await;
+        if let Some(icon_url) = modrinth_project_icon_http_url(&client, &hint).await {
+            if let Some(data_url) = download_image_data_url(&client, &icon_url).await {
+                return Ok(Some(data_url));
+            }
+        }
+    }
+
+    Ok(None)
+}
+
+/// Community resource cover:
+/// - resourcepack: bundled `pack.png`
+/// - shaderpack / datapack: SHA1 / CurseForge fingerprint project icon
+#[tauri::command]
+pub async fn get_resource_cover_data_url(
+    resource_path: String,
+    resource_kind: String,
+) -> Result<Option<String>, String> {
+    use crate::handler::mod_parser::pack_png_data_url_from_path;
+
+    let path = PathBuf::from(resource_path.trim());
+    if !path.exists() {
+        return Ok(None);
+    }
+
+    let kind = resource_kind.trim().to_ascii_lowercase();
+    match kind.as_str() {
+        "resourcepack" | "resourcepacks" => {
+            if let Some(data_url) = pack_png_data_url_from_path(&path) {
+                return Ok(Some(data_url));
+            }
+            Ok(None)
+        }
+        "shaderpack" | "shaderpacks" | "shader" | "datapack" | "datapacks" => {
+            if !path.is_file() {
+                return Ok(None);
+            }
+            Ok(cover_data_url_from_platform_match(&path).await)
+        }
+        _ => Ok(None),
+    }
+}
+
+/// Local pack.mcmeta description (resource packs / datapacks).
+#[tauri::command]
+pub fn get_pack_local_description(resource_path: String) -> Result<Option<String>, String> {
+    use crate::handler::mod_parser::pack_mcmeta_description_from_path;
+    let path = PathBuf::from(resource_path.trim());
+    if !path.exists() {
+        return Ok(None);
+    }
+    Ok(pack_mcmeta_description_from_path(&path))
+}
+
+/// Resolve installed jar to a download-center project slug via SHA1 registry or platform hash APIs.
+#[tauri::command]
+pub async fn resolve_mod_for_download(
+    mod_path: String,
+) -> Result<Option<ModDownloadResolveTarget>, String> {
+    use crate::handler::mod_file_registry::lookup_by_sha1;
+    use crate::handler::mod_platform_probe::platform_try_order;
+
+    let path = PathBuf::from(mod_path.trim());
+    if !path.is_file() {
+        return Ok(None);
+    }
+
+    if let Some(sha1) = file_sha1_hex(&path) {
+        if let Some(binding) = lookup_by_sha1(&sha1) {
+            return Ok(Some(ModDownloadResolveTarget {
+                slug: binding.project_slug.clone(),
+                title: binding.project_slug.clone(),
+                source: binding.source,
+                project_id: binding.project_id,
+                resolved_by: "registry".into(),
+            }));
+        }
+    }
+
+    let try_order = platform_try_order()
+        .await
+        .map_err(|_| I18N_MOD_UPDATE_NETWORK_UNREACHABLE.to_string())?;
+    let digests = build_update_check_digest_cache(&[path.clone()]);
+    if let Some(snapshot) = resolve_installed_file(&path, &try_order, Some(&digests)).await {
+        let resolved_by = match snapshot.source.as_str() {
+            "modrinth" => "modrinth_sha1",
+            "curseforge" => "curseforge_fingerprint",
+            _ => "platform",
+        };
+        return Ok(Some(ModDownloadResolveTarget {
+            slug: snapshot.slug,
+            title: snapshot.title,
+            source: snapshot.source,
+            project_id: snapshot.project_id,
+            resolved_by: resolved_by.into(),
+        }));
+    }
+
+    Ok(None)
 }

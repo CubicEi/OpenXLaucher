@@ -3,7 +3,7 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use sqlite::{Connection, State};
 use std::fs;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Duration;
 use tokio::time::sleep;
 
@@ -12,8 +12,10 @@ use tokio::time::Instant;
 
 use super::AccountInfo;
 
-/// 微软登录取消标志：当用户关闭登录对话框时设置为 true
+/// 微软登录取消标志：当用户关闭登录对话框时设置为 true（设备码轮询）
 static MS_LOGIN_CANCELLED: AtomicBool = AtomicBool::new(false);
+/// 微软认证取消代际：停止准备 / 取消登录时递增；静默刷新在各 await 间比对
+static MS_AUTH_CANCEL_GEN: AtomicU64 = AtomicU64::new(0);
 
 const CLIENT_ID: &str = "1662e9cb-e526-4bea-8237-11526075b7f3";
 
@@ -1616,11 +1618,25 @@ pub async fn ms_poll_and_login(device_code: String, interval: u64) -> Result<Acc
     }
 }
 
-/// 用户关闭登录对话框时调用：中止后台的轮询循环
+/// 用户关闭登录对话框 / 停止启动准备时调用：中止设备码轮询与静默刷新
 #[tauri::command]
 pub fn ms_cancel_login() -> Result<(), String> {
     MS_LOGIN_CANCELLED.store(true, Ordering::SeqCst);
+    MS_AUTH_CANCEL_GEN.fetch_add(1, Ordering::SeqCst);
     Ok(())
+}
+
+fn capture_ms_auth_cancel_gen() -> u64 {
+    MS_AUTH_CANCEL_GEN.load(Ordering::SeqCst)
+}
+
+fn ensure_ms_auth_not_cancelled(cancel_gen: u64) -> Result<(), String> {
+    if MS_AUTH_CANCEL_GEN.load(Ordering::SeqCst) != cancel_gen {
+        eprintln!("[正版检测] ✗ 用户已取消微软认证流程");
+        Err("MS_AUTH_CANCELLED".to_string())
+    } else {
+        Ok(())
+    }
 }
 
 // ============== 皮肤/披风管理（基于 Minecraft Services API） ==============
@@ -1965,6 +1981,9 @@ pub async fn ms_set_active_cape(access_token: String, cape_id: String) -> Result
 #[tauri::command]
 pub async fn ms_silent_refresh_account(uuid: String) -> Result<AccountInfo, String> {
     eprintln!("[正版检测] 步骤3：尝试用 refresh_token 静默刷新账号 UUID={}", uuid);
+    // 用代际比对取消：不在此处清 bool，避免与 ms_cancel_login 竞态把刚置的取消冲掉
+    let cancel_gen = capture_ms_auth_cancel_gen();
+
     // ── 第一步：从数据库中取出 refresh_token（同步块内完成，避免非 Send 的 SQLite Statement/Connection 跨 await）──
     let (db_uuid, db_refresh_token): (String, String) = {
         let connection = setup_database().map_err(|e| format!("打开账户数据库失败: {}", e))?;
@@ -1991,6 +2010,8 @@ pub async fn ms_silent_refresh_account(uuid: String) -> Result<AccountInfo, Stri
         // stmt、connection 在这里离开作用域被 drop，不会保留到 await 之后
     };
 
+    ensure_ms_auth_not_cancelled(cancel_gen)?;
+
     // ── 第二步：HTTP / await 部分（作用域中不再保留任何 db 相关对象）──
     let client = build_http_client().map_err(|e| e.to_string())?;
 
@@ -1999,6 +2020,7 @@ pub async fn ms_silent_refresh_account(uuid: String) -> Result<AccountInfo, Stri
     let refreshed = refresh_access_token(&client, CLIENT_ID, &db_refresh_token)
         .await
         .map_err(|e| map_silent_refresh_err("Microsoft Token 刷新失败", e))?;
+    ensure_ms_auth_not_cancelled(cancel_gen)?;
     eprintln!("[正版检测] 步骤3：✓ Microsoft Token 刷新成功，新 access_token 长度={}", refreshed.access_token.len());
 
     eprintln!("[正版检测] 步骤3：正在走 Xbox Live / XSTS / Minecraft 完整认证链...");
@@ -2006,11 +2028,13 @@ pub async fn ms_silent_refresh_account(uuid: String) -> Result<AccountInfo, Stri
     let xbox_token = authenticate_with_xbox_live(&client, &refreshed.access_token)
         .await
         .map_err(|e| map_silent_refresh_err("Xbox Live 认证失败", e))?;
+    ensure_ms_auth_not_cancelled(cancel_gen)?;
     eprintln!("[正版检测] 步骤3：✓ Xbox Live 认证成功");
 
     let xsts_token = get_xsts_token(&client, &xbox_token.token)
         .await
         .map_err(|e| map_silent_refresh_err("XSTS 认证失败", e))?;
+    ensure_ms_auth_not_cancelled(cancel_gen)?;
     eprintln!("[正版检测] 步骤3：✓ XSTS 认证成功");
 
     let mc_login = authenticate_with_minecraft(
@@ -2020,12 +2044,14 @@ pub async fn ms_silent_refresh_account(uuid: String) -> Result<AccountInfo, Stri
     )
     .await
     .map_err(|e| map_silent_refresh_err("Minecraft 认证失败", e))?;
+    ensure_ms_auth_not_cancelled(cancel_gen)?;
     eprintln!("[正版检测] 步骤3：✓ Minecraft 认证成功，新 Minecraft access_token 长度={}", mc_login.access_token.len());
 
     // 4) 取得玩家资料（玩家名、皮肤等）
     let mc_profile = get_minecraft_profile(&client, &mc_login.access_token)
         .await
         .map_err(|e| map_silent_refresh_err("获取 Minecraft 个人资料失败", e))?;
+    ensure_ms_auth_not_cancelled(cancel_gen)?;
     eprintln!("[正版检测] 步骤3：✓ 获取个人资料成功，玩家名={}", mc_profile.name);
 
     // 5) 把新 token 存回数据库（再次单独开连接，同步块，不跨 await）
@@ -2042,8 +2068,11 @@ pub async fn ms_silent_refresh_account(uuid: String) -> Result<AccountInfo, Stri
         eprintln!("[正版检测] 步骤3：✓ 新凭据已保存到数据库");
     }
 
+    ensure_ms_auth_not_cancelled(cancel_gen)?;
+
     // 6) 同步下载皮肤（如果需要）
     let _ = download_player_skin(&client, &db_uuid).await;
+    ensure_ms_auth_not_cancelled(cancel_gen)?;
     eprintln!("[正版检测] 步骤3：✅ 静默刷新账号成功！一切正常");
 
     let skin_variant = active_skin_variant_from_ms(&mc_profile.skins);

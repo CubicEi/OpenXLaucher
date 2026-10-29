@@ -19,6 +19,7 @@ import { readMigratedLocalStorage } from "@/lib/storage-migrate";
 import { log4jParser } from "@/components/launch/log4j-progress-parser";
 import { useI18n } from "@/components/i18n/use-i18n";
 import { analyzeLaunchLogs } from "@/components/launch/launch-analyzer";
+import { setLaunchInFlight } from "@/lib/launch-in-flight";
 import type {
   LaunchAnalysisReport,
   LaunchConfig,
@@ -147,10 +148,17 @@ export function LaunchProvider({ children }: { children: React.ReactNode }) {
   const logIdRef = useRef(0);
   const pendingLogsRef = useRef<LaunchLogEntry[]>([]);
   const launchInFlightRef = useRef(false);
+  /** Bumped on each launch start and on cancel; stale launchGame loops exit when mismatched. */
+  const launchGenerationRef = useRef(0);
   const statusHintRef = useRef<LaunchStatus | null>(null);
   const fullyStartedPidsRef = useRef<Set<number>>(new Set());
   const instancesRef = useRef<RunningLaunchInstance[]>([]);
   const selectedLogPidRef = useRef<number | null>(null);
+
+  const syncLaunchInFlight = useCallback((active: boolean) => {
+    launchInFlightRef.current = active;
+    setLaunchInFlight(active);
+  }, []);
 
   const syncStatus = useCallback((instances: RunningLaunchInstance[]) => {
     instancesRef.current = instances;
@@ -278,7 +286,8 @@ export function LaunchProvider({ children }: { children: React.ReactNode }) {
     };
   }, [syncStatus]);
 
-  const { selectedProfile, prepareMicrosoftAccountForLaunch } = useAccountContext();
+  const { selectedProfile, prepareMicrosoftAccountForLaunch, cancelMicrosoftLogin } =
+    useAccountContext();
 
   useEffect(() => {
     selectedLogPidRef.current = selectedLogPid;
@@ -417,13 +426,13 @@ export function LaunchProvider({ children }: { children: React.ReactNode }) {
           return next;
         });
         setSelectedLogPid(pid);
-        launchInFlightRef.current = false;
+        syncLaunchInFlight(false);
         statusHintRef.current = "launching";
         setStatus("launching");
       },
     ).then((fn) => { unlisten = fn; });
     return () => { unlisten?.(); };
-  }, [syncStatus]);
+  }, [syncStatus, syncLaunchInFlight]);
 
   // 监听游戏进程退出事件
   useEffect(() => {
@@ -526,65 +535,105 @@ export function LaunchProvider({ children }: { children: React.ReactNode }) {
     return () => { unlisten?.(); };
   }, []);
 
+  const abortLaunchUi = useCallback(
+    (logMessage?: string) => {
+      const now = Date.now();
+      if (logMessage) {
+        addPendingOrSelectedLog("warn", logMessage);
+      }
+      setLaunchEndedAt(now);
+      syncLaunchInFlight(false);
+      statusHintRef.current =
+        instancesRef.current.length > 0 ? null : "stopped";
+      if (instancesRef.current.length === 0) {
+        setStatus("stopped");
+      } else {
+        syncStatus(instancesRef.current);
+      }
+      setProgress(null);
+    },
+    [addPendingOrSelectedLog, syncLaunchInFlight, syncStatus],
+  );
+
   const cancelLaunch = useCallback(
     async () => {
       const instances = instancesRef.current;
+      const inLaunchSession =
+        launchInFlightRef.current ||
+        status === "preparing" ||
+        status === "launching";
+
       if (
-        !launchInFlightRef.current &&
+        !inLaunchSession &&
         instances.length === 0 &&
-        status !== "preparing" &&
-        status !== "launching" &&
         status !== "running"
       ) {
         return;
       }
+
+      // Direction 1: invalidate the in-flight launchGame async chain.
+      launchGenerationRef.current += 1;
+
+      // Direction 2: stop Microsoft token refresh / device-code polling during prep.
+      if (inLaunchSession) {
+        cancelMicrosoftLogin();
+      }
+
       const targetPid =
         selectedLogPid != null && instances.some((i) => i.pid === selectedLogPid)
           ? selectedLogPid
           : instances.length > 0
             ? instances[instances.length - 1]!.pid
             : null;
-      try {
-        const result = await invoke<string>("kill_game_process", {
-          pid: targetPid,
-        });
-        const now = Date.now();
-        const entry: LaunchLogEntry = {
-          id: ++logIdRef.current,
-          timestamp: new Date(now).toLocaleTimeString(),
-          level: "warn",
-          message: result,
-        };
-        if (targetPid != null) {
+
+      const cancelledMessage = t("launch.provider.launchCancelledByUser");
+
+      if (targetPid != null) {
+        try {
+          const result = await invoke<string>("kill_game_process", {
+            pid: targetPid,
+          });
+          const now = Date.now();
+          const entry: LaunchLogEntry = {
+            id: ++logIdRef.current,
+            timestamp: new Date(now).toLocaleTimeString(),
+            level: "warn",
+            message: result,
+          };
           pushLogToPid(targetPid, entry);
-        } else {
-          pendingLogsRef.current = appendLogEntry(pendingLogsRef.current, entry);
+          if (inLaunchSession) {
+            syncLaunchInFlight(false);
+            setProgress(null);
+          }
+        } catch (e) {
+          if (inLaunchSession) {
+            abortLaunchUi(cancelledMessage);
+          } else {
+            setErrorMessage(e instanceof Error ? e.message : String(e));
+            syncStatus(instancesRef.current);
+          }
         }
-        // 进程真正移除由 game-exited 驱动；若尚无登记则立即清 in-flight
-        if (targetPid == null) {
-          launchInFlightRef.current = false;
-          statusHintRef.current = "stopped";
-          setProgress(null);
-          setLaunchEndedAt(now);
-          setLastExitCode(0);
-          setStatus("stopped");
-          syncStatus(instancesRef.current);
-        }
-      } catch (e) {
-        setErrorMessage(e instanceof Error ? e.message : String(e));
-        launchInFlightRef.current = false;
-        if (instancesRef.current.length === 0) {
-          statusHintRef.current = "stopped";
-          setStatus("stopped");
-        }
-        setProgress(null);
-        syncStatus(instancesRef.current);
+        return;
+      }
+
+      if (inLaunchSession) {
+        abortLaunchUi(cancelledMessage);
       }
     },
-    [status, selectedLogPid, pushLogToPid, syncStatus],
+    [
+      status,
+      selectedLogPid,
+      pushLogToPid,
+      syncStatus,
+      syncLaunchInFlight,
+      cancelMicrosoftLogin,
+      abortLaunchUi,
+      t,
+    ],
   );
 
   const beginLaunchUi = useCallback(() => {
+    launchGenerationRef.current += 1;
     setErrorMessage(null);
     setProgress(null);
     log4jParser.reset();
@@ -592,16 +641,16 @@ export function LaunchProvider({ children }: { children: React.ReactNode }) {
     setLaunchStartedAt(now);
     setLaunchEndedAt(null);
     setLastExitCode(null);
-    launchInFlightRef.current = true;
+    syncLaunchInFlight(true);
     statusHintRef.current = "preparing";
     // 同步写入 React state，点击后立即切换启动中图标
     setStatus("preparing");
-  }, []);
+  }, [syncLaunchInFlight]);
 
   const failLaunchUi = useCallback(
     (msg: string) => {
       setLaunchEndedAt(Date.now());
-      launchInFlightRef.current = false;
+      syncLaunchInFlight(false);
       statusHintRef.current =
         instancesRef.current.length > 0 ? null : "error";
       if (instancesRef.current.length === 0) {
@@ -612,7 +661,7 @@ export function LaunchProvider({ children }: { children: React.ReactNode }) {
       setErrorMessage(msg);
       setProgress(null);
     },
-    [syncStatus],
+    [syncStatus, syncLaunchInFlight],
   );
 
   const launchGame = useCallback(
@@ -638,11 +687,17 @@ export function LaunchProvider({ children }: { children: React.ReactNode }) {
 
       // 校验通过后立刻进入「正在启动」，再做微软刷新 / 内存探测等耗时步骤
       beginLaunchUi();
+      const launchGen = launchGenerationRef.current;
+      const sessionAborted = () => launchGenerationRef.current !== launchGen;
+
       addPendingOrSelectedLog("info", t("launch.provider.preparingLaunchArguments"));
 
       let microsoftAccessToken: string | null = null;
       if (selectedProfile.authType === "microsoft") {
         const prep = await prepareMicrosoftAccountForLaunch(selectedProfile);
+        if (sessionAborted()) {
+          return;
+        }
         if (!prep.ok) {
           const msg =
             prep.reason === "network"
@@ -652,11 +707,23 @@ export function LaunchProvider({ children }: { children: React.ReactNode }) {
                 : prep.reason === "cancelled"
                   ? "已取消微软登录，游戏未启动。"
                   : "微软账号准备失败，游戏未启动。";
-          failLaunchUi(msg);
-          addPendingOrSelectedLog("error", `${t("launch.provider.launchFailed")}: ${msg}`);
+          if (prep.reason === "cancelled" || sessionAborted()) {
+            abortLaunchUi(
+              sessionAborted()
+                ? t("launch.provider.launchCancelledByUser")
+                : msg,
+            );
+          } else {
+            failLaunchUi(msg);
+            addPendingOrSelectedLog("error", `${t("launch.provider.launchFailed")}: ${msg}`);
+          }
           return;
         }
         microsoftAccessToken = prep.accessToken;
+      }
+
+      if (sessionAborted()) {
+        return;
       }
 
       try {
@@ -664,6 +731,9 @@ export function LaunchProvider({ children }: { children: React.ReactNode }) {
         if (merged.autoMemory !== false && isTauriRuntime()) {
           try {
             const mem = await invoke<{ recommended_mb: number }>("get_system_memory");
+            if (sessionAborted()) {
+              return;
+            }
             if (mem.recommended_mb > 0) {
               launchMaxMemory = String(mem.recommended_mb);
               updateConfig({ maxMemory: launchMaxMemory, autoMemory: true });
@@ -671,6 +741,10 @@ export function LaunchProvider({ children }: { children: React.ReactNode }) {
           } catch {
             /* keep saved maxMemory */
           }
+        }
+
+        if (sessionAborted()) {
+          return;
         }
 
         statusHintRef.current = "launching";
@@ -728,13 +802,25 @@ export function LaunchProvider({ children }: { children: React.ReactNode }) {
           processPriority: merged.processPriority || "medium",
         });
 
+        if (sessionAborted()) {
+          try {
+            await invoke<string>("kill_game_process", { pid: null });
+          } catch {
+            /* process may not be registered yet */
+          }
+          return;
+        }
+
         setLastCommandArgs(result);
         // invoke 成功后立即恢复就绪，可再次启动；进程列表由后续事件维护
-        launchInFlightRef.current = false;
+        syncLaunchInFlight(false);
         statusHintRef.current = null;
         syncStatus(instancesRef.current);
         addPendingOrSelectedLog("info", t("launch.provider.gameLaunched"));
       } catch (err) {
+        if (sessionAborted()) {
+          return;
+        }
         const raw = err instanceof Error ? err.message : String(err);
         const msg = raw.includes("模组正在更新")
           ? t("launch.provider.modUpdateInProgress")
@@ -753,6 +839,7 @@ export function LaunchProvider({ children }: { children: React.ReactNode }) {
       failLaunchUi,
       syncStatus,
       prepareMicrosoftAccountForLaunch,
+      abortLaunchUi,
     ],
   );
 

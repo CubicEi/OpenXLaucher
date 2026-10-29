@@ -312,7 +312,8 @@ export async function msSetActiveCape(
 
 /**
  * 使用 official.rs 数据库中存储的 refresh_token 尝试静默刷新微软正版账号
- * 成功：返回包含新 access_token 的 AccountInfo；失败（refresh_token 失效/不存在）：抛出错误 "NO_REFRESH_TOKEN" 或 "REFRESH_FAILED"）
+ * 成功：返回包含新 access_token 的 AccountInfo；
+ * 失败：抛出 "NO_REFRESH_TOKEN" / "REFRESH_FAILED" / "MS_AUTH_CANCELLED"（用户取消）等
  */
 export async function msSilentRefreshAccount(
   uuid: string
@@ -321,7 +322,18 @@ export async function msSilentRefreshAccount(
 }
 
 /**
- * 启动时刷新 Minecraft 令牌失败：是否为网络/限流等暂态问题（不应弹出强制重新登录）。
+ * 用户取消微软认证（停止准备 / 关闭登录窗）—— 不应再弹强制登录。
+ */
+export function isMicrosoftAuthCancelled(message: string): boolean {
+  if (!message) return false;
+  if (message.includes("MS_AUTH_CANCELLED")) return true;
+  if (message.includes("已取消登录")) return true;
+  if (message.includes("已取消微软")) return true;
+  return false;
+}
+
+/**
+ * 启动时刷新 Minecraft 令牌失败：是否为网络/限流等暂态问题（仍应弹出强制登录，仅用于文案区分）。
  */
 export function isMicrosoftTokenTransientError(message: string): boolean {
   if (!message) return false;
@@ -354,6 +366,21 @@ export function isMicrosoftTokenTransientError(message: string): boolean {
   ) {
     return true;
   }
+  return false;
+}
+
+/**
+ * 微软 / Minecraft 官方服务明确拒绝账号或凭据（不应再提供「使用旧令牌」；也不走强制设备码登录）。
+ */
+export function isMicrosoftOfficialAuthRejection(message: string): boolean {
+  if (!message) return false;
+  if (message.includes("您还没有购买") || message.includes("还没有购买mc")) return true;
+  const lower = message.toLowerCase();
+  if (lower.includes("account_suspended") || lower.includes("user_banned")) return true;
+  if (lower.includes("account has been banned")) return true;
+  if (/获取皮肤资料失败 \(http 401\)/i.test(message)) return true;
+  if (/获取皮肤资料失败 \(http 403\)/i.test(message)) return true;
+  if (/minecraft.*\(http 403\)/i.test(message)) return true;
   return false;
 }
 

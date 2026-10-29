@@ -205,6 +205,7 @@
       "loaderLoadName": "Loader: {loadName}",
       "gameLaunched": "Game launched!",
       "launchFailed": "Launch failed",
+      "launchCancelledByUser": "Launch preparation cancelled",
       "modUpdateInProgress": "Mods are updating for this instance. Try launching again shortly."
     },
     "javaIncompatible": {
@@ -723,7 +724,17 @@
     "exportSavesSizeWarnBody": "Selected content is estimated over 512MB. Continue?",
     "exportSavesSizeWarnContinue": "Continue",
     "exportStart": "Export",
-    "exportCancel": "Cancel export"
+    "exportCancel": "Cancel export",
+    "modDetail": {
+      "badge": "Mod details",
+      "openInDownload": "Open in Download Center"
+    },
+    "resourceDetail": {
+      "badge": "Resource details",
+      "backToList": "Back to list",
+      "description": "Description",
+      "noDescription": "No description available"
+    }
   },
   "checkUpdate": {
     "title": "Check for Updates",
@@ -857,11 +868,56 @@
       "dataPacks": "Data Packs",
       "worlds": "Worlds"
     },
+    "detail": {
+      "selectModFirst": "Please select a mod from Download Center first",
+      "loadingPage": "Loading…",
+      "backToSearch": "Back to Search",
+      "backToModDetail": "Back to mod details",
+      "backToResourceDetail": "Back to resource details",
+      "loadingProject": "Loading project information…",
+      "sourceBoth": "Modrinth + CurseForge",
+      "filesFrom": "Files from {source}",
+      "mcVersionsFiles": "{versions} MC versions · {files} files",
+      "totalDownloads": "Total downloads {count}",
+      "authorLabel": "Author",
+      "updatedLabel": "Updated",
+      "typeLabel": "Type",
+      "liveLoadFailed": "Failed to load online information: {error}",
+      "viewOnModrinth": "View on Modrinth",
+      "viewOnCurseforge": "View on CurseForge",
+      "loadingFileList": "Loading file list…",
+      "mcVersion": "MC {version}",
+      "filesCount": "{count} files",
+      "releasesCount": "· {count} release(s)",
+      "betasCount": "· {count} beta(s)",
+      "release": "Release",
+      "beta": "Beta",
+      "releaseAria": "Release",
+      "betaAria": "Beta",
+      "downloading": "Downloading",
+      "downloaded": "Downloaded",
+      "retry": "Retry",
+      "cannotConnect": "Cannot connect to data source",
+      "networkErrorHint": "Network error occurred while fetching file list. Connection interruptions or timeouts may occur when accessing overseas data sources.",
+      "noModFiles": "No mod files available",
+      "checkSlugHint": "Please check if the mod slug is correct, or try again later",
+      "reload": "Reload",
+      "projectType": {
+        "unknown": "Unknown",
+        "mod": "Mod",
+        "modpack": "Modpack",
+        "resourcepack": "Resource Pack",
+        "shader": "Shader",
+        "datapack": "Data Pack",
+        "world": "World"
+      }
+    },
     "favorites": {
       "title": "Favorites",
       "savedCount": "Saved {count} directly downloadable Mod files.",
       "downloadAllToCache": "Download all to Cache",
       "download": "Download",
+      "addToFavorites": "Add to favorites",
       "removeFromFavorites": "Remove from favorites",
       "removeFromFavoritesNamed": "Remove from favorites: {name}",
       "empty": "Favorites is empty",

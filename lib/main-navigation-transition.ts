@@ -9,6 +9,7 @@ import {
   markSkipSectionChrome,
 } from "@/lib/section-chrome-enter";
 import { isTauriRuntime } from "@/lib/tauri-runtime";
+import { getLaunchInFlight } from "@/lib/launch-in-flight";
 
 export type ActiveMainNavigation = {
   controller: AbortController;
@@ -393,7 +394,12 @@ export function navigateWithMainTransition(
 
   const preserveShell = navigationMustPreserveAppShell(currentPathname, targetPathname);
   const softPush = () =>
-    pushAppRoute(router, href, { allowAssignFallback: !preserveShell });
+    pushAppRoute(router, href, {
+      allowAssignFallback: !preserveShell && !avoidHardReload,
+    });
+
+  /** 启动准备 / 正版登录弹窗进行中：禁止 location.assign，否则 async 准备与 Promise gate 被整页刷新清掉。 */
+  const avoidHardReload = getLaunchInFlight();
 
   if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
     softPush();
@@ -412,7 +418,8 @@ export function navigateWithMainTransition(
     return;
   }
   // Selective remount: soft-push keeps DownloadProvider; only page UI re-enters.
-  const hardAssign = isTauriRuntime() && !sameSection && !preserveShell;
+  const hardAssign =
+    isTauriRuntime() && !sameSection && !preserveShell && !avoidHardReload;
 
   // Chrome float is section-enter only. Mark skip only when same-section will
   // remount (Tauri assign); clear when leaving so a later enter can animate.
@@ -425,7 +432,7 @@ export function navigateWithMainTransition(
   runStaticFadeThenNavigate(
     root,
     () => {
-      if (sameSection && isTauriRuntime()) {
+      if (sameSection && isTauriRuntime() && !avoidHardReload) {
         window.location.assign(pushHref);
         return;
       }

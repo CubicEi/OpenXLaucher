@@ -15,6 +15,8 @@ import {
   msHasAccountInDb,
   deleteCachedSkin,
   isMicrosoftTokenTransientError,
+  isMicrosoftOfficialAuthRejection,
+  isMicrosoftAuthCancelled,
   normalizeSkinVariant,
   type LittleSkinAccount,
   type ThirdPartyAccountList,
@@ -74,6 +76,12 @@ type AccountContextType = {
   setManualLoginOpen: (open: boolean) => void;
   /** 正版账号启动游戏前：刷新或引导重新登录以取得 Minecraft 令牌 */
   prepareMicrosoftAccountForLaunch: (profile: Account) => Promise<MicrosoftLaunchPrepResult>;
+  /** 强制重新登录弹窗：是否可用本地缓存的 access token 继续启动 */
+  microsoftLaunchFallbackToken: string | null;
+  /** 强制重新登录弹窗：使用缓存 token 完成启动流程（不重新走设备码登录） */
+  useMicrosoftLaunchFallbackToken: () => void;
+  /** 静默刷新失败时的原始错误（用于判断是否禁用旧令牌） */
+  microsoftLaunchTokenError: string | null;
 };
 
 const AccountContext = createContext<AccountContextType | undefined>(undefined);
@@ -141,6 +149,10 @@ export function AccountProvider({ children }: { children: React.ReactNode }) {
   const microsoftLaunchGateRef = React.useRef<
     ((result: { accessToken: string | null; network?: boolean }) => void) | null
   >(null);
+  const [microsoftLaunchFallbackToken, setMicrosoftLaunchFallbackToken] = useState<string | null>(
+    null
+  );
+  const [microsoftLaunchTokenError, setMicrosoftLaunchTokenError] = useState<string | null>(null);
 
   const applyMicrosoftRefresh = useCallback(
     async (
@@ -187,10 +199,13 @@ export function AccountProvider({ children }: { children: React.ReactNode }) {
   const runForcedMicrosoftRelogin = useCallback(
     (
       pName: string,
-      tokenErrorMsg: string
+      tokenErrorMsg: string,
+      fallbackAccessToken: string | null
     ): Promise<{ accessToken: string | null; network?: boolean }> => {
       return new Promise((resolve) => {
         const finish = (accessToken: string | null, network = false) => {
+          setMicrosoftLaunchFallbackToken(null);
+          setMicrosoftLaunchTokenError(null);
           if (microsoftLaunchGateRef.current) {
             microsoftLaunchGateRef.current = null;
           }
@@ -198,6 +213,14 @@ export function AccountProvider({ children }: { children: React.ReactNode }) {
         };
         microsoftLaunchGateRef.current = ({ accessToken, network }) =>
           finish(accessToken, Boolean(network));
+
+        const fallback = fallbackAccessToken?.trim() || null;
+        setMicrosoftLaunchFallbackToken(fallback);
+        setMicrosoftLaunchTokenError(tokenErrorMsg || null);
+
+        const forcedLoginIntro = (name: string, err: string) =>
+          `检测到你的微软正版账号「${name}」无法获取 Minecraft 登录令牌（${err || "凭据已失效"}）。` +
+          `请完成下方的微软正版登录后再启动游戏；也可先关闭此窗口，或使用旧令牌尝试启动（旧令牌可能无法加入正版验证服务器）。`;
 
         void (async () => {
           try {
@@ -216,22 +239,18 @@ export function AccountProvider({ children }: { children: React.ReactNode }) {
                 finish(null);
                 return;
               }
-              if (isMicrosoftTokenTransientError(msg)) {
-                setLoginState("idle");
-                setLoginError(null);
-                finish(null, true);
+              if (isMicrosoftOfficialAuthRejection(msg) || isMicrosoftOfficialAuthRejection(tokenErrorMsg)) {
+                finish(null);
                 return;
               }
               setForcedMicrosoftLoginMode(true);
-              setForcedMicrosoftLoginMessage(
-                `检测到你的微软正版账号「${pName}」无法获取 Minecraft 登录令牌（${tokenErrorMsg || "凭据已失效"}）。` +
-                  `请完成下方的微软正版登录后再启动游戏；也可先关闭此窗口。`
-              );
+              setForcedMicrosoftLoginMessage(forcedLoginIntro(pName, tokenErrorMsg));
               setLoginError(
-                `获取验证码失败（${msg}），请稍后重试。`
+                isMicrosoftTokenTransientError(msg)
+                  ? `获取验证码失败（${msg}），请检查网络后重试，或尝试使用旧令牌登录。`
+                  : `获取验证码失败（${msg}），请稍后重试。`
               );
               setLoginState("error");
-              finish(null);
               return;
             }
 
@@ -241,10 +260,7 @@ export function AccountProvider({ children }: { children: React.ReactNode }) {
             }
 
             setForcedMicrosoftLoginMode(true);
-            setForcedMicrosoftLoginMessage(
-              `检测到你的微软正版账号「${pName}」无法获取 Minecraft 登录令牌（${tokenErrorMsg || "凭据已失效"}）。` +
-                `请完成下方的微软正版登录后再启动游戏；也可先关闭此窗口。`
-            );
+            setForcedMicrosoftLoginMessage(forcedLoginIntro(pName, tokenErrorMsg));
             setForcedMicrosoftDeviceCode(codeInfo);
 
             try {
@@ -293,38 +309,25 @@ export function AccountProvider({ children }: { children: React.ReactNode }) {
                 return;
               }
               const msg = e instanceof Error ? e.message : String(e);
-              if (isMicrosoftTokenTransientError(msg)) {
-                setForcedMicrosoftLoginMode(false);
-                setForcedMicrosoftLoginMessage(null);
-                setForcedMicrosoftDeviceCode(null);
-                setLoginState("idle");
-                setLoginError(null);
-                finish(null, true);
-                return;
-              }
               if (!msg.includes("已取消登录")) {
                 setLoginError(msg);
                 setLoginState("error");
-              } else {
-                setLoginState("idle");
-                setLoginError(null);
+                return;
               }
+              setLoginState("idle");
+              setLoginError(null);
               finish(null);
             }
           } catch (e: unknown) {
             const msg = e instanceof Error ? e.message : String(e);
-            if (isMicrosoftTokenTransientError(msg)) {
-              setForcedMicrosoftLoginMode(false);
-              setForcedMicrosoftLoginMessage(null);
-              setForcedMicrosoftDeviceCode(null);
-              setLoginState("idle");
-              setLoginError(null);
-              finish(null, true);
+            if (isMicrosoftOfficialAuthRejection(msg)) {
+              finish(null);
               return;
             }
+            setForcedMicrosoftLoginMode(true);
+            setForcedMicrosoftLoginMessage(forcedLoginIntro(pName, tokenErrorMsg));
             setLoginError(msg);
             setLoginState("error");
-            finish(null);
           }
         })();
       });
@@ -340,31 +343,48 @@ export function AccountProvider({ children }: { children: React.ReactNode }) {
       }
 
       const puuid = profile.uuid;
+      // cancelMicrosoftLogin 会递增该计数；停止准备后静默刷新即使超时也不应再弹强制登录
+      const cancelEpoch = msLoginVersionRef.current;
+      const wasCancelled = () => msLoginVersionRef.current !== cancelEpoch;
+
       let tokenErrorMsg = "";
       try {
         const refreshed = await withTimeout(msSilentRefreshAccount(puuid), 20000, "MC_TOKEN_REFRESH");
+        if (wasCancelled()) {
+          return { ok: false, reason: "cancelled" };
+        }
         if (refreshed?.access_token) {
           await applyMicrosoftRefresh(profile.id, puuid, profile.name, refreshed);
+          if (wasCancelled()) {
+            return { ok: false, reason: "cancelled" };
+          }
           return { ok: true, accessToken: refreshed.access_token };
         }
         tokenErrorMsg = "MC_TOKEN_REFRESH_EMPTY";
       } catch (e: unknown) {
+        if (wasCancelled()) {
+          return { ok: false, reason: "cancelled" };
+        }
         tokenErrorMsg = e instanceof Error ? e.message : String(e);
       }
 
-      if (isMicrosoftTokenTransientError(tokenErrorMsg)) {
-        const existing = profile.accessToken?.trim();
-        return existing ? { ok: true, accessToken: existing } : { ok: false, reason: "network" };
+      if (isMicrosoftAuthCancelled(tokenErrorMsg)) {
+        return { ok: false, reason: "cancelled" };
       }
 
-      if (tokenErrorMsg.includes("NO_REFRESH_TOKEN") && profile.accessToken?.trim()) {
-        return { ok: true, accessToken: profile.accessToken.trim() };
+      if (isMicrosoftOfficialAuthRejection(tokenErrorMsg)) {
+        return { ok: false, reason: "credentials" };
       }
 
-      const relogin = await runForcedMicrosoftRelogin(profile.name, tokenErrorMsg);
-      if (relogin.network) {
-        return { ok: false, reason: "network" };
+      if (wasCancelled()) {
+        return { ok: false, reason: "cancelled" };
       }
+
+      const relogin = await runForcedMicrosoftRelogin(
+        profile.name,
+        tokenErrorMsg,
+        profile.accessToken?.trim() || null
+      );
       if (relogin.accessToken) {
         return { ok: true, accessToken: relogin.accessToken };
       }
@@ -849,6 +869,8 @@ export function AccountProvider({ children }: { children: React.ReactNode }) {
   const cancelMicrosoftLogin = useCallback(() => {
     // 递增版本号：让之前的 then/catch 回调识别到"已被取消"
     msLoginVersionRef.current++;
+    setMicrosoftLaunchFallbackToken(null);
+    setMicrosoftLaunchTokenError(null);
     if (microsoftLaunchGateRef.current) {
       const gate = microsoftLaunchGateRef.current;
       microsoftLaunchGateRef.current = null;
@@ -866,6 +888,25 @@ export function AccountProvider({ children }: { children: React.ReactNode }) {
       // 静默失败
     });
   }, []);
+
+  const useMicrosoftLaunchFallbackToken = useCallback(() => {
+    const token = microsoftLaunchFallbackToken?.trim();
+    if (!token) return;
+    msLoginVersionRef.current++;
+    setMicrosoftLaunchFallbackToken(null);
+    setMicrosoftLaunchTokenError(null);
+    setLoginState("idle");
+    setLoginError(null);
+    setForcedMicrosoftDeviceCode(null);
+    setForcedMicrosoftLoginMode(false);
+    setForcedMicrosoftLoginMessage(null);
+    msCancelLogin().catch(() => {});
+    if (microsoftLaunchGateRef.current) {
+      const gate = microsoftLaunchGateRef.current;
+      microsoftLaunchGateRef.current = null;
+      gate({ accessToken: token });
+    }
+  }, [microsoftLaunchFallbackToken]);
 
   return (
     <AccountContext.Provider
@@ -892,6 +933,9 @@ export function AccountProvider({ children }: { children: React.ReactNode }) {
         manualLoginOpen,
         setManualLoginOpen,
         prepareMicrosoftAccountForLaunch,
+        microsoftLaunchFallbackToken,
+        useMicrosoftLaunchFallbackToken,
+        microsoftLaunchTokenError,
       }}
     >
       {children}

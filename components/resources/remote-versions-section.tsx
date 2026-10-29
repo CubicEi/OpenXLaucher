@@ -55,6 +55,7 @@ export function RemoteVersionsSection({
   modId,
   currentVersion,
   instanceDir,
+  storageSubdir,
   mcVersion,
   loader,
   resourceKind,
@@ -65,6 +66,8 @@ export function RemoteVersionsSection({
   modId?: string;
   currentVersion?: string;
   instanceDir: string;
+  /** When set to "", file is resolved at instanceDir root (mod cache library). */
+  storageSubdir?: string;
   mcVersion: string;
   loader: string;
   resourceKind: ResourceKindWire;
@@ -93,6 +96,7 @@ export function RemoteVersionsSection({
           mcVersion,
           loader,
           resourceKind,
+          storageSubdir: storageSubdir ?? null,
         }
       );
       setData(result);
@@ -102,7 +106,7 @@ export function RemoteVersionsSection({
     } finally {
       setLoading(false);
     }
-  }, [instanceDir, fileName, mcVersion, loader, resourceKind, t]);
+  }, [instanceDir, fileName, mcVersion, loader, resourceKind, storageSubdir, t]);
 
   useEffect(() => {
     void loadVersions();

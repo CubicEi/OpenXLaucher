@@ -8,9 +8,11 @@ import { invoke } from "@tauri-apps/api/core";
 import { useDownloadManager } from "@/components/download/download-provider";
 import { useSettings } from "@/components/settings/settings-provider";
 import { useRouter } from "next/navigation";
+import { useI18n, type TranslationKey } from "@/components/i18n/use-i18n";
 import { useModFavorites } from "@/hooks/use-mod-favorites";
 import type { ModFavorite } from "@/lib/mod-favorites";
 import { resolveResourceKindForDownload } from "@/lib/resource-kind";
+import { isTauriRuntime } from "@/lib/tauri-runtime";
 
 const openExternalUrl = async (url: string) => {
   try {
@@ -113,26 +115,50 @@ function formatDownloads(n?: number): string {
   return String(n);
 }
 
-function translateProjectType(pt?: string): string {
-  if (!pt) return "Unknown";
+function translateProjectType(
+  pt: string | undefined,
+  t: (key: TranslationKey, values?: Record<string, string | number>) => string
+): string {
+  if (!pt) return t("download.detail.projectType.unknown");
   const lower = pt.toLowerCase();
-  const map: Record<string, string> = {
-    mod: "Mod",
-    "minecraft mod": "Mod",
-    modpack: "Modpack",
-    "mod pack": "Modpack",
-    resourcepack: "Resource Pack",
-    "resource pack": "Resource Pack",
-    "texture pack": "Resource Pack",
-    shader: "Shader",
-    shaders: "Shader",
-    "shader pack": "Shader",
-    datapack: "Data Pack",
-    "data pack": "Data Pack",
-    world: "World",
-    worlds: "World",
+  const keyMap: Record<string, TranslationKey> = {
+    mod: "download.detail.projectType.mod",
+    "minecraft mod": "download.detail.projectType.mod",
+    modpack: "download.detail.projectType.modpack",
+    "mod pack": "download.detail.projectType.modpack",
+    resourcepack: "download.detail.projectType.resourcepack",
+    "resource pack": "download.detail.projectType.resourcepack",
+    "texture pack": "download.detail.projectType.resourcepack",
+    shader: "download.detail.projectType.shader",
+    shaders: "download.detail.projectType.shader",
+    "shader pack": "download.detail.projectType.shader",
+    datapack: "download.detail.projectType.datapack",
+    "data pack": "download.detail.projectType.datapack",
+    world: "download.detail.projectType.world",
+    worlds: "download.detail.projectType.world",
   };
-  return map[lower] ?? pt;
+  return keyMap[lower] ? t(keyMap[lower]) : pt;
+}
+
+function formatDateShort(
+  iso: string | undefined,
+  t: (key: TranslationKey, values?: Record<string, string | number>) => string
+): string {
+  if (!iso) return "";
+  try {
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return "";
+    const now = Date.now();
+    const diffMs = now - d.getTime();
+    const day = 24 * 60 * 60 * 1000;
+    if (diffMs < day) return t("download.today");
+    if (diffMs < 7 * day) return t("download.daysAgo", { count: Math.round(diffMs / day) });
+    if (diffMs < 30 * day) return t("download.weeksAgo", { count: Math.round(diffMs / (7 * day)) });
+    if (diffMs < 365 * day) return t("download.monthsAgo", { count: Math.round(diffMs / (30 * day)) });
+    return t("download.yearsAgo", { count: Math.round(diffMs / (365 * day)) });
+  } catch {
+    return "";
+  }
 }
 
 function translateCategory(cat: string): string {
@@ -186,24 +212,6 @@ function translateCategory(cat: string): string {
   };
   const lower = cat.toLowerCase();
   return map[lower] ?? cat;
-}
-
-function formatDateShort(iso?: string): string {
-  if (!iso) return "";
-  try {
-    const d = new Date(iso);
-    if (Number.isNaN(d.getTime())) return "";
-    const now = Date.now();
-    const diffMs = now - d.getTime();
-    const day = 24 * 60 * 60 * 1000;
-    if (diffMs < day) return "Today";
-    if (diffMs < 7 * day) return Math.round(diffMs / day) + " days ago";
-    if (diffMs < 30 * day) return Math.round(diffMs / (7 * day)) + " weeks ago";
-    if (diffMs < 365 * day) return Math.round(diffMs / (30 * day)) + " months ago";
-    return Math.round(diffMs / (365 * day)) + " years ago";
-  } catch {
-    return "";
-  }
 }
 
 function isReleaseVersion(tags: string[]): boolean {
@@ -368,6 +376,7 @@ function compareMinecraftVersionDescending(a: string, b: string): number {
 
 export default function ModDetailContent({ modId }: { modId: string }) {
   const router = useRouter();
+  const { t } = useI18n();
   const [liveInfo, setLiveInfo] = useState<LiveModDetail | null>(null);
   const [liveError, setLiveError] = useState<string | null>(null);
   const [modFiles, setModFiles] = useState<ModFiles | null>(null);
@@ -385,6 +394,30 @@ export default function ModDetailContent({ modId }: { modId: string }) {
   const forceType = urlParams?.get("forceType") || null;
   const browseCategoryParam = urlParams?.get("category") || forceType || null;
   const returnTo = urlParams?.get("returnTo") || null;
+  const modPathParam = urlParams?.get("modPath") || null;
+  const [localIconDataUrl, setLocalIconDataUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    const rawPath = modPathParam ? decodeUriSafe(modPathParam).trim() : "";
+    if (!rawPath || !isTauriRuntime()) {
+      setLocalIconDataUrl(null);
+      return;
+    }
+    let cancelled = false;
+    void invoke<string | null>("get_mod_cover_data_url", {
+      modPath: rawPath,
+      modIdHint: modId,
+    })
+      .then((dataUrl) => {
+        if (!cancelled) setLocalIconDataUrl(dataUrl || null);
+      })
+      .catch(() => {
+        if (!cancelled) setLocalIconDataUrl(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [modPathParam, modId]);
 
   // 根据 URL 获取下载状态（用 taskId 精确匹配）
   const getDownloadStatus = (url: string) => {
@@ -959,13 +992,14 @@ export default function ModDetailContent({ modId }: { modId: string }) {
     return (
       <div className="flex h-full flex-col items-center justify-center gap-3 text-muted-foreground">
         <Loader2 className="size-8 animate-spin" />
-        <p className="text-sm">Loading project information...</p>
+        <p className="text-sm">{t("download.detail.loadingProject")}</p>
       </div>
     );
   }
 
   const displayTitle = liveInfo?.title || modId;
   const displaySlug = liveInfo?.slug || modId;
+  const displayIconUrl = localIconDataUrl || liveInfo?.iconUrl;
   const totalFiles = parsedFiles.size;
   const totalVersions = Array.from(parsedFiles.values()).reduce((sum, arr) => sum + arr.length, 0);
 
@@ -974,6 +1008,36 @@ export default function ModDetailContent({ modId }: { modId: string }) {
       <Button variant="ghost" size="sm" className="w-fit mb-4" onClick={() => {
         const params = new URLSearchParams(window.location.search);
         const returnTarget = params.get("returnTo");
+        if (returnTarget === "modDetail") {
+          const modFile = params.get("modFile")?.trim();
+          const modSide = params.get("modSide")?.trim();
+          if (modFile) {
+            const query = new URLSearchParams({ modFile });
+            if (modSide) query.set("modSide", modSide);
+            router.push(`/game-settings/mods?${query.toString()}`);
+            return;
+          }
+          router.push("/game-settings/mods");
+          return;
+        }
+        if (returnTarget === "resourceDetail") {
+          const resourceFile = params.get("resourceFile")?.trim();
+          const resourceKind = params.get("resourceKind")?.trim() || "resourcepack";
+          const base =
+            resourceKind === "shaderpack"
+              ? "/game-settings/shaders"
+              : resourceKind === "datapack"
+                ? "/game-settings/datapacks"
+                : "/game-settings/resources";
+          if (resourceFile) {
+            router.push(
+              `${base}?resourceFile=${encodeURIComponent(resourceFile)}`,
+            );
+            return;
+          }
+          router.push(base);
+          return;
+        }
         if (returnTarget === "english") {
           const query = params.get("query") || "";
           const category = params.get("category") || "mod";
@@ -983,16 +1047,20 @@ export default function ModDetailContent({ modId }: { modId: string }) {
         router.push("/download");
       }}>
         <ArrowLeft className="mr-2 size-4" />
-        Back to Search
+        {returnTo === "modDetail"
+          ? t("download.detail.backToModDetail")
+          : returnTo === "resourceDetail"
+            ? t("download.detail.backToResourceDetail")
+            : t("download.detail.backToSearch")}
       </Button>
 
       <div className="flex-1 min-h-0 flex flex-col gap-4 overflow-y-auto">
         <div className="rounded-xl border border-border bg-card p-5">
           <div className="flex gap-5 items-start flex-col md:flex-row">
-            <div className={"shrink-0 w-20 h-20 " + (liveInfo?.iconUrl ? "" : "bg-gradient-to-br from-primary/20 to-primary/5") + " rounded-xl flex items-center justify-center border border-border overflow-hidden"}>
-              {liveInfo?.iconUrl ? (
+            <div className={"shrink-0 w-20 h-20 " + (displayIconUrl ? "" : "bg-gradient-to-br from-primary/20 to-primary/5") + " rounded-xl flex items-center justify-center border border-border overflow-hidden"}>
+              {displayIconUrl ? (
                 <img
-                  src={liveInfo.iconUrl}
+                  src={displayIconUrl}
                   alt=""
                   className="w-full h-full object-contain"
                   onError={(e) => {
@@ -1016,7 +1084,7 @@ export default function ModDetailContent({ modId }: { modId: string }) {
 
                 {liveInfo?.source === 'both' && (
                   <Badge variant="outline" className="text-xs bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border-emerald-500/30">
-                    Modrinth + CurseForge
+                    {t("download.detail.sourceBoth")}
                   </Badge>
                 )}
                 {liveInfo?.source === 'modrinth' && (
@@ -1032,27 +1100,30 @@ export default function ModDetailContent({ modId }: { modId: string }) {
 
                 {dataSource && (
                   <Badge variant="outline" className="text-xs">
-                    Files from {dataSource}
+                    {t("download.detail.filesFrom", { source: dataSource })}
                   </Badge>
                 )}
 
                 <Badge variant="outline" className="text-xs">
-                  {totalFiles} MC versions · {totalVersions} files
+                  {t("download.detail.mcVersionsFiles", {
+                    versions: totalFiles,
+                    files: totalVersions,
+                  })}
                 </Badge>
               </div>
 
               <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground mt-3">
                 {liveInfo?.downloads != null && (
-                  <span>⬇ Total downloads {formatDownloads(liveInfo.downloads)}</span>
+                  <span>⬇ {t("download.detail.totalDownloads", { count: formatDownloads(liveInfo.downloads) })}</span>
                 )}
                 {liveInfo?.author && (
-                  <span>Author: <span className="text-foreground font-medium">{liveInfo.author}</span></span>
+                  <span>{t("download.detail.authorLabel")}: <span className="text-foreground font-medium">{liveInfo.author}</span></span>
                 )}
                 {liveInfo?.updated && (
-                  <span>Updated {formatDateShort(liveInfo.updated)}</span>
+                  <span>{t("download.detail.updatedLabel")} {formatDateShort(liveInfo.updated, t)}</span>
                 )}
                 {liveInfo?.projectType && (
-                  <span>Type: {translateProjectType(liveInfo.projectType)}</span>
+                  <span>{t("download.detail.typeLabel")}: {translateProjectType(liveInfo.projectType, t)}</span>
                 )}
               </div>
 
@@ -1066,17 +1137,17 @@ export default function ModDetailContent({ modId }: { modId: string }) {
                 {liveInfo?.modrinthUrl && (
                   <Button variant="outline" size="sm" onClick={() => openExternalUrl(liveInfo.modrinthUrl!)}>
                     <ExternalLink className="mr-1.5 size-3.5" />
-                    View on Modrinth
+                    {t("download.detail.viewOnModrinth")}
                   </Button>
                 )}
                 {liveInfo?.curseforgeUrl && (
                   <Button variant="outline" size="sm" onClick={() => openExternalUrl(liveInfo.curseforgeUrl!)}>
                     <ExternalLink className="mr-1.5 size-3.5" />
-                    View on CurseForge
+                    {t("download.detail.viewOnCurseforge")}
                   </Button>
                 )}
                 {liveError && (
-                  <span className="text-[11px] text-destructive">Failed to load online information: {liveError}</span>
+                  <span className="text-[11px] text-destructive">{t("download.detail.liveLoadFailed", { error: liveError })}</span>
                 )}
               </div>
             </div>
@@ -1088,7 +1159,7 @@ export default function ModDetailContent({ modId }: { modId: string }) {
             {loadingFiles && (
               <div className="flex items-center justify-center gap-2 text-muted-foreground py-4">
                 <Loader2 className="size-4 animate-spin" />
-                <span className="text-sm">Loading file list...</span>
+                <span className="text-sm">{t("download.detail.loadingFileList")}</span>
               </div>
             )}
 
@@ -1105,11 +1176,15 @@ export default function ModDetailContent({ modId }: { modId: string }) {
                         <ChevronDown className="size-5 text-muted-foreground" />
                       </div>
                       <div className="flex flex-col">
-                        <span className="font-semibold text-base">MC {mcVersion}</span>
+                        <span className="font-semibold text-base">{t("download.detail.mcVersion", { version: mcVersion })}</span>
                         <span className="text-xs text-muted-foreground mt-0.5">
-                          {files.length} files
-                          {releaseCount > 0 && (<span className="ml-2">· {releaseCount} release(s)</span>)}
-                          {nonReleaseCount > 0 && (<span className="ml-2">· {nonReleaseCount} beta(s)</span>)}
+                          {t("download.detail.filesCount", { count: files.length })}
+                          {releaseCount > 0 && (
+                            <span className="ml-2">{t("download.detail.releasesCount", { count: releaseCount })}</span>
+                          )}
+                          {nonReleaseCount > 0 && (
+                            <span className="ml-2">{t("download.detail.betasCount", { count: nonReleaseCount })}</span>
+                          )}
                         </span>
                       </div>
                     </div>
@@ -1138,9 +1213,9 @@ export default function ModDetailContent({ modId }: { modId: string }) {
                             <div key={index} className="flex items-center gap-3 px-4 py-3 hover:bg-accent/20 transition-colors">
                               <div className="flex items-center gap-2 shrink-0 w-16 justify-center">
                                 {file.isRelease ? (
-                                  <Shield className="size-7 text-emerald-500" aria-label="Release" />
+                                  <Shield className="size-7 text-emerald-500" aria-label={t("download.detail.releaseAria")} />
                                 ) : (
-                                  <FlaskConical className="size-7 text-amber-500" aria-label="Beta" />
+                                  <FlaskConical className="size-7 text-amber-500" aria-label={t("download.detail.betaAria")} />
                                 )}
                               </div>
 
@@ -1153,7 +1228,7 @@ export default function ModDetailContent({ modId }: { modId: string }) {
                                 </div>
                                 <div className="flex flex-wrap items-center gap-1.5 mt-1">
                                   <Badge variant={file.isRelease ? "secondary" : "outline"} className="text-[10px] h-4">{file.loaderLabel}</Badge>
-                                  <Badge variant={file.isRelease ? "default" : "outline"} className={"text-[10px] h-4 " + (file.isRelease ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30" : "text-amber-600 dark:text-amber-400 border-amber-500/30")}>{file.isRelease ? "Release" : "Beta"}</Badge>
+                                  <Badge variant={file.isRelease ? "default" : "outline"} className={"text-[10px] h-4 " + (file.isRelease ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30" : "text-amber-600 dark:text-amber-400 border-amber-500/30")}>{file.isRelease ? t("download.detail.release") : t("download.detail.beta")}</Badge>
                                   {file.serverLabel && (
                                     <Badge variant="outline" className="text-[10px] h-4 text-sky-600 dark:text-sky-400 border-sky-500/30">{file.serverLabel}</Badge>
                                   )}
@@ -1168,18 +1243,18 @@ export default function ModDetailContent({ modId }: { modId: string }) {
                                   variant="ghost"
                                   size="icon-sm"
                                   className="size-8 shrink-0"
-                                  title={isFavorite ? "移出收藏夹" : "加入收藏夹"}
-                                  aria-label={`${isFavorite ? "移出收藏夹" : "加入收藏夹"}：${favorite.name} ${favorite.versionLabel}`}
+                                  title={isFavorite ? t("download.favorites.removeFromFavorites") : t("download.favorites.addToFavorites")}
+                                  aria-label={isFavorite ? t("download.favorites.removeFromFavoritesNamed", { name: favorite.name }) : t("download.favorites.addToFavorites")}
                                   onClick={() => toggleFavorite(favorite)}
                                 >
                                   <Star className={isFavorite ? "size-4 fill-amber-400 text-amber-500" : "size-4"} />
                                 </Button>
                               )}
                               <Button size="sm" variant={status === "success" ? "secondary" : status === "error" ? "destructive" : "default"} disabled={status === "downloading" || status === "success"} onClick={() => handleDownload(file, mcVersion)} className="shrink-0">
-                                {status === "downloading" && (<><Loader2 className="mr-1.5 size-3.5 animate-spin" /> Downloading</>)}
-                                {status === "success" && (<><CheckCircle2 className="mr-1.5 size-3.5" /> Downloaded</>)}
-                                {status === "error" && (<><XCircle className="mr-1.5 size-3.5" /> Retry</>)}
-                                {status === "idle" && (<><Download className="mr-1.5 size-3.5" /> Download</>)}
+                                {status === "downloading" && (<><Loader2 className="mr-1.5 size-3.5 animate-spin" /> {t("download.detail.downloading")}</>)}
+                                {status === "success" && (<><CheckCircle2 className="mr-1.5 size-3.5" /> {t("download.detail.downloaded")}</>)}
+                                {status === "error" && (<><XCircle className="mr-1.5 size-3.5" /> {t("download.detail.retry")}</>)}
+                                {status === "idle" && (<><Download className="mr-1.5 size-3.5" /> {t("download.favorites.download")}</>)}
                               </Button>
                             </div>
                           );
@@ -1198,23 +1273,23 @@ export default function ModDetailContent({ modId }: { modId: string }) {
                 <div className="size-10 rounded-full bg-destructive/10 flex items-center justify-center">
                   <span className="text-destructive text-lg">!</span>
                 </div>
-                <p className="text-sm font-medium text-foreground">Cannot connect to data source</p>
+                <p className="text-sm font-medium text-foreground">{t("download.detail.cannotConnect")}</p>
                 <p className="text-xs text-muted-foreground text-center max-w-sm leading-relaxed">
-                  Network error occurred while fetching file list. Connection interruptions or timeouts may occur when accessing overseas data sources.
+                  {t("download.detail.networkErrorHint")}
                 </p>
                 <div className="mt-2 max-w-md w-full p-3 rounded-lg bg-muted/50 text-xs font-mono break-all text-muted-foreground">{filesError}</div>
                 <div className="flex flex-wrap gap-2 mt-2">
-                  <Button variant="default" size="sm" onClick={loadModData}>Retry</Button>
+                  <Button variant="default" size="sm" onClick={loadModData}>{t("download.retry")}</Button>
                   {liveInfo?.modrinthUrl && (
                     <Button variant="outline" size="sm" onClick={() => openExternalUrl(liveInfo.modrinthUrl!)}>
                       <ExternalLink className="mr-1.5 size-3.5" />
-                      View on Modrinth
+                      {t("download.detail.viewOnModrinth")}
                     </Button>
                   )}
                   {liveInfo?.curseforgeUrl && (
                     <Button variant="outline" size="sm" onClick={() => openExternalUrl(liveInfo.curseforgeUrl!)}>
                       <ExternalLink className="mr-1.5 size-3.5" />
-                      View on CurseForge
+                      {t("download.detail.viewOnCurseforge")}
                     </Button>
                   )}
                 </div>
@@ -1222,9 +1297,9 @@ export default function ModDetailContent({ modId }: { modId: string }) {
             ) : (
               <>
                 <Package className="size-10 opacity-40" />
-                <p className="text-sm">No mod files available</p>
-                <p className="text-xs text-muted-foreground">Please check if the mod slug is correct, or try again later</p>
-                <Button variant="outline" size="sm" className="mt-2" onClick={loadModData}>Reload</Button>
+                <p className="text-sm">{t("download.detail.noModFiles")}</p>
+                <p className="text-xs text-muted-foreground">{t("download.detail.checkSlugHint")}</p>
+                <Button variant="outline" size="sm" className="mt-2" onClick={loadModData}>{t("download.detail.reload")}</Button>
               </>
             )}
           </div>

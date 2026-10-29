@@ -74,6 +74,10 @@ use handler::mod_links::{
     search_modrinth_projects,
 };
 use handler::mod_parser::{parse_mod, parse_mods, parse_mods_in_dir, save_incompatible_mods};
+use handler::mod_platform::{
+    get_mod_cover_data_url, get_pack_local_description, get_resource_cover_data_url,
+    resolve_mod_for_download,
+};
 use handler::mod_updates::{
     check_mods_updates, check_resource_updates, list_mod_remote_versions,
     list_resource_remote_versions, update_mod, update_mods, update_resource, update_resources,
@@ -315,6 +319,10 @@ pub fn run() {
             parse_mod,
             parse_mods,
             parse_mods_in_dir,
+            get_mod_cover_data_url,
+            get_resource_cover_data_url,
+            get_pack_local_description,
+            resolve_mod_for_download,
             save_incompatible_mods,
             check_mods_updates,
             check_resource_updates,
