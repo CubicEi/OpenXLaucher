@@ -23,10 +23,12 @@ jobs:
             args: '--target aarch64-apple-darwin'
             name: 'macOS ARM64'
             artifact_name: 'macos_aarch64'
+            update_platform: 'macos-aarch64'
           - platform: 'macos-latest'
             args: '--target x86_64-apple-darwin'
             name: 'macOS x64'
             artifact_name: 'macos_x64'
+            update_platform: 'macos-x86_64'
           - platform: 'ubuntu-22.04'
             args: '--bundles deb'
             name: 'Linux'
@@ -111,6 +113,26 @@ jobs:
           }
           Remove-Item $certPath -ErrorAction SilentlyContinue
 
+      - name: Prepare macOS update asset
+        if: matrix.platform == 'macos-latest'
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Prefer package.json version for Release asset naming (updater matches identity.version).
+          PKG_VERSION=$(node -p "require('./package.json').version")
+          dmg=$(find src-tauri/target -path '*/release/bundle/dmg/*.dmg' -type f | head -n 1)
+          if [ -z "$dmg" ]; then
+            echo "No DMG found under src-tauri/target/*/release/bundle/dmg/"
+            exit 1
+          fi
+          dest="src-tauri/target/release/OpenXLauncher_${PKG_VERSION}_${{ matrix.update_platform }}.dmg"
+          mkdir -p "$(dirname "$dest")"
+          cp -f "$dmg" "$dest"
+          identity="src-tauri/target/release/OpenXLauncher.identity.${{ matrix.update_platform }}.json"
+          node scripts/write-release-identity.mjs "$dest" --platform "${{ matrix.update_platform }}" "$identity"
+          echo "Prepared $dest and $identity"
+          echo "PKG_VERSION=$PKG_VERSION" >> "$GITHUB_ENV"
+
       - name: Upload macOS bundles
         if: matrix.platform == 'macos-latest'
         uses: actions/upload-artifact@v7
@@ -119,6 +141,8 @@ jobs:
           path: |
             src-tauri/target/*/release/bundle/**/*.dmg
             src-tauri/target/*/release/bundle/**/*.app
+            src-tauri/target/release/OpenXLauncher_${{ env.PKG_VERSION }}_${{ matrix.update_platform }}.dmg
+            src-tauri/target/release/OpenXLauncher.identity.${{ matrix.update_platform }}.json
           if-no-files-found: warn
           retention-days: 90
 

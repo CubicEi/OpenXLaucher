@@ -4,6 +4,8 @@ use std::time::Duration;
 use tokio::sync::{OnceCell, Semaphore};
 pub const CURSEFORGE_API_KEY: &str = "$2a$10$VTAFCxje5a1Jkqv0aGWjQ.fULedAEPctDqppOkNMRVv.edVnG7KQ6";
 pub const DEFAULT_MAX_CONCURRENT: usize = 256;
+/// 下载响应体：连续多久未收到字节则超时（不设整体下载时长上限）。
+pub const DOWNLOAD_IDLE_TIMEOUT: Duration = Duration::from_secs(120);
 static SHARED_CLIENT: OnceCell<Arc<reqwest::Client>> = OnceCell::const_new();
 static MODRINTH_CLIENT: OnceCell<Arc<reqwest::Client>> = OnceCell::const_new();
 static CURSEFORGE_CLIENT: OnceCell<Arc<reqwest::Client>> = OnceCell::const_new();
@@ -54,7 +56,6 @@ pub async fn shared_client() -> Arc<reqwest::Client> {
         .get_or_init(|| async {
             Arc::new(
                 base_client_builder()
-                    .timeout(Duration::from_secs(600))
                     .build()
                     .expect("Failed to build shared HTTP client"),
             )
@@ -72,7 +73,6 @@ pub async fn curseforge_client() -> Arc<reqwest::Client> {
             Arc::new(
                 base_client_builder()
                     .default_headers(headers)
-                    .timeout(Duration::from_secs(600))
                     .build()
                     .expect("Failed to build CurseForge HTTP client"),
             )

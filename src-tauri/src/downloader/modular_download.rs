@@ -32,7 +32,6 @@ const STALL_DETECTION_INTERVAL: Duration = Duration::from_secs(2);
 const MAX_RETRIES_PER_URL: u32 = 8;
 const MAX_RETRIES_PER_CHUNK: u32 = 5;
 const CHUNK_TIMEOUT_BASE: Duration = Duration::from_secs(15);
-const OVERALL_TIMEOUT_SECONDS: u64 = 600;
 
 fn workers_for_size(size: u64) -> usize {
     download_runtime_config::workers_for_file_size(size, CHUNKED_THRESHOLD)
@@ -444,66 +443,28 @@ pub async fn download_file(
     cancel: Option<Arc<AtomicBool>>,
 ) -> SingleDownloadResult {
     let total_start = Instant::now();
-    let overall_timeout = Duration::from_secs(OVERALL_TIMEOUT_SECONDS);
+    let idle_secs = crate::http_client::DOWNLOAD_IDLE_TIMEOUT.as_secs();
     let file_name_for_log = if task.file_name.is_empty() {
         task.urls.first().cloned().unwrap_or_default()
     } else {
         task.file_name.clone()
     };
-    
+
     println!(
-        "[Download] ═══ 开始下载: {} | URL数: {} | 整体超时: {}s ═══",
+        "[Download] ═══ 开始下载: {} | URL数: {} | 空闲超时: {}s ═══",
         file_name_for_log,
         task.urls.len(),
-        overall_timeout.as_secs()
+        idle_secs
     );
-    
-    let task_clone = task.clone();
-    let cancel_clone = cancel.clone();
-    
-    let result = tokio::time::timeout(overall_timeout, async move {
-        download_file_internal(&task_clone, progress_tx, cancel_clone).await
-    })
-    .await;
-    
-    match result {
-        Ok(r) => {
-            println!(
-                "[Download] ═══ 结束: {} | 总耗时: {:.1}s ═══",
-                file_name_for_log,
-                total_start.elapsed().as_secs_f64()
-            );
-            r
-        }
-        Err(_) => {
-            println!(
-                "[Download] ═══ 超时: {} | 已等待超过 {}s, 清理残留文件 ═══",
-                file_name_for_log,
-                overall_timeout.as_secs()
-            );
-            
-            let target = task.target_dir.join(if task.file_name.is_empty() {
-                "unknown.bin"
-            } else {
-                &task.file_name
-            });
-            let temp_path = generate_temp_path(&target);
-            let _ = fs::remove_file(&temp_path);
-            let part_path = target.with_extension(format!(
-                "{}.part",
-                target
-                    .extension()
-                    .and_then(|e| e.to_str())
-                    .unwrap_or("download")
-            ));
-            let _ = fs::remove_file(&part_path);
-            
-            SingleDownloadResult::Failed {
-                error: format!("下载超时 ({}s, 速度太慢)", overall_timeout.as_secs()),
-                urls_tried: task.urls.clone(),
-            }
-        }
-    }
+
+    let result = download_file_internal(task, progress_tx, cancel).await;
+
+    println!(
+        "[Download] ═══ 结束: {} | 总耗时: {:.1}s ═══",
+        file_name_for_log,
+        total_start.elapsed().as_secs_f64()
+    );
+    result
 }
 
 async fn download_file_internal(
@@ -1330,23 +1291,12 @@ async fn worker_loop(
     writer: mpsc::UnboundedSender<(u64, Vec<u8>)>,
 ) {
     let start = Instant::now();
-    let size_mb = (state.total_size as f64 / (1024.0 * 1024.0)).max(1.0);
-    let hard_timeout_secs = (120.0 + size_mb * 8.0).min(3600.0) as u64;
-    let hard_timeout = Duration::from_secs(hard_timeout_secs);
     let mut tick_counter: u64 = 0;
-    
+
     loop {
         if state.cancel.load(Ordering::SeqCst) || state.failed.load(Ordering::SeqCst) {
             return;
         }
-        
-        if start.elapsed() > hard_timeout {
-            state.failed.store(true, Ordering::SeqCst);
-            let mut em = state.error_msg.lock().unwrap();
-            *em = Some(format!("worker 整体超时 ({}s)", hard_timeout.as_secs()));
-            return;
-        }
-        
         let maybe_chunk = {
             let mut s = scheduler.lock().await;
             if s.is_dead() {
@@ -1446,14 +1396,11 @@ async fn download_chunk(
         .map_err(|_| anyhow!("下载 worker 池已关闭"))?;
 
     let range_header = format!("bytes={}-{}", range.start, range.end);
-    let size_mb = (range.size() as f64 / (1024.0 * 1024.0)).max(0.1);
-    let req_timeout = Duration::from_secs_f64((30.0 + size_mb * 10.0).min(120.0));
     let req_start = Instant::now();
-    
+
     let resp = client
         .get(url)
         .header(reqwest::header::RANGE, &range_header)
-        .timeout(req_timeout)
         .send()
         .await
         .with_context(|| format!("请求 chunk {}-{} 失败", range.start, range.end))?;
@@ -1477,10 +1424,10 @@ async fn download_chunk(
     let mut last_progress_time = Instant::now();
     let mut last_bytes_time = Instant::now();
     let mut last_offset: u64 = range.start;
-    let read_timeout = Duration::from_secs(60);
+    let read_timeout = crate::http_client::DOWNLOAD_IDLE_TIMEOUT;
     let mut error_count: u32 = 0;
     const MAX_ERRORS: u32 = 15;
-    
+
     loop {
         if state.cancel.load(Ordering::SeqCst) {
             return Err(anyhow!("已取消"));
@@ -1488,23 +1435,13 @@ async fn download_chunk(
         if state.failed.load(Ordering::SeqCst) {
             return Err(anyhow!("已失败"));
         }
-        if req_start.elapsed() > Duration::from_secs(600) {
-            return Err(anyhow!("chunk 整体超时"));
-        }
-        
+
         match tokio::time::timeout(read_timeout, stream.next()).await {
             Err(_) => {
-                error_count += 1;
-                if error_count > MAX_ERRORS {
-                    return Err(anyhow!("chunk 读取超时 (连续 {} 次无数据)", MAX_ERRORS));
-                }
-                let sleep_ms = 200u64 + (error_count as u64) * 100;
-                println!(
-                    "[Download]     ! chunk {}-{} 读取超时 ({}/{}), 等待 {}ms...",
-                    range.start, range.end, error_count, MAX_ERRORS, sleep_ms
-                );
-                tokio::time::sleep(Duration::from_millis(sleep_ms)).await;
-                continue;
+                return Err(anyhow!(
+                    "chunk 读取超时 ({}s 内未收到数据)",
+                    read_timeout.as_secs()
+                ));
             }
             Ok(None) => break,
             Ok(Some(chunk_data)) => match chunk_data {
@@ -1584,7 +1521,7 @@ async fn single_threaded_download(
 ) -> Result<()> {
     println!("[Download]   单线程下载: {}", url);
     let start = Instant::now();
-    let hard_timeout = Duration::from_secs(600);
+    let idle_timeout = crate::http_client::DOWNLOAD_IDLE_TIMEOUT;
     
     let resp = client
         .get(url)
@@ -1614,41 +1551,25 @@ async fn single_threaded_download(
     let mut reporter_tick = Instant::now();
     let mut last_bytes_tick = Instant::now();
     let mut last_received: u64 = 0;
-    let stall_timeout = Duration::from_secs(120);
     let mut chunk_error_count: u32 = 0;
-    let mut chunk_timeout_count: u32 = 0;
     const MAX_CHUNK_ERRORS: u32 = 25;
-    const MAX_CHUNK_TIMEOUTS: u32 = 40;
-    const READ_TIMEOUT_SECS: u64 = 90;
-    
+
     loop {
-        let chunk_with_timeout =
-            tokio::time::timeout(Duration::from_secs(READ_TIMEOUT_SECS), stream.next()).await;
-        
+        let chunk_with_timeout = tokio::time::timeout(idle_timeout, stream.next()).await;
+
         match chunk_with_timeout {
             Err(_) => {
-                chunk_timeout_count += 1;
-                if chunk_timeout_count > MAX_CHUNK_TIMEOUTS {
-                    return Err(anyhow!("读取超时 (连续 {} 次无数据)", MAX_CHUNK_TIMEOUTS));
-                }
-                let sleep_ms = 300u64 + (chunk_timeout_count as u64) * 100;
-                println!(
-                    "[Download]   ! chunk {}s无响应 ({}/{}), 等待 {}ms 后继续...",
-                    READ_TIMEOUT_SECS, chunk_timeout_count, MAX_CHUNK_TIMEOUTS, sleep_ms
-                );
-                tokio::time::sleep(Duration::from_millis(sleep_ms)).await;
-                continue;
+                return Err(anyhow!(
+                    "读取超时 ({}s 内未收到数据)",
+                    idle_timeout.as_secs()
+                ));
             }
             Ok(None) => break,
             Ok(Some(chunk_result)) => {
                 if cancel.load(Ordering::SeqCst) {
                     return Err(anyhow!("已取消"));
                 }
-                
-                if start.elapsed() > hard_timeout {
-                    return Err(anyhow!("单线程下载整体超时"));
-                }
-                
+
                 let data = match chunk_result {
                     Ok(d) => d,
                     Err(e) => {
@@ -1671,7 +1592,6 @@ async fn single_threaded_download(
                 };
                 
                 chunk_error_count = 0;
-                chunk_timeout_count = 0;
                 
                 if data.is_empty() {
                     tokio::time::sleep(Duration::from_millis(20)).await;
@@ -1705,8 +1625,11 @@ async fn single_threaded_download(
                 if received > last_received {
                     last_received = received;
                     last_bytes_tick = Instant::now();
-                } else if last_bytes_tick.elapsed() > stall_timeout {
-                    return Err(anyhow!("下载停滞超过 {}s", stall_timeout.as_secs()));
+                } else if last_bytes_tick.elapsed() > idle_timeout {
+                    return Err(anyhow!(
+                        "下载停滞超过 {}s",
+                        idle_timeout.as_secs()
+                    ));
                 }
             }
         }
@@ -1742,7 +1665,7 @@ async fn browser_style_download(
 ) -> Result<()> {
     println!("[Download]   浏览器风格下载: {} | 类型: {}", url, site_type);
     let start = Instant::now();
-    let hard_timeout = Duration::from_secs(600);
+    let idle_timeout = crate::http_client::DOWNLOAD_IDLE_TIMEOUT;
     
     let client = crate::http_client::base_client_builder()
         .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
@@ -1794,30 +1717,18 @@ async fn browser_style_download(
     let mut reporter_tick = Instant::now();
     let mut last_bytes_tick = Instant::now();
     let mut last_received: u64 = 0;
-    let stall_timeout = Duration::from_secs(120);
     let mut chunk_error_count: u32 = 0;
-    let mut chunk_timeout_count: u32 = 0;
     const MAX_CHUNK_ERRORS: u32 = 30;
-    const MAX_CHUNK_TIMEOUTS: u32 = 50;
-    const READ_TIMEOUT_SECS: u64 = 120;
-    
+
     loop {
-        let chunk_with_timeout =
-            tokio::time::timeout(Duration::from_secs(READ_TIMEOUT_SECS), stream.next()).await;
-        
+        let chunk_with_timeout = tokio::time::timeout(idle_timeout, stream.next()).await;
+
         match chunk_with_timeout {
             Err(_) => {
-                chunk_timeout_count += 1;
-                if chunk_timeout_count > MAX_CHUNK_TIMEOUTS {
-                    return Err(anyhow!("读取超时 (连续 {} 次无数据)", MAX_CHUNK_TIMEOUTS));
-                }
-                let sleep_ms = 300u64 + (chunk_timeout_count as u64) * 100;
-                println!(
-                    "[Download]   ! chunk {}s无响应 ({}/{}), 等待 {}ms 后继续...",
-                    READ_TIMEOUT_SECS, chunk_timeout_count, MAX_CHUNK_TIMEOUTS, sleep_ms
-                );
-                tokio::time::sleep(Duration::from_millis(sleep_ms)).await;
-                continue;
+                return Err(anyhow!(
+                    "读取超时 ({}s 内未收到数据)",
+                    idle_timeout.as_secs()
+                ));
             }
             Ok(None) => {
                 // 流结束
@@ -1827,11 +1738,7 @@ async fn browser_style_download(
                 if cancel.load(Ordering::SeqCst) {
                     return Err(anyhow!("已取消"));
                 }
-                
-                if start.elapsed() > hard_timeout {
-                    return Err(anyhow!("浏览器风格下载超时"));
-                }
-                
+
                 let data = match chunk_result {
                     Ok(d) => d,
                     Err(e) => {
@@ -1854,7 +1761,6 @@ async fn browser_style_download(
                 };
                 
                 chunk_error_count = 0;
-                chunk_timeout_count = 0;
                 
                 if data.is_empty() {
                     tokio::time::sleep(Duration::from_millis(20)).await;
@@ -1888,8 +1794,11 @@ async fn browser_style_download(
                 if received > last_received {
                     last_received = received;
                     last_bytes_tick = Instant::now();
-                } else if last_bytes_tick.elapsed() > stall_timeout {
-                    return Err(anyhow!("下载停滞超过 {}s", stall_timeout.as_secs()));
+                } else if last_bytes_tick.elapsed() > idle_timeout {
+                    return Err(anyhow!(
+                        "下载停滞超过 {}s",
+                        idle_timeout.as_secs()
+                    ));
                 }
             }
         }

@@ -279,8 +279,8 @@ impl UpdateFetcher {
         cfg.target_version = Some(target_version.clone());
         cfg.changelog = changelog.clone();
         cfg.target_os = Some(current_os);
-        cfg.download_url = Some(bundle.windows_exe_url.clone());
-        cfg.file_size = bundle.windows_exe_size;
+        cfg.download_url = Some(bundle.download_url.clone());
+        cfg.file_size = bundle.file_size;
         cfg.expected_sha256 = Some(bundle.identity.sha256.clone());
         cfg.status = UpdateStatus::Available;
         let _ = save_update_config(cfg);
@@ -290,7 +290,8 @@ impl UpdateFetcher {
             Some(json!({
                 "currentVersion": current_version,
                 "targetVersion": target_version,
-                "fileSize": bundle.windows_exe_size,
+                "fileSize": bundle.file_size,
+                "downloadUrl": bundle.download_url,
             })),
         );
 
@@ -379,7 +380,7 @@ impl UpdateFetcher {
         // 告诉 guard 如果异常退出就删除这个半下载文件
         guard.set_cleanup_path(download_path.clone());
 
-        let client = crate::http_client::client_builder_with_timeout(std::time::Duration::from_secs(600))
+        let client = crate::http_client::base_client_builder()
             .redirect(redirect_policy())
             .build()
             .map_err(|e| format!("创建 HTTP 客户端失败: {}", e))?;
@@ -430,8 +431,9 @@ impl UpdateFetcher {
         let mut downloaded: u64 = 0;
         let mut stream = response.bytes_stream();
         use futures::StreamExt;
+        let idle = crate::http_client::DOWNLOAD_IDLE_TIMEOUT;
 
-        while let Some(chunk) = stream.next().await {
+        loop {
             if self.cancel_flag.load(Ordering::SeqCst) {
                 guard.manual_reset(); // 立刻解锁，避免 UI 还要等下面 drop
                 guard.active = false;
@@ -443,6 +445,12 @@ impl UpdateFetcher {
                 return Err("下载已取消".to_string());
             }
 
+            let next = tokio::time::timeout(idle, stream.next())
+                .await
+                .map_err(|_| format!("下载超时：{}s 内未收到数据", idle.as_secs()))?;
+            let Some(chunk) = next else {
+                break;
+            };
             let chunk = chunk.map_err(|e| format!("下载数据错误: {}", e))?;
             file.write_all(&chunk)
                 .map_err(|e| format!("写入文件失败: {}", e))?;
@@ -574,9 +582,14 @@ impl UpdateFetcher {
             super::windows_replace::launch_windows_replace(&download_path)?;
         }
 
-        #[cfg(not(target_os = "windows"))]
+        #[cfg(target_os = "macos")]
         {
-            return Err("Launcher self-update is only supported on Windows".to_string());
+            super::macos_replace::launch_macos_replace(&download_path)?;
+        }
+
+        #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+        {
+            return Err("Launcher self-update is only supported on Windows and macOS".to_string());
         }
 
         Ok(InstallResult {

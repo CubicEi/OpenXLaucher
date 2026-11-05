@@ -2,10 +2,12 @@ use chrono::{DateTime, Utc};
 use serde::Deserialize;
 
 use super::config::{
-    get_update_endpoint, github_repo_slug, is_trusted_release_asset_url, is_trusted_download_url,
+    get_current_os, get_update_endpoint, github_repo_slug, is_trusted_download_url,
+    is_trusted_release_asset_url,
 };
 use super::identity::{
-    IDENTITY_ASSET_NAME, ReleaseIdentity, WINDOWS_PORTABLE_EXE, parse_release_identity_json,
+    identity_asset_name_for_os, parse_release_identity_json, update_package_asset_name_for_os,
+    ReleaseIdentity,
 };
 
 pub const GITHUB_API_ORIGIN: &str = "https://api.github.com";
@@ -17,8 +19,7 @@ pub const UPDATE_CHECK_TIMEOUT_SECS: u64 = 10;
 pub fn update_check_timeout_message() -> String {
     format!(
         "{}: 连接 GitHub 超过 {} 秒无响应",
-        UPDATE_CHECK_TIMEOUT_MARKER,
-        UPDATE_CHECK_TIMEOUT_SECS
+        UPDATE_CHECK_TIMEOUT_MARKER, UPDATE_CHECK_TIMEOUT_SECS
     )
 }
 
@@ -49,8 +50,8 @@ pub struct LatestReleaseBundle {
     pub tag_name: String,
     pub changelog: String,
     pub identity: ReleaseIdentity,
-    pub windows_exe_url: String,
-    pub windows_exe_size: Option<u64>,
+    pub download_url: String,
+    pub file_size: Option<u64>,
 }
 
 pub async fn ping_github(client: &reqwest::Client) -> Result<(), String> {
@@ -94,12 +95,14 @@ pub async fn fetch_latest_release_bundle(
         .map_err(|e| format!("解析 Releases 列表失败: {}", e))?;
 
     let release = pick_latest_release(&releases)?;
+    let current_os = get_current_os();
+    let identity_name = identity_asset_name_for_os(&current_os);
 
     let identity_asset = release
         .assets
         .iter()
-        .find(|a| a.name == IDENTITY_ASSET_NAME)
-        .ok_or_else(|| format!("最新 Release 缺少 {}", IDENTITY_ASSET_NAME))?;
+        .find(|a| a.name == identity_name)
+        .ok_or_else(|| format!("最新 Release 缺少 {}", identity_name))?;
 
     if !is_trusted_release_asset_url(&identity_asset.browser_download_url) {
         return Err(format!(
@@ -123,29 +126,26 @@ pub async fn fetch_latest_release_bundle(
 
     let identity = parse_release_identity_json(&identity_text)?;
 
-    let exe_asset = release
+    let package_name = update_package_asset_name_for_os(&current_os, &identity.version);
+    let package_asset = release
         .assets
         .iter()
-        .find(|a| a.name.eq_ignore_ascii_case(WINDOWS_PORTABLE_EXE))
-        .ok_or_else(|| format!("最新 Release 缺少 {}", WINDOWS_PORTABLE_EXE))?;
+        .find(|a| a.name.eq_ignore_ascii_case(&package_name))
+        .ok_or_else(|| format!("最新 Release 缺少 {}", package_name))?;
 
-    if !is_trusted_release_asset_url(&exe_asset.browser_download_url) {
+    if !is_trusted_release_asset_url(&package_asset.browser_download_url) {
         return Err(format!(
-            "exe 附件 URL 不在受信任仓库路径内: {}",
-            exe_asset.browser_download_url
+            "更新包附件 URL 不在受信任仓库路径内: {}",
+            package_asset.browser_download_url
         ));
-    }
-
-    if identity.sha256.len() == 64 {
-        // identity 为主；Release 内 exe 仅提供下载地址
     }
 
     Ok(LatestReleaseBundle {
         tag_name: release.tag_name.clone(),
         changelog: release.body.clone().unwrap_or_default(),
         identity,
-        windows_exe_url: exe_asset.browser_download_url.clone(),
-        windows_exe_size: exe_asset.size,
+        download_url: package_asset.browser_download_url.clone(),
+        file_size: package_asset.size,
     })
 }
 
@@ -186,4 +186,43 @@ pub fn redirect_policy() -> reqwest::redirect::Policy {
             attempt.stop()
         }
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::identity::{
+        identity_asset_name_for_os, update_package_asset_name_for_os,
+    };
+
+    #[test]
+    fn macos_identity_and_dmg_names() {
+        assert_eq!(
+            identity_asset_name_for_os("macos-aarch64"),
+            "OpenXLauncher.identity.macos-aarch64.json"
+        );
+        assert_eq!(
+            identity_asset_name_for_os("macos-x86_64"),
+            "OpenXLauncher.identity.macos-x86_64.json"
+        );
+        assert_eq!(
+            update_package_asset_name_for_os("macos-aarch64", "1.0.0-pre.4"),
+            "OpenXLauncher_1.0.0-pre.4_macos-aarch64.dmg"
+        );
+        assert_eq!(
+            update_package_asset_name_for_os("macos-x86_64", "1.0.0"),
+            "OpenXLauncher_1.0.0_macos-x86_64.dmg"
+        );
+    }
+
+    #[test]
+    fn windows_keeps_legacy_names() {
+        assert_eq!(
+            identity_asset_name_for_os("windows-x86_64"),
+            "OpenXLauncher.identity.json"
+        );
+        assert_eq!(
+            update_package_asset_name_for_os("windows-x86_64", "1.0.0"),
+            "OpenXLauncher.exe"
+        );
+    }
 }

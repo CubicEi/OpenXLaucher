@@ -598,7 +598,6 @@ async fn download_once(
 
     let response = client
         .get(url)
-        .timeout(Duration::from_secs(600))
         .send()
         .await
         .map_err(|e| format!("请求失败: {}", e))?;
@@ -667,11 +666,18 @@ async fn download_once(
     let mut writer = tokio::io::BufWriter::with_capacity(DOWNLOAD_BUFFER_SIZE, file);
 
     let mut cancelled = false;
-    while let Some(chunk) = stream.next().await {
+    let idle = crate::http_client::DOWNLOAD_IDLE_TIMEOUT;
+    loop {
         if java_cancelled(&cancel) {
             cancelled = true;
             break;
         }
+        let next = tokio::time::timeout(idle, stream.next())
+            .await
+            .map_err(|_| format!("下载超时：{}s 内未收到数据", idle.as_secs()))?;
+        let Some(chunk) = next else {
+            break;
+        };
         let chunk = chunk.map_err(|e| format!("读取数据失败: {}", e))?;
         downloaded.fetch_add(chunk.len() as u64, Ordering::Relaxed);
         writer

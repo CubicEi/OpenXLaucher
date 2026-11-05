@@ -9,6 +9,25 @@ use super::config::{is_valid_sha256_hex, launcher_config_path_merge};
 
 pub const IDENTITY_ASSET_NAME: &str = "OpenXLauncher.identity.json";
 pub const WINDOWS_PORTABLE_EXE: &str = "OpenXLauncher.exe";
+pub const APP_BUNDLE_NAME: &str = "OpenXLauncher.app";
+
+/// Release identity 附件名：Windows 便携版用默认名，macOS 按架构拆分。
+pub fn identity_asset_name_for_os(os: &str) -> String {
+    match os {
+        "macos-aarch64" => "OpenXLauncher.identity.macos-aarch64.json".to_string(),
+        "macos-x86_64" => "OpenXLauncher.identity.macos-x86_64.json".to_string(),
+        _ => IDENTITY_ASSET_NAME.to_string(),
+    }
+}
+
+/// 更新包附件名：macOS 为带版本的 DMG；Windows 便携版仍为固定 `OpenXLauncher.exe`。
+pub fn update_package_asset_name_for_os(os: &str, version: &str) -> String {
+    match os {
+        "macos-aarch64" => format!("OpenXLauncher_{}_macos-aarch64.dmg", version),
+        "macos-x86_64" => format!("OpenXLauncher_{}_macos-x86_64.dmg", version),
+        _ => WINDOWS_PORTABLE_EXE.to_string(),
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ReleaseIdentity {

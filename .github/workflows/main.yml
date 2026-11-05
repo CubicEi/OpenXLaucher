@@ -18,9 +18,11 @@ jobs:
           - platform: 'macos-latest' # for Arm based macs (M1 and above).
             args: '--target aarch64-apple-darwin'
             artifact_name: 'macos_aarch64'
+            update_platform: 'macos-aarch64'
           - platform: 'macos-latest' # for Intel based macs.
             args: '--target x86_64-apple-darwin'
             artifact_name: 'macos_x64'
+            update_platform: 'macos-x86_64'
           - platform: 'ubuntu-22.04' # for Tauri v1 you could replace this with ubuntu-20.04.
             args: '--bundles deb'
             name: 'linux-bundle'
@@ -115,6 +117,24 @@ jobs:
           }
           Remove-Item $certPath -ErrorAction SilentlyContinue
 
+      # ===== macOS 更新资产（固定 DMG 名 + identity）=====
+      - name: Prepare macOS update asset
+        if: matrix.platform == 'macos-latest'
+        shell: bash
+        run: |
+          set -euo pipefail
+          dmg=$(find src-tauri/target -path '*/release/bundle/dmg/*.dmg' -type f | head -n 1)
+          if [ -z "$dmg" ]; then
+            echo "No DMG found under src-tauri/target/*/release/bundle/dmg/"
+            exit 1
+          fi
+          dest="src-tauri/target/release/OpenXLauncher_${APP_VERSION}_${{ matrix.update_platform }}.dmg"
+          mkdir -p "$(dirname "$dest")"
+          cp -f "$dmg" "$dest"
+          identity="src-tauri/target/release/OpenXLauncher.identity.${{ matrix.update_platform }}.json"
+          node scripts/write-release-identity.mjs "$dest" --platform "${{ matrix.update_platform }}" "$identity"
+          echo "Prepared $dest and $identity"
+
       # ===== 上传构建产物 =====
       - name: upload artifacts (macOS)
         if: matrix.platform == 'macos-latest'
@@ -124,6 +144,8 @@ jobs:
           path: |
             src-tauri/target/*/release/bundle/**/*.dmg
             src-tauri/target/*/release/bundle/**/*.app
+            src-tauri/target/release/OpenXLauncher_${{ env.APP_VERSION }}_${{ matrix.update_platform }}.dmg
+            src-tauri/target/release/OpenXLauncher.identity.${{ matrix.update_platform }}.json
           if-no-files-found: warn
           retention-days: 90
 
