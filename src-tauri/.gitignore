@@ -5,3 +5,4 @@
 /target-*/
 /gen/schemas
 .build-uuid
+/generated/
