@@ -3,7 +3,7 @@ name: Sync Crowdin translations
 on:
   push:
     branches:
-      - main
+      - master
     paths:
       - components/i18n/locales/en-US.json
       - crowdin.yml

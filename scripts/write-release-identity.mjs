@@ -4,116 +4,162 @@ import path from "node:path";
 import { readBuildUuidFromDmg } from "./lib/macos-build-identity.mjs";
 
 /**
- * Usage:
- *   node scripts/write-release-identity.mjs <asset-path> [output.json]
- *   node scripts/write-release-identity.mjs <asset-path> --platform macos-aarch64 [output.json]
- *   node scripts/write-release-identity.mjs <asset-path> --platform macos-x86_64 [output.json]
+ * Build or merge `OpenXLauncher-identity.json` (schema 2).
  *
- * asset-path may be a Windows .exe or a macOS .dmg. SHA-256 is computed over the whole file.
- * macOS build_uuid is read from `macos-build-identity.uuid` inside the DMG's .app bundle.
+ *   node scripts/write-release-identity.mjs --out <path>
+ *     [--windows-exe <path>]
+ *     [--macos-x86_64-dmg <path>]
+ *     [--macos-aarch64-dmg <path>]
+ *     [--merge <existing-identity.json>]
  */
 
-const MACOS_PLATFORMS = new Set(["macos-aarch64", "macos-x86_64"]);
+const PLATFORM_KEYS = {
+  windows: "windows-x86_64",
+  macosX64: "macos-x86_64",
+  macosArm: "macos-aarch64",
+};
 
-function printUsageAndExit() {
-  console.error(
-    "Usage: node scripts/write-release-identity.mjs <path-to-asset> [--platform macos-aarch64|macos-x86_64] [output.json]",
-  );
-  process.exit(1);
+function sha256File(filePath) {
+  const bytes = fs.readFileSync(filePath);
+  return crypto.createHash("sha256").update(bytes).digest("hex");
 }
 
-const args = process.argv.slice(2);
-if (args.length === 0) {
-  printUsageAndExit();
-}
-
-let assetPath = null;
-let platform = null;
-let outPathArg = null;
-
-for (let i = 0; i < args.length; i++) {
-  const arg = args[i];
-  if (arg === "--platform") {
-    platform = args[++i];
-    if (!platform || !MACOS_PLATFORMS.has(platform)) {
-      console.error(
-        `Invalid --platform. Expected one of: ${[...MACOS_PLATFORMS].join(", ")}`,
-      );
-      process.exit(1);
+function readWindowsBuildUuid() {
+  const uuidPath = path.join("src-tauri", ".build-uuid");
+  if (fs.existsSync(uuidPath)) {
+    const value = fs.readFileSync(uuidPath, "utf8").trim();
+    if (value) {
+      return value;
     }
-    continue;
   }
-  if (!assetPath) {
-    assetPath = arg;
-    continue;
-  }
-  if (!outPathArg) {
-    outPathArg = arg;
-    continue;
-  }
-  printUsageAndExit();
+  return crypto.randomUUID();
 }
 
-if (!assetPath) {
-  printUsageAndExit();
+function platformEntry(platformKey, packageName, assetPath, buildUuid) {
+  return {
+    package: packageName,
+    sha256: sha256File(assetPath),
+    build_uuid: buildUuid,
+  };
 }
 
-if (!platform) {
-  const lower = assetPath.toLowerCase();
-  if (lower.includes("macos-aarch64")) platform = "macos-aarch64";
-  else if (lower.includes("macos-x86_64") || lower.includes("macos-x64")) {
-    platform = "macos-x86_64";
+function parseArgs(argv) {
+  const opts = {
+    out: null,
+    windowsExe: null,
+    macosX64Dmg: null,
+    macosAarch64Dmg: null,
+    merge: null,
+  };
+
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i];
+    switch (arg) {
+      case "--out":
+        opts.out = argv[++i];
+        break;
+      case "--windows-exe":
+        opts.windowsExe = argv[++i];
+        break;
+      case "--macos-x86_64-dmg":
+        opts.macosX64Dmg = argv[++i];
+        break;
+      case "--macos-aarch64-dmg":
+        opts.macosAarch64Dmg = argv[++i];
+        break;
+      case "--merge":
+        opts.merge = argv[++i];
+        break;
+      default:
+        console.error(`Unknown argument: ${arg}`);
+        process.exit(1);
+    }
   }
+
+  if (!opts.out) {
+    console.error(
+      "Usage: node scripts/write-release-identity.mjs --out <OpenXLauncher-identity.json> [--windows-exe PATH] [--macos-x86_64-dmg PATH] [--macos-aarch64-dmg PATH] [--merge PATH]",
+    );
+    process.exit(1);
+  }
+
+  return opts;
 }
 
-const resolvedAsset = path.resolve(assetPath);
-if (!fs.existsSync(resolvedAsset)) {
-  console.error(`Asset not found: ${resolvedAsset}`);
-  process.exit(1);
+function loadMergedPlatforms(mergePath) {
+  if (!mergePath) {
+    return {};
+  }
+  const resolved = path.resolve(mergePath);
+  if (!fs.existsSync(resolved)) {
+    return {};
+  }
+  const raw = JSON.parse(fs.readFileSync(resolved, "utf8"));
+  if (raw.schema !== 2 || !raw.platforms) {
+    throw new Error(`Merge file must be schema 2: ${resolved}`);
+  }
+  return { ...raw.platforms };
 }
-
-const defaultIdentityName = platform
-  ? `OpenXLauncher.identity.${platform}.json`
-  : "OpenXLauncher.identity.json";
-
-const outPath =
-  outPathArg ??
-  path.join(path.dirname(resolvedAsset), defaultIdentityName);
 
 const pkg = JSON.parse(fs.readFileSync("package.json", "utf8"));
-const assetBytes = fs.readFileSync(resolvedAsset);
-const sha256 = crypto.createHash("sha256").update(assetBytes).digest("hex");
+const opts = parseArgs(process.argv.slice(2));
+const platforms = loadMergedPlatforms(opts.merge);
 
-let buildUuid;
-if (platform) {
-  if (!resolvedAsset.toLowerCase().endsWith(".dmg")) {
-    console.error("macOS identity requires a .dmg path when using --platform");
+if (opts.windowsExe) {
+  const exe = path.resolve(opts.windowsExe);
+  if (!fs.existsSync(exe)) {
+    console.error(`Windows exe not found: ${exe}`);
     process.exit(1);
   }
-  try {
-    buildUuid = readBuildUuidFromDmg(resolvedAsset);
-  } catch (error) {
-    console.error(error instanceof Error ? error.message : String(error));
+  platforms[PLATFORM_KEYS.windows] = platformEntry(
+    PLATFORM_KEYS.windows,
+    "OpenXLauncher.exe",
+    exe,
+    readWindowsBuildUuid(),
+  );
+}
+
+if (opts.macosX64Dmg) {
+  const dmg = path.resolve(opts.macosX64Dmg);
+  if (!fs.existsSync(dmg)) {
+    console.error(`macOS x64 DMG not found: ${dmg}`);
     process.exit(1);
   }
-} else {
-  const uuidPath = path.join("src-tauri", ".build-uuid");
-  buildUuid = fs.existsSync(uuidPath)
-    ? fs.readFileSync(uuidPath, "utf8").trim()
-    : crypto.randomUUID();
+  platforms[PLATFORM_KEYS.macosX64] = platformEntry(
+    PLATFORM_KEYS.macosX64,
+    `OpenXLauncher_${pkg.version}_macos-x86_64.dmg`,
+    dmg,
+    readBuildUuidFromDmg(dmg),
+  );
+}
 
-  if (!buildUuid) {
-    buildUuid = crypto.randomUUID();
+if (opts.macosAarch64Dmg) {
+  const dmg = path.resolve(opts.macosAarch64Dmg);
+  if (!fs.existsSync(dmg)) {
+    console.error(`macOS arm64 DMG not found: ${dmg}`);
+    process.exit(1);
   }
+  platforms[PLATFORM_KEYS.macosArm] = platformEntry(
+    PLATFORM_KEYS.macosArm,
+    `OpenXLauncher_${pkg.version}_macos-aarch64.dmg`,
+    dmg,
+    readBuildUuidFromDmg(dmg),
+  );
+}
+
+if (Object.keys(platforms).length === 0) {
+  console.error("No platform credentials produced (pass at least one asset flag).");
+  process.exit(1);
 }
 
 const identity = {
-  schema: 1,
+  schema: 2,
   product: "OpenXLauncher",
   version: pkg.version,
-  sha256,
-  build_uuid: buildUuid,
+  platforms,
 };
 
+const outPath = path.resolve(opts.out);
+fs.mkdirSync(path.dirname(outPath), { recursive: true });
 fs.writeFileSync(outPath, `${JSON.stringify(identity, null, 2)}\n`, "utf8");
 console.log(`Wrote ${outPath}`);

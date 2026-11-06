@@ -1,25 +1,22 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
+use std::collections::HashMap;
 use std::fs;
 use std::io::Read;
 use std::path::Path;
 
 use super::config::{is_valid_sha256_hex, launcher_config_path_merge};
 
-pub const IDENTITY_ASSET_NAME: &str = "OpenXLauncher.identity.json";
+pub const IDENTITY_ASSET_NAME: &str = "OpenXLauncher-identity.json";
 pub const WINDOWS_PORTABLE_EXE: &str = "OpenXLauncher.exe";
 pub const APP_BUNDLE_NAME: &str = "OpenXLauncher.app";
 /// Bundled in `.app/Contents/Resources/` on each macOS release build.
 pub const MACOS_BUNDLE_BUILD_IDENTITY_FILE: &str = "macos-build-identity.uuid";
 
-/// Release identity 附件名：Windows 便携版用默认名，macOS 按架构拆分。
-pub fn identity_asset_name_for_os(os: &str) -> String {
-    match os {
-        "macos-aarch64" => "OpenXLauncher.identity.macos-aarch64.json".to_string(),
-        "macos-x86_64" => "OpenXLauncher.identity.macos-x86_64.json".to_string(),
-        _ => IDENTITY_ASSET_NAME.to_string(),
-    }
+/// 所有平台凭据统一放在 `OpenXLauncher-identity.json`。
+pub fn identity_asset_name_for_os(_os: &str) -> String {
+    IDENTITY_ASSET_NAME.to_string()
 }
 
 /// 更新包附件名：macOS 为带版本的 DMG；Windows 便携版仍为固定 `OpenXLauncher.exe`。
@@ -40,6 +37,22 @@ pub struct ReleaseIdentity {
     pub build_uuid: String,
 }
 
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+struct PlatformCredential {
+    sha256: String,
+    build_uuid: String,
+    #[serde(default)]
+    package: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+struct ReleaseManifest {
+    schema: u32,
+    product: String,
+    version: String,
+    platforms: HashMap<String, PlatformCredential>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
 pub struct StoredBuildIdentity {
     #[serde(default)]
@@ -56,21 +69,51 @@ pub fn is_portable_build() -> bool {
     cfg!(openx_portable_build)
 }
 
-pub fn parse_release_identity_json(text: &str) -> Result<ReleaseIdentity, String> {
-    let raw: ReleaseIdentity = serde_json::from_str(text).map_err(|e| format!("解析 identity 失败: {}", e))?;
-    if raw.schema != 1 {
-        return Err(format!("不支持的 identity schema: {}", raw.schema));
+fn validate_platform_credential(cred: &PlatformCredential) -> Result<(), String> {
+    if !is_valid_sha256_hex(&cred.sha256) {
+        return Err("identity.platforms.*.sha256 无效".to_string());
     }
-    if raw.product != "OpenXLauncher" {
-        return Err(format!("identity product 不匹配: {}", raw.product));
+    if cred.build_uuid.trim().is_empty() {
+        return Err("identity.platforms.*.build_uuid 为空".to_string());
     }
-    if !is_valid_sha256_hex(&raw.sha256) {
-        return Err("identity.sha256 无效".to_string());
+    Ok(())
+}
+
+/// 从统一的 `OpenXLauncher-identity.json` 中取出当前 OS 的凭据。
+pub fn parse_release_identity_for_os(text: &str, os: &str) -> Result<ReleaseIdentity, String> {
+    let manifest: ReleaseManifest =
+        serde_json::from_str(text).map_err(|e| format!("解析 identity 失败: {}", e))?;
+    if manifest.schema != 2 {
+        return Err(format!("不支持的 identity schema: {}", manifest.schema));
     }
-    if raw.build_uuid.trim().is_empty() {
-        return Err("identity.build_uuid 为空".to_string());
+    if manifest.product != "OpenXLauncher" {
+        return Err(format!("identity product 不匹配: {}", manifest.product));
     }
-    Ok(raw)
+    let cred = manifest
+        .platforms
+        .get(os)
+        .ok_or_else(|| format!("identity 缺少平台 {}", os))?;
+    validate_platform_credential(cred)?;
+    Ok(ReleaseIdentity {
+        schema: manifest.schema,
+        product: manifest.product,
+        version: manifest.version,
+        sha256: cred.sha256.clone(),
+        build_uuid: cred.build_uuid.clone(),
+    })
+}
+
+pub fn package_name_from_manifest(text: &str, os: &str) -> Result<String, String> {
+    let manifest: ReleaseManifest =
+        serde_json::from_str(text).map_err(|e| format!("解析 identity 失败: {}", e))?;
+    let cred = manifest
+        .platforms
+        .get(os)
+        .ok_or_else(|| format!("identity 缺少平台 {}", os))?;
+    if let Some(name) = cred.package.as_ref().filter(|s| !s.trim().is_empty()) {
+        return Ok(name.clone());
+    }
+    Ok(update_package_asset_name_for_os(os, &manifest.version))
 }
 
 pub fn load_stored_build_identity() -> StoredBuildIdentity {
@@ -218,7 +261,26 @@ fn hex_lower(bytes: &[u8]) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::parse_macos_build_uuid;
+    use super::{parse_macos_build_uuid, parse_release_identity_for_os};
+
+    #[test]
+    fn parse_release_manifest_selects_platform() {
+        let text = r#"{
+          "schema": 2,
+          "product": "OpenXLauncher",
+          "version": "1.0.0-pre.4",
+          "platforms": {
+            "windows-x86_64": {
+              "package": "OpenXLauncher.exe",
+              "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+              "build_uuid": "84e1fcbd-d0f2-4829-bb6a-17d25a46fa0a"
+            }
+          }
+        }"#;
+        let id = parse_release_identity_for_os(text, "windows-x86_64").unwrap();
+        assert_eq!(id.version, "1.0.0-pre.4");
+        assert_eq!(id.sha256.len(), 64);
+    }
 
     #[test]
     fn parse_macos_build_uuid_accepts_valid_v4() {
