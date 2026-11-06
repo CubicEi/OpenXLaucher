@@ -50,8 +50,18 @@ fn main() {
     println!("cargo:rerun-if-env-changed=OPENX_PORTABLE_BUILD");
 
     let portable = std::env::var("OPENX_PORTABLE_BUILD").ok().as_deref() == Some("1");
+    let target = std::env::var("TARGET").unwrap_or_default();
+    let is_macos_target = target.contains("apple-darwin");
+
     if portable {
         println!("cargo:rustc-cfg=openx_portable_build");
+    } else if is_macos_target {
+        let uuid = uuid::Uuid::new_v4().to_string();
+        let generated_dir = Path::new(&manifest_dir).join("generated");
+        fs::create_dir_all(&generated_dir).expect("create generated/");
+        let bundle_identity = generated_dir.join("macos-build-identity.uuid");
+        fs::write(&bundle_identity, format!("{uuid}\n")).expect("write macos-build-identity.uuid");
+        println!("cargo:rerun-if-changed=build.rs");
     } else {
         let uuid = uuid::Uuid::new_v4().to_string();
         let uuid_path = Path::new(&manifest_dir).join(".build-uuid");

@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { readBuildUuidFromDmg } from "./lib/macos-build-identity.mjs";
 
 /**
  * Usage:
@@ -9,6 +10,7 @@ import path from "node:path";
  *   node scripts/write-release-identity.mjs <asset-path> --platform macos-x86_64 [output.json]
  *
  * asset-path may be a Windows .exe or a macOS .dmg. SHA-256 is computed over the whole file.
+ * macOS build_uuid is read from `macos-build-identity.uuid` inside the DMG's .app bundle.
  */
 
 const MACOS_PLATFORMS = new Set(["macos-aarch64", "macos-x86_64"]);
@@ -82,13 +84,27 @@ const pkg = JSON.parse(fs.readFileSync("package.json", "utf8"));
 const assetBytes = fs.readFileSync(resolvedAsset);
 const sha256 = crypto.createHash("sha256").update(assetBytes).digest("hex");
 
-const uuidPath = path.join("src-tauri", ".build-uuid");
-let buildUuid = fs.existsSync(uuidPath)
-  ? fs.readFileSync(uuidPath, "utf8").trim()
-  : crypto.randomUUID();
+let buildUuid;
+if (platform) {
+  if (!resolvedAsset.toLowerCase().endsWith(".dmg")) {
+    console.error("macOS identity requires a .dmg path when using --platform");
+    process.exit(1);
+  }
+  try {
+    buildUuid = readBuildUuidFromDmg(resolvedAsset);
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exit(1);
+  }
+} else {
+  const uuidPath = path.join("src-tauri", ".build-uuid");
+  buildUuid = fs.existsSync(uuidPath)
+    ? fs.readFileSync(uuidPath, "utf8").trim()
+    : crypto.randomUUID();
 
-if (!buildUuid) {
-  buildUuid = crypto.randomUUID();
+  if (!buildUuid) {
+    buildUuid = crypto.randomUUID();
+  }
 }
 
 const identity = {

@@ -10,6 +10,8 @@ use super::config::{is_valid_sha256_hex, launcher_config_path_merge};
 pub const IDENTITY_ASSET_NAME: &str = "OpenXLauncher.identity.json";
 pub const WINDOWS_PORTABLE_EXE: &str = "OpenXLauncher.exe";
 pub const APP_BUNDLE_NAME: &str = "OpenXLauncher.app";
+/// Bundled in `.app/Contents/Resources/` on each macOS release build.
+pub const MACOS_BUNDLE_BUILD_IDENTITY_FILE: &str = "macos-build-identity.uuid";
 
 /// Release identity 附件名：Windows 便携版用默认名，macOS 按架构拆分。
 pub fn identity_asset_name_for_os(os: &str) -> String {
@@ -121,6 +123,29 @@ pub fn ensure_portable_self_hash() -> Result<(), String> {
     }
 }
 
+pub fn parse_macos_build_uuid(text: &str) -> Result<String, String> {
+    let trimmed = text.trim();
+    uuid::Uuid::parse_str(trimmed).map_err(|_| "构建标识格式无效".to_string())?;
+    Ok(trimmed.to_string())
+}
+
+#[cfg(target_os = "macos")]
+fn local_macos_build_uuid() -> Result<String, String> {
+    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    let bundle = super::macos_replace::resolve_app_bundle_from_exe(&exe)?;
+    let path = bundle
+        .join("Contents")
+        .join("Resources")
+        .join(MACOS_BUNDLE_BUILD_IDENTITY_FILE);
+    let text = fs::read_to_string(&path).map_err(|e| {
+        format!(
+            "读取 {} 失败: {}",
+            MACOS_BUNDLE_BUILD_IDENTITY_FILE, e
+        )
+    })?;
+    parse_macos_build_uuid(&text)
+}
+
 pub fn local_identity_for_update() -> Result<LocalIdentity, String> {
     if is_portable_build() {
         if load_stored_build_identity().self_sha256.is_none() {
@@ -132,13 +157,25 @@ pub fn local_identity_for_update() -> Result<LocalIdentity, String> {
             build_uuid: None,
         });
     }
-    let uuid = option_env!("BUILD_UUID")
-        .filter(|s| !s.is_empty())
-        .map(|s| s.to_string());
-    Ok(LocalIdentity {
-        self_sha256: None,
-        build_uuid: uuid,
-    })
+
+    #[cfg(target_os = "macos")]
+    {
+        return Ok(LocalIdentity {
+            self_sha256: None,
+            build_uuid: Some(local_macos_build_uuid()?),
+        });
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        let uuid = option_env!("BUILD_UUID")
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string());
+        Ok(LocalIdentity {
+            self_sha256: None,
+            build_uuid: uuid,
+        })
+    }
 }
 
 /// 远程凭据与本地凭据不一致 → 有可用更新。
@@ -150,7 +187,7 @@ pub fn credentials_differ(local: &LocalIdentity, remote: &ReleaseIdentity) -> Re
         return Ok(remote.sha256 != *local_hash);
     }
     let Some(local_uuid) = local.build_uuid.as_ref() else {
-        return Err("安装版缺少编译期 build_uuid".to_string());
+        return Err("安装版缺少 build_uuid（macOS 需 Resources 内的构建标识文件）".to_string());
     };
     Ok(remote.build_uuid != *local_uuid)
 }
@@ -177,4 +214,21 @@ fn write_launcher_json_value(value: &Value) -> Result<(), String> {
 
 fn hex_lower(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{:02x}", b)).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_macos_build_uuid;
+
+    #[test]
+    fn parse_macos_build_uuid_accepts_valid_v4() {
+        let id = "84e1fcbd-d0f2-4829-bb6a-17d25a46fa0a";
+        assert_eq!(parse_macos_build_uuid(id).unwrap(), id);
+        assert_eq!(parse_macos_build_uuid(&format!("  {id}\n")).unwrap(), id);
+    }
+
+    #[test]
+    fn parse_macos_build_uuid_rejects_garbage() {
+        assert!(parse_macos_build_uuid("not-a-uuid").is_err());
+    }
 }
