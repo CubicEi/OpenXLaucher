@@ -29,7 +29,7 @@ pub struct UpdateConfig {
     pub download_url: Option<String>,
     #[serde(default)]
     pub file_size: Option<u64>,
-    /// 期望的 SHA-256 校验和（小写 16 进制，64 字符）。来自 `OpenXLauncher.identity.json`。
+    /// 期望的 SHA-256 校验和（小写 16 进制，64 字符）。来自 `OpenXLauncher-identity.json` 中当前平台条目。
     /// 如果为 Some，则下载后 **必须** 校验匹配（fail closed）。
     #[serde(default)]
     pub expected_sha256: Option<String>,

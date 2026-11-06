@@ -42,6 +42,6 @@
       "icons/icon.png"
     ],
     "category": "Game",
-    "targets": ["deb", "nsis", "msi", "dmg", "app"]
+    "targets": ["dmg", "app"]
   }
 }

@@ -1,0 +1,275 @@
+name: Build and Release
+
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+    branches:
+      - master
+  workflow_dispatch:
+    inputs:
+      publish_release:
+        description: Create or update GitHub Release after build
+        type: boolean
+        default: false
+      prerelease:
+        description: Mark release as pre-release
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+env:
+  CARGO_INCREMENTAL: "0"
+
+jobs:
+  build-windows:
+    name: Windows portable
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install frontend dependencies
+        run: pnpm install
+
+      - name: Build portable executable
+        env:
+          OPENX_PORTABLE_BUILD: "1"
+        run: pnpm tauri:build:portable
+
+      - name: Sign portable executable
+        env:
+          CERT_BASE64: ${{ secrets.WINDOWS_CERTIFICATE_BASE64 }}
+          CERT_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          if (-not $env:CERT_BASE64) {
+            Write-Host "[WARN] WINDOWS_CERTIFICATE_BASE64 not set, skipping signature"
+            exit 0
+          }
+          $certBytes = [Convert]::FromBase64String($env:CERT_BASE64)
+          $certPath = Join-Path $env:RUNNER_TEMP "signing-cert.pfx"
+          [System.IO.File]::WriteAllBytes($certPath, $certBytes)
+          $target = "src-tauri/target/release/OpenXLauncher.exe"
+          if (-not (Test-Path $target)) { throw "Missing $target" }
+          $signArgs = @("sign", "/fd", "SHA256", "/f", $certPath, "/tr", "http://timestamp.digicert.com", "/td", "SHA256", $target)
+          if ($env:CERT_PASSWORD) {
+            $signArgs = @("sign", "/fd", "SHA256", "/f", $certPath, "/p", $env:CERT_PASSWORD, "/tr", "http://timestamp.digicert.com", "/td", "SHA256", $target)
+          }
+          & signtool $signArgs
+          if ($LASTEXITCODE -ne 0) { throw "Signing failed with exit code $LASTEXITCODE" }
+          Remove-Item $certPath -ErrorAction SilentlyContinue
+
+      - name: Stage Windows artifact
+        shell: pwsh
+        run: |
+          $staging = "release-staging"
+          New-Item -ItemType Directory -Force -Path $staging | Out-Null
+          Copy-Item -Force "src-tauri/target/release/OpenXLauncher.exe" "$staging/OpenXLauncher.exe"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: build-windows-x86_64
+          path: release-staging/OpenXLauncher.exe
+          if-no-files-found: error
+          retention-days: 90
+
+  build-macos-x86_64:
+    name: macOS x86_64
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-apple-darwin
+
+      - name: Install frontend dependencies
+        run: pnpm install
+
+      - name: Set APP_VERSION
+        run: echo "APP_VERSION=$(node -p "require('./package.json').version")" >> "$GITHUB_ENV"
+
+      - uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          args: --target x86_64-apple-darwin
+
+      - name: Stage macOS x86_64 DMG
+        shell: bash
+        run: |
+          set -euo pipefail
+          dmg=$(find src-tauri/target -path '*/release/bundle/dmg/*.dmg' -type f | head -n 1)
+          if [ -z "$dmg" ]; then
+            echo "No DMG found"
+            exit 1
+          fi
+          staging="release-staging"
+          mkdir -p "$staging"
+          dest="$staging/OpenXLauncher_${APP_VERSION}_macos-x86_64.dmg"
+          cp -f "$dmg" "$dest"
+          echo "Staged $dest"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: build-macos-x86_64
+          path: release-staging/OpenXLauncher_*_macos-x86_64.dmg
+          if-no-files-found: error
+          retention-days: 90
+
+  build-macos-aarch64:
+    name: macOS Apple Silicon
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+
+      - name: Install frontend dependencies
+        run: pnpm install
+
+      - name: Set APP_VERSION
+        run: echo "APP_VERSION=$(node -p "require('./package.json').version")" >> "$GITHUB_ENV"
+
+      - uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          args: --target aarch64-apple-darwin
+
+      - name: Stage macOS arm64 DMG
+        shell: bash
+        run: |
+          set -euo pipefail
+          dmg=$(find src-tauri/target -path '*/release/bundle/dmg/*.dmg' -type f | head -n 1)
+          if [ -z "$dmg" ]; then
+            echo "No DMG found"
+            exit 1
+          fi
+          staging="release-staging"
+          mkdir -p "$staging"
+          dest="$staging/OpenXLauncher_${APP_VERSION}_macos-aarch64.dmg"
+          cp -f "$dmg" "$dest"
+          echo "Staged $dest"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: build-macos-aarch64
+          path: release-staging/OpenXLauncher_*_macos-aarch64.dmg
+          if-no-files-found: error
+          retention-days: 90
+
+  merge-release:
+    name: Merge identity and artifacts
+    needs:
+      - build-windows
+      - build-macos-x86_64
+      - build-macos-aarch64
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/download-artifact@v6
+        with:
+          path: downloaded
+
+      - name: Set APP_VERSION
+        run: echo "APP_VERSION=$(node -p "require('./package.json').version")" >> "$GITHUB_ENV"
+
+      - name: Assemble release bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          out="release-bundle"
+          mkdir -p "$out"
+          cp -f downloaded/build-windows-x86_64/OpenXLauncher.exe "$out/"
+          cp -f downloaded/build-macos-x86_64/OpenXLauncher_${APP_VERSION}_macos-x86_64.dmg "$out/"
+          cp -f downloaded/build-macos-aarch64/OpenXLauncher_${APP_VERSION}_macos-aarch64.dmg "$out/"
+          node scripts/write-release-identity.mjs \
+            --out "$out/OpenXLauncher-identity.json" \
+            --windows-exe "$out/OpenXLauncher.exe" \
+            --macos-x86_64-dmg "$out/OpenXLauncher_${APP_VERSION}_macos-x86_64.dmg" \
+            --macos-aarch64-dmg "$out/OpenXLauncher_${APP_VERSION}_macos-aarch64.dmg"
+          echo "## Release bundle" >> "$GITHUB_STEP_SUMMARY"
+          echo "- version: \`${APP_VERSION}\`" >> "$GITHUB_STEP_SUMMARY"
+          ls -la "$out" >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: OpenXLauncher-release-${{ env.APP_VERSION }}
+          path: release-bundle/*
+          if-no-files-found: error
+          retention-days: 90
+
+  publish:
+    name: Publish GitHub Release
+    needs: merge-release
+    if: github.event_name == 'workflow_dispatch' && inputs.publish_release
+    runs-on: ubuntu-latest
+    environment: release
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set APP_VERSION
+        run: echo "APP_VERSION=$(node -p "require('./package.json').version")" >> "$GITHUB_ENV"
+
+      - uses: actions/download-artifact@v6
+        with:
+          name: OpenXLauncher-release-${{ env.APP_VERSION }}
+          path: release-bundle
+
+      - name: Publish release assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="v${APP_VERSION}"
+          PRERELEASE="${{ inputs.prerelease }}"
+          if [ ! -d release-bundle ] || [ -z "$(ls -A release-bundle 2>/dev/null)" ]; then
+            echo "Release bundle missing."
+            exit 1
+          fi
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" release-bundle/* --clobber
+          else
+            gh release create "$TAG" release-bundle/* \
+              --title "$TAG" \
+              --generate-notes \
+              --prerelease="$PRERELEASE"
+          fi

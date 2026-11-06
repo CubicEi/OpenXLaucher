@@ -6,7 +6,7 @@ use super::config::{
     is_trusted_release_asset_url,
 };
 use super::identity::{
-    identity_asset_name_for_os, parse_release_identity_json, update_package_asset_name_for_os,
+    identity_asset_name_for_os, package_name_from_manifest, parse_release_identity_for_os,
     ReleaseIdentity,
 };
 
@@ -124,9 +124,9 @@ pub async fn fetch_latest_release_bundle(
         .await
         .map_err(|e| format!("读取 identity 失败: {}", e))?;
 
-    let identity = parse_release_identity_json(&identity_text)?;
+    let identity = parse_release_identity_for_os(&identity_text, &current_os)?;
 
-    let package_name = update_package_asset_name_for_os(&current_os, &identity.version);
+    let package_name = package_name_from_manifest(&identity_text, &current_os)?;
     let package_asset = release
         .assets
         .iter()
@@ -191,34 +191,16 @@ pub fn redirect_policy() -> reqwest::redirect::Policy {
 #[cfg(test)]
 mod tests {
     use super::super::identity::{
-        identity_asset_name_for_os, update_package_asset_name_for_os,
+        identity_asset_name_for_os, update_package_asset_name_for_os, IDENTITY_ASSET_NAME,
     };
 
     #[test]
-    fn macos_identity_and_dmg_names() {
-        assert_eq!(
-            identity_asset_name_for_os("macos-aarch64"),
-            "OpenXLauncher.identity.macos-aarch64.json"
-        );
-        assert_eq!(
-            identity_asset_name_for_os("macos-x86_64"),
-            "OpenXLauncher.identity.macos-x86_64.json"
-        );
-        assert_eq!(
-            update_package_asset_name_for_os("macos-aarch64", "1.0.0-pre.4"),
-            "OpenXLauncher_1.0.0-pre.4_macos-aarch64.dmg"
-        );
+    fn unified_identity_asset_name() {
+        assert_eq!(identity_asset_name_for_os("macos-aarch64"), IDENTITY_ASSET_NAME);
+        assert_eq!(identity_asset_name_for_os("windows-x86_64"), IDENTITY_ASSET_NAME);
         assert_eq!(
             update_package_asset_name_for_os("macos-x86_64", "1.0.0"),
             "OpenXLauncher_1.0.0_macos-x86_64.dmg"
-        );
-    }
-
-    #[test]
-    fn windows_keeps_legacy_names() {
-        assert_eq!(
-            identity_asset_name_for_os("windows-x86_64"),
-            "OpenXLauncher.identity.json"
         );
         assert_eq!(
             update_package_asset_name_for_os("windows-x86_64", "1.0.0"),
