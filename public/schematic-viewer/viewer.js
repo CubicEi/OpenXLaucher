@@ -67,6 +67,57 @@ function structureVolumeOf(structure) {
   }
 }
 
+/**
+ * Draw opaque meshes first, then transparent with depth writes off.
+ * Stops glass/pane z-fighting flicker while the camera pans.
+ */
+function patchTransparentDraw(renderer) {
+  if (!renderer || renderer.__oxlTransparentPatched) return;
+  var cb = renderer.chunkBuilder;
+  if (!cb || typeof cb.getMeshes !== "function") return;
+  if (typeof renderer.drawMesh !== "function") return;
+
+  renderer.__oxlTransparentPatched = true;
+  renderer.__oxlOrigDrawStructure = renderer.drawStructure.bind(renderer);
+
+  renderer.drawStructure = function (viewMatrix) {
+    var gl = this.gl;
+    var chunks = cb.chunks || [];
+    var opaque = [];
+    var transparent = [];
+    for (var x = 0; x < chunks.length; x++) {
+      var yz = chunks[x];
+      if (!yz) continue;
+      for (var y = 0; y < yz.length; y++) {
+        var zs = yz[y];
+        if (!zs) continue;
+        for (var z = 0; z < zs.length; z++) {
+          var chunk = zs[z];
+          if (!chunk) continue;
+          if (chunk.mesh && !chunk.mesh.isEmpty()) opaque.push(chunk.mesh);
+          if (chunk.transparentMesh && !chunk.transparentMesh.isEmpty()) transparent.push(chunk.transparentMesh);
+        }
+      }
+    }
+
+    this.setShader(this.shaderProgram);
+    var res = this.resources;
+    var pixelSize = res && typeof res.getPixelSize === "function" ? res.getPixelSize() : undefined;
+    this.setTexture(this.atlasTexture, pixelSize);
+    this.prepareDraw(viewMatrix);
+
+    var opts = { pos: true, color: true, texture: true, normal: true };
+    gl.depthMask(true);
+    for (var i = 0; i < opaque.length; i++) this.drawMesh(opaque[i], opts);
+
+    // Transparent pass: test depth but don't write — avoids glass flicker on pan.
+    gl.enable(gl.BLEND);
+    gl.depthMask(false);
+    for (var j = 0; j < transparent.length; j++) this.drawMesh(transparent[j], opts);
+    gl.depthMask(true);
+  };
+}
+
 function setStructure(structure, reset_view) {
   if (reset_view === undefined) reset_view = false;
   if (!webglContext) {
@@ -85,6 +136,7 @@ function setStructure(structure, reset_view) {
       chunkSize: chunkSize,
       useInvisibleBlockBuffer: false,
     });
+    patchTransparentDraw(deepslateRenderer);
   } catch (e) {
     deepslateRenderer = null;
     console.error("[schematic-viewer] StructureRenderer failed:", e);

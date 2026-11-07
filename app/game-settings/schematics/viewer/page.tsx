@@ -64,7 +64,7 @@ function loadScript(src: string): Promise<void> {
 }
 
 /** Bump when public/schematic-viewer/*.js patches must invalidate browser cache. */
-const SCHEMATIC_VIEWER_SCRIPT_REV = "9";
+const SCHEMATIC_VIEWER_SCRIPT_REV = "10";
 
 const CDN_BASES = ["https://cdn.jsdelivr.net/npm", "https://unpkg.com"];
 
