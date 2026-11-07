@@ -49,8 +49,12 @@ function base64ToArrayBuffer(base64: string): ArrayBuffer {
 
 function loadScript(src: string): Promise<void> {
   return new Promise((resolve, reject) => {
-    const existing = document.querySelector(`script[src="${src}"]`);
-    if (existing) { resolve(); return; }
+    // Always replace prior tag for the same path so ?v= rev bumps re-execute.
+    const pathOnly = src.split("?")[0];
+    document.querySelectorAll("script").forEach((el) => {
+      const s = el.getAttribute("src") || "";
+      if (s === src || s === pathOnly || s.startsWith(pathOnly + "?")) el.remove();
+    });
     const script = document.createElement("script");
     script.src = src;
     script.onload = () => resolve();
@@ -58,6 +62,9 @@ function loadScript(src: string): Promise<void> {
     document.head.appendChild(script);
   });
 }
+
+/** Bump when public/schematic-viewer/*.js patches must invalidate browser cache. */
+const SCHEMATIC_VIEWER_SCRIPT_REV = "9";
 
 const CDN_BASES = ["https://cdn.jsdelivr.net/npm", "https://unpkg.com"];
 
@@ -262,12 +269,14 @@ function SchematicViewerPageContent() {
           throw new Error("Failed to load assets.js (window.assets is undefined)");
         }
 
-        await loadScript("/schematic-viewer/nbt-compat.js");
-        await loadScript("/schematic-viewer/opaque.js");
-        await loadScript("/schematic-viewer/deepslate-helpers.js");
-        await loadScript("/schematic-viewer/litematic-utils.js");
-        await loadScript("/schematic-viewer/schematic-format-utils.js");
-        await loadScript("/schematic-viewer/viewer.js");
+        const rev = SCHEMATIC_VIEWER_SCRIPT_REV;
+        await loadScript(`/schematic-viewer/nbt-compat.js?v=${rev}`);
+        await loadScript(`/schematic-viewer/special-renderer-patch.js?v=${rev}`);
+        await loadScript(`/schematic-viewer/opaque.js?v=${rev}`);
+        await loadScript(`/schematic-viewer/deepslate-helpers.js?v=${rev}`);
+        await loadScript(`/schematic-viewer/litematic-utils.js?v=${rev}`);
+        await loadScript(`/schematic-viewer/schematic-format-utils.js?v=${rev}`);
+        await loadScript(`/schematic-viewer/viewer.js?v=${rev}`);
         if (cancelled) return;
 
         setRuntimeGlobals({
