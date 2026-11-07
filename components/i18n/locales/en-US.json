@@ -450,7 +450,12 @@
     },
     "general": {
       "updateDescription": "Check for updates, read release notes, and install new versions.",
-      "manageUpdates": "Manage updates"
+      "manageUpdates": "Manage updates",
+      "systemProxyTitle": "Network",
+      "systemProxyDescription": "Whether to use the HTTP proxy configured in the operating system.",
+      "useSystemProxy": "Use system proxy",
+      "systemProxyHint": "When off, connections go direct. When on, the launcher reads the OS proxy for downloads and API calls (no effect if no system proxy). HTTP_PROXY and similar env vars take precedence if already set.",
+      "toggleSystemProxy": "Toggle use system proxy"
     },
     "page": {
       "title": "Launcher settings",

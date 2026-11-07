@@ -450,7 +450,12 @@
     },
     "general": {
       "updateDescription": "检查更新、查看说明并安装新版本",
-      "manageUpdates": "管理更新"
+      "manageUpdates": "管理更新",
+      "systemProxyTitle": "网络",
+      "systemProxyDescription": "是否使用操作系统中配置的 HTTP 代理",
+      "useSystemProxy": "使用系统代理",
+      "systemProxyHint": "关闭时直连；开启后由启动器读取系统代理并用于下载与 API 请求（未设置系统代理则无影响）。若已设置 HTTP_PROXY 等环境变量，将优先使用环境变量。",
+      "toggleSystemProxy": "切换是否使用系统代理"
     },
     "page": {
       "title": "启动器设置",

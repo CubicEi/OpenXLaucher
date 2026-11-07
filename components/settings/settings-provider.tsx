@@ -38,6 +38,8 @@ export interface GeneralSettings {
   language: AppLanguage;
   /** 下载 Modrinth 或 CurseForge 模组时自动下载其必需依赖。 */
   autoDownloadModDependencies: boolean;
+  /** 是否将操作系统代理同步到本进程（写入 HTTP(S)_PROXY），默认关闭。 */
+  useSystemProxy: boolean;
 }
 
 export interface DownloadSettings {
@@ -89,6 +91,7 @@ export const DEFAULT_SETTINGS: LauncherSettings = {
   general: {
     language: "zh-CN",
     autoDownloadModDependencies: true,
+    useSystemProxy: false,
   },
   download: {
     workersPerFile: 16,
@@ -291,6 +294,10 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
             language: isAppLanguage(parsed.general?.language)
               ? parsed.general.language
               : detectSystemLanguage(),
+            useSystemProxy:
+              typeof parsed.general?.useSystemProxy === "boolean"
+                ? parsed.general.useSystemProxy
+                : DEFAULT_SETTINGS.general.useSystemProxy,
           },
           download: clampDownloadSettings(parsed.download),
           appearance: {
@@ -352,6 +359,18 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
       console.warn("[settings] 写入失败", e);
     }
   }, [settings, ready]);
+
+  React.useEffect(() => {
+    if (!ready) return;
+    void import("@tauri-apps/api/core")
+      .then(({ invoke }) => invoke<boolean>("get_network_proxy_preference"))
+      .then((useSystemProxy) => {
+        setSettings((prev) => ({ ...prev, general: { ...prev.general, useSystemProxy } }));
+      })
+      .catch(() => {
+        /* 浏览器预览或非 Tauri */
+      });
+  }, [ready]);
 
   React.useEffect(() => {
     if (!ready) return;
