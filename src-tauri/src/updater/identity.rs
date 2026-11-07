@@ -8,13 +8,13 @@ use std::path::Path;
 
 use super::config::{is_valid_sha256_hex, launcher_config_path_merge};
 
-pub const IDENTITY_ASSET_NAME: &str = "OpenXLauncher-identity.json";
+pub const IDENTITY_ASSET_NAME: &str = "OpenXLauncher.identity.json";
 pub const WINDOWS_PORTABLE_EXE: &str = "OpenXLauncher.exe";
 pub const APP_BUNDLE_NAME: &str = "OpenXLauncher.app";
 /// Bundled in `.app/Contents/Resources/` on each macOS release build.
 pub const MACOS_BUNDLE_BUILD_IDENTITY_FILE: &str = "macos-build-identity.uuid";
 
-/// 所有平台凭据统一放在 `OpenXLauncher-identity.json`。
+/// 所有平台凭据统一放在 `OpenXLauncher.identity.json`（与 Windows 便携版共用同一附件）。
 pub fn identity_asset_name_for_os(_os: &str) -> String {
     IDENTITY_ASSET_NAME.to_string()
 }
@@ -79,7 +79,7 @@ fn validate_platform_credential(cred: &PlatformCredential) -> Result<(), String>
     Ok(())
 }
 
-/// 从统一的 `OpenXLauncher-identity.json` 中取出当前 OS 的凭据。
+/// 从统一的 `OpenXLauncher.identity.json` 中取出当前 OS 的凭据。
 pub fn parse_release_identity_for_os(text: &str, os: &str) -> Result<ReleaseIdentity, String> {
     let manifest: ReleaseManifest =
         serde_json::from_str(text).map_err(|e| format!("解析 identity 失败: {}", e))?;

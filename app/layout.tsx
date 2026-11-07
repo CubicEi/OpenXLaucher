@@ -17,6 +17,8 @@ import { StartupUpdateNotifier } from "@/components/settings/startup-update-noti
 import { StartupJavaScan } from "@/components/settings/startup-java-scan";
 import { JavaIncompatibleDialog } from "@/components/launch/java-incompatible-dialog";
 import { GameExitErrorDialog } from "@/components/launch/game-exit-error-dialog";
+import { StartupOnboardingHost } from "@/components/onboarding/startup-onboarding-host";
+import { CornerNoticeProvider } from "@/components/global/corner-notice";
 import { APPEARANCE_BOOTSTRAP_SCRIPT } from "@/lib/appearance-bootstrap-script";
 
 export const metadata: Metadata = {
@@ -46,29 +48,32 @@ export default function RootLayout({
           enableSystem
           disableTransitionOnChange
         >
-          <UIConfigProvider>
-            <SettingsProvider>
-              <AccountProvider>
-                <LaunchProvider>
-                    <DownloadProvider>
-                      <RetargetInstallListener />
-                      <TooltipProvider>
-                        <ThemeRuntimeProvider>
-                          <DeferredGlobalFeatures />
-                          <StartupRuntimeDependencyNotifier />
-                          <StartupUpdateNotifier />
-                          <StartupJavaScan />
-                          <JavaIncompatibleDialog />
-                          <GameExitErrorDialog />
-                          <ThemeShell>{children}</ThemeShell>
-                          <FlyToProcessListOverlay />
-                        </ThemeRuntimeProvider>
-                      </TooltipProvider>
-                    </DownloadProvider>
-                </LaunchProvider>
-              </AccountProvider>
-            </SettingsProvider>
-          </UIConfigProvider>
+          <CornerNoticeProvider>
+            <UIConfigProvider>
+              <SettingsProvider>
+                <AccountProvider>
+                  <LaunchProvider>
+                      <DownloadProvider>
+                        <RetargetInstallListener />
+                        <TooltipProvider>
+                          <ThemeRuntimeProvider>
+                            <DeferredGlobalFeatures />
+                            <StartupRuntimeDependencyNotifier />
+                            <StartupUpdateNotifier />
+                            <StartupJavaScan />
+                            <StartupOnboardingHost />
+                            <JavaIncompatibleDialog />
+                            <GameExitErrorDialog />
+                            <ThemeShell>{children}</ThemeShell>
+                            <FlyToProcessListOverlay />
+                          </ThemeRuntimeProvider>
+                        </TooltipProvider>
+                      </DownloadProvider>
+                  </LaunchProvider>
+                </AccountProvider>
+              </SettingsProvider>
+            </UIConfigProvider>
+          </CornerNoticeProvider>
         </ThemeProvider>
       </body>
     </html>

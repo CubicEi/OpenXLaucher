@@ -275,6 +275,31 @@
     "remoteVersionBeta": "测试版",
     "remoteVersionAlpha": "内测版"
   },
+  "onboarding": {
+    "title": "开箱设置",
+    "stepWelcome": "欢迎",
+    "stepAccount": "账户",
+    "stepInstance": "游戏版本",
+    "stepOf": "第 {current} / {total} 步",
+    "startSetup": "开始设置",
+    "addAccount": "添加账户",
+    "addAccountHint": "登录任意账户后即可继续。支持正版、LittleSkin、第三方与离线。",
+    "waitingForLogin": "请在登录窗口中完成账户设置…",
+    "accountReady": "已登录：{name}",
+    "continueToInstance": "继续选择版本",
+    "skipRemaining": "跳过其余设置",
+    "instanceTitle": "选择或下载游戏版本",
+    "instanceHint": "选择已安装的版本，或前往下载。也可稍后再设置。",
+    "noVersions": "暂无已安装版本",
+    "goDownload": "去下载游戏",
+    "refreshVersions": "刷新列表",
+    "selectVersion": "选择此版本",
+    "versionAlreadySelected": "已选择版本：{name}",
+    "finish": "完成",
+    "resumeBanner": "开箱设置尚未完成：请选择游戏版本，或跳过。",
+    "resumeContinue": "继续设置",
+    "resumeSkip": "跳过"
+  },
   "home": {
     "modLoader": "模组加载器",
     "addAnAccountToLaunchTheGame": "添加账户后即可启动游戏",
@@ -466,11 +491,11 @@
       "end": "— 已经到底了 —"
     },
     "languageSection": {
-      "title": "语言",
+      "title": "语言 / Language",
       "description": "选择启动器界面语言",
       "systemLanguage": "首次使用时会根据系统语言自动选择。",
       "chinese": "中文",
-      "english": "英文"
+      "english": "English"
     }
   },
   "sidebar": {
@@ -943,6 +968,8 @@
     "clearFinished": "清除已完成",
     "cancelTask": "取消任务",
     "removeTask": "移除任务",
+    "taskCompleted": "{name} 任务完成",
+    "taskCompletedWithWarning": "{name} 任务完成（部分失败）",
     "emptyTitle": "暂无任务",
     "emptyHint": "开始下载游戏版本、模组或执行更新后，任务会出现在这里。",
     "stage": {

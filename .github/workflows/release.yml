@@ -218,7 +218,7 @@ jobs:
           cp -f downloaded/build-macos-x86_64/OpenXLauncher_${APP_VERSION}_macos-x86_64.dmg "$out/"
           cp -f downloaded/build-macos-aarch64/OpenXLauncher_${APP_VERSION}_macos-aarch64.dmg "$out/"
           node scripts/write-release-identity.mjs \
-            --out "$out/OpenXLauncher-identity.json" \
+            --out "$out/OpenXLauncher.identity.json" \
             --windows-exe "$out/OpenXLauncher.exe" \
             --macos-x86_64-dmg "$out/OpenXLauncher_${APP_VERSION}_macos-x86_64.dmg" \
             --macos-aarch64-dmg "$out/OpenXLauncher_${APP_VERSION}_macos-aarch64.dmg"

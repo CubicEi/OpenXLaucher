@@ -4,7 +4,7 @@ import path from "node:path";
 import { readBuildUuidFromDmg } from "./lib/macos-build-identity.mjs";
 
 /**
- * Build or merge `OpenXLauncher-identity.json` (schema 2).
+ * Build or merge `OpenXLauncher.identity.json` (schema 2).
  *
  *   node scripts/write-release-identity.mjs --out <path>
  *     [--windows-exe <path>]
@@ -78,7 +78,7 @@ function parseArgs(argv) {
 
   if (!opts.out) {
     console.error(
-      "Usage: node scripts/write-release-identity.mjs --out <OpenXLauncher-identity.json> [--windows-exe PATH] [--macos-x86_64-dmg PATH] [--macos-aarch64-dmg PATH] [--merge PATH]",
+      "Usage: node scripts/write-release-identity.mjs --out <OpenXLauncher.identity.json> [--windows-exe PATH] [--macos-x86_64-dmg PATH] [--macos-aarch64-dmg PATH] [--merge PATH]",
     );
     process.exit(1);
   }
