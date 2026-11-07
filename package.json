@@ -1,6 +1,6 @@
 {
   "name": "openxlauncher",
-  "version": "1.0.0-pre.4",
+  "version": "1.0.0-pre.5",
   "private": true,
   "scripts": {
     "verify-version": "node scripts/sync-app-version.mjs",
@@ -18,7 +18,8 @@
     "tauri:build": "tauri build",
     "pretauri:build:portable": "node scripts/sync-app-version.mjs && node scripts/sync-app-icons.mjs",
     "tauri:build:portable": "node scripts/tauri-build-portable.mjs",
-    "tauri:build:debug": "tauri build --debug"
+    "tauri:build:debug": "tauri build --debug",
+    "build:schematic-assets": "node scripts/build-schematic-assets.mjs"
   },
   "dependencies": {
     "@base-ui/react": "^1.2.0",

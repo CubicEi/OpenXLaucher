@@ -55,9 +55,14 @@ export interface ResourcePageConfig {
   /** 右列图标背景色 */
   rightIconBg?: string;
   /** 预览（查看器）回调 - 点击眼睛图标时触发（如投影预览） */
-  onOpenViewer?: (file: { name: string; size: number; isDir?: boolean }, side: "left" | "right") => void;
+  onOpenViewer?: (
+    file: { name: string; size: number; isDir?: boolean },
+    side: "left" | "right",
+    context?: { instanceRelativePath?: string[] },
+  ) => void;
   /** 启用预览按钮的文件扩展名（小写不含点） */
   viewerExtensions?: string[];
+  getFileSubtitle?: (file: { name: string; size: number; isDir?: boolean }) => string;
   /** 启用检查更新 / 远程版本（资源包、光影、数据包等） */
   enableUpdates?: boolean;
   /** Disable rename on instance column (e.g. mods page). */
@@ -107,6 +112,7 @@ export function createResourcePage(config: ResourcePageConfig): React.FC {
     rightIconBg = CACHE_LIBRARY_ICON_BG,
     onOpenViewer,
     viewerExtensions,
+    getFileSubtitle,
     enableUpdates = false,
   } = config;
 
@@ -339,6 +345,7 @@ export function createResourcePage(config: ResourcePageConfig): React.FC {
         onOpenInstanceFolder={openInstanceFolderInExplorer}
         onClearCache={clearCacheLibrary}
         simplifyName={simplifyName}
+        getFileSubtitle={getFileSubtitle}
         onOpenViewer={onOpenViewer}
         viewerExtensions={viewerExtensions}
         {...(enableUpdates

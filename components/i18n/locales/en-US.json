@@ -53,7 +53,7 @@
     "loadingWorld": "Loading world",
     "ready": "Ready",
     "panel": {
-      "stopPreparing": "Stop preparing",
+      "stopPreparing": "Stop sign-in",
       "freeingSystemMemory": "Freeing system memory...",
       "freedAboutValueMbCleanAgain": "Freed about {value} MB · Clean again",
       "freeMemoryClearSystemCache": "Free memory (clear system cache)",
@@ -73,14 +73,14 @@
     },
     "status": {
       "ready": "Ready",
-      "preparing": "Preparing",
+      "preparing": "Signing in",
       "launching": "Launching",
       "running": "Running",
       "stopped": "Stopped",
       "error": "Error"
     },
     "progress": {
-      "preparing": "Preparing...",
+      "preparing": "Signing in...",
       "analyzingLaunchLogs": "Analyzing launch logs..."
     },
     "report": {
@@ -275,6 +275,31 @@
     "remoteVersionBeta": "Beta",
     "remoteVersionAlpha": "Alpha"
   },
+  "onboarding": {
+    "title": "Getting started",
+    "stepWelcome": "Welcome",
+    "stepAccount": "Account",
+    "stepInstance": "Game version",
+    "stepOf": "Step {current} of {total}",
+    "startSetup": "Get started",
+    "addAccount": "Add account",
+    "addAccountHint": "Sign in with any account to continue — Microsoft, LittleSkin, third-party, or offline.",
+    "waitingForLogin": "Finish signing in in the login window…",
+    "accountReady": "Signed in as {name}",
+    "continueToInstance": "Continue to versions",
+    "skipRemaining": "Skip remaining setup",
+    "instanceTitle": "Choose or download a version",
+    "instanceHint": "Pick an installed version, or go download one. You can also set this up later.",
+    "noVersions": "No installed versions yet",
+    "goDownload": "Download a game",
+    "refreshVersions": "Refresh list",
+    "selectVersion": "Select this version",
+    "versionAlreadySelected": "Selected version: {name}",
+    "finish": "Finish",
+    "resumeBanner": "Setup is incomplete: choose a game version, or skip.",
+    "resumeContinue": "Continue setup",
+    "resumeSkip": "Skip"
+  },
   "home": {
     "modLoader": "Mod loader",
     "addAnAccountToLaunchTheGame": "Add an account to launch the game",
@@ -286,7 +311,6 @@
     "launchNow": "Launch now",
     "welcomeBack": "Welcome back, ",
     "adventurer": "Adventurer",
-    "manageYourGameVersionsResourcesAndLaunchStatusHere": "Manage your game versions, resources, and launch status here.",
     "accountsAndCharacters": "Accounts and characters",
     "chooseAPlayerAndManageSkinsAndCapes": "Choose a player and manage skins and capes",
     "notSignedIn": "Not signed in",
@@ -450,7 +474,12 @@
     },
     "general": {
       "updateDescription": "Check for updates, read release notes, and install new versions.",
-      "manageUpdates": "Manage updates"
+      "manageUpdates": "Manage updates",
+      "systemProxyTitle": "Network",
+      "systemProxyDescription": "Whether to use the HTTP proxy configured in the operating system.",
+      "useSystemProxy": "Use system proxy",
+      "systemProxyHint": "When off, connections go direct. When on, the launcher reads the OS proxy for downloads and API calls (no effect if no system proxy). HTTP_PROXY and similar env vars take precedence if already set.",
+      "toggleSystemProxy": "Toggle use system proxy"
     },
     "page": {
       "title": "Launcher settings",
@@ -462,10 +491,10 @@
       "end": "— End of settings —"
     },
     "languageSection": {
-      "title": "Language",
+      "title": "Language / 语言",
       "description": "Choose the launcher interface language",
       "systemLanguage": "The system language is used automatically on first launch.",
-      "chinese": "Chinese",
+      "chinese": "简体中文",
       "english": "English"
     }
   },
@@ -939,6 +968,8 @@
     "clearFinished": "Clear finished",
     "cancelTask": "Cancel task",
     "removeTask": "Remove task",
+    "taskCompleted": "{name} completed",
+    "taskCompletedWithWarning": "{name} completed with warnings",
     "emptyTitle": "No tasks",
     "emptyHint": "When you download a game version, mod, or run an update, tasks will show up here.",
     "stage": {

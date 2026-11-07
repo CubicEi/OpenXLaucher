@@ -8,9 +8,143 @@ var cameraPitch;
 var cameraYaw;
 var cameraPos;
 
+var skipStructureGrid = false;
+var renderCanvasEl = null;
+var lastViewportW = 0;
+var lastViewportH = 0;
+
+function disposeStructureRenderer() {
+  deepslateRenderer = null;
+  lastViewportW = 0;
+  lastViewportH = 0;
+}
+
+/**
+ * Keep WebGL drawing buffer + DeepSlate projection in sync with the CSS box.
+ * Call after changing canvas.width/height (window / parent resize).
+ */
+function syncRendererViewport(force) {
+  var canvas = renderCanvasEl || (webglContext && webglContext.canvas);
+  if (!canvas || !webglContext) return false;
+
+  var dpr = (typeof window !== "undefined" && window.devicePixelRatio) || 1;
+  var rect = canvas.getBoundingClientRect();
+  var cssW = Math.max(1, Math.round(rect.width));
+  var cssH = Math.max(1, Math.round(rect.height));
+  var bufW = Math.max(1, Math.round(cssW * dpr));
+  var bufH = Math.max(1, Math.round(cssH * dpr));
+
+  var sizeChanged = canvas.width !== bufW || canvas.height !== bufH;
+  if (sizeChanged) {
+    canvas.width = bufW;
+    canvas.height = bufH;
+  }
+
+  var needViewport =
+    force ||
+    sizeChanged ||
+    lastViewportW !== bufW ||
+    lastViewportH !== bufH;
+
+  if (needViewport) {
+    if (deepslateRenderer && typeof deepslateRenderer.setViewport === "function") {
+      deepslateRenderer.setViewport(0, 0, bufW, bufH);
+    } else {
+      webglContext.viewport(0, 0, bufW, bufH);
+    }
+    lastViewportW = bufW;
+    lastViewportH = bufH;
+  }
+  return needViewport || sizeChanged;
+}
+
+function structureVolumeOf(structure) {
+  try {
+    var size = structure.getSize();
+    return Math.max(1, size[0]) * Math.max(1, size[1]) * Math.max(1, size[2]);
+  } catch (e) {
+    return 0;
+  }
+}
+
+/**
+ * Draw opaque meshes first, then transparent with depth writes off.
+ * Stops glass/pane z-fighting flicker while the camera pans.
+ */
+function patchTransparentDraw(renderer) {
+  if (!renderer || renderer.__oxlTransparentPatched) return;
+  var cb = renderer.chunkBuilder;
+  if (!cb || typeof cb.getMeshes !== "function") return;
+  if (typeof renderer.drawMesh !== "function") return;
+
+  renderer.__oxlTransparentPatched = true;
+  renderer.__oxlOrigDrawStructure = renderer.drawStructure.bind(renderer);
+
+  renderer.drawStructure = function (viewMatrix) {
+    var gl = this.gl;
+    var chunks = cb.chunks || [];
+    var opaque = [];
+    var transparent = [];
+    for (var x = 0; x < chunks.length; x++) {
+      var yz = chunks[x];
+      if (!yz) continue;
+      for (var y = 0; y < yz.length; y++) {
+        var zs = yz[y];
+        if (!zs) continue;
+        for (var z = 0; z < zs.length; z++) {
+          var chunk = zs[z];
+          if (!chunk) continue;
+          if (chunk.mesh && !chunk.mesh.isEmpty()) opaque.push(chunk.mesh);
+          if (chunk.transparentMesh && !chunk.transparentMesh.isEmpty()) transparent.push(chunk.transparentMesh);
+        }
+      }
+    }
+
+    this.setShader(this.shaderProgram);
+    var res = this.resources;
+    var pixelSize = res && typeof res.getPixelSize === "function" ? res.getPixelSize() : undefined;
+    this.setTexture(this.atlasTexture, pixelSize);
+    this.prepareDraw(viewMatrix);
+
+    var opts = { pos: true, color: true, texture: true, normal: true };
+    gl.depthMask(true);
+    for (var i = 0; i < opaque.length; i++) this.drawMesh(opaque[i], opts);
+
+    // Transparent pass: test depth but don't write — avoids glass flicker on pan.
+    gl.enable(gl.BLEND);
+    gl.depthMask(false);
+    for (var j = 0; j < transparent.length; j++) this.drawMesh(transparent[j], opts);
+    gl.depthMask(true);
+  };
+}
+
 function setStructure(structure, reset_view) {
   if (reset_view === undefined) reset_view = false;
-  deepslateRenderer = new deepslate.StructureRenderer(webglContext, structure, deepslateResources, {chunkSize: 8});
+  if (!webglContext) {
+    throw new Error("WebGL context is not available");
+  }
+
+  disposeStructureRenderer();
+
+  var volume = structureVolumeOf(structure);
+  // Larger chunks = fewer mesh buffers (helps big schematics); tiny ones keep fine chunks.
+  var chunkSize = volume > 96 * 96 * 96 ? 16 : volume > 48 * 48 * 48 ? 12 : 8;
+  skipStructureGrid = volume > 64 * 64 * 64;
+
+  try {
+    deepslateRenderer = new deepslate.StructureRenderer(webglContext, structure, deepslateResources, {
+      chunkSize: chunkSize,
+      useInvisibleBlockBuffer: false,
+    });
+    patchTransparentDraw(deepslateRenderer);
+  } catch (e) {
+    deepslateRenderer = null;
+    console.error("[schematic-viewer] StructureRenderer failed:", e);
+    throw e;
+  }
+
+  syncRendererViewport(true);
+
   if (reset_view) {
     cameraPitch = 0.8;
     cameraYaw = 0.5;
@@ -20,15 +154,40 @@ function setStructure(structure, reset_view) {
   requestAnimationFrame(render);
 }
 
+function setStructureAsync(structure, reset_view) {
+  return new Promise(function (resolve, reject) {
+    // Let the loading overlay paint before the heavy mesh bake.
+    requestAnimationFrame(function () {
+      setTimeout(function () {
+        try {
+          setStructure(structure, reset_view);
+          resolve();
+        } catch (e) {
+          reject(e);
+        }
+      }, 0);
+    });
+  });
+}
+
 function render() {
-  cameraYaw = cameraYaw % (Math.PI * 2);
-  cameraPitch = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, cameraPitch));
-  var view = mat4.create();
-  mat4.rotateX(view, view, cameraPitch);
-  mat4.rotateY(view, view, cameraYaw);
-  mat4.translate(view, view, cameraPos);
-  deepslateRenderer.drawStructure(view);
-  deepslateRenderer.drawGrid(view);
+  if (!deepslateRenderer || !webglContext) return;
+  try {
+    if (webglContext.isContextLost && webglContext.isContextLost()) return;
+    syncRendererViewport(false);
+    cameraYaw = cameraYaw % (Math.PI * 2);
+    cameraPitch = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, cameraPitch));
+    var view = mat4.create();
+    mat4.rotateX(view, view, cameraPitch);
+    mat4.rotateY(view, view, cameraYaw);
+    mat4.translate(view, view, cameraPos);
+    deepslateRenderer.drawStructure(view);
+    if (!skipStructureGrid) {
+      deepslateRenderer.drawGrid(view);
+    }
+  } catch (e) {
+    console.error("[schematic-viewer] render failed:", e);
+  }
 }
 
 var _keyInterval = null;
@@ -37,11 +196,28 @@ var _keyUpHandler = null;
 var _blurHandler = null;
 
 function createRenderCanvas(canvas) {
-  webglContext = canvas.getContext('webgl');
+  renderCanvasEl = canvas;
+  webglContext = canvas.getContext('webgl', {
+    alpha: false,
+    antialias: false,
+    depth: true,
+    failIfMajorPerformanceCaveat: false,
+    powerPreference: 'high-performance',
+  });
   if (!webglContext) {
     console.error("[schematic-viewer] WebGL not available");
     return;
   }
+  canvas.addEventListener('webglcontextlost', function (e) {
+    e.preventDefault();
+    console.error("[schematic-viewer] WebGL context lost");
+    deepslateRenderer = null;
+  });
+  canvas.addEventListener('webglcontextrestored', function () {
+    console.warn("[schematic-viewer] WebGL context restored — reload the schematic");
+  });
+
+  syncRendererViewport(true);
 
   cameraPitch = 0.8;
   cameraYaw = 0.5;
@@ -255,6 +431,7 @@ function destroyRenderCanvas() {
     window.removeEventListener('blur', _blurHandler);
     _blurHandler = null;
   }
-  deepslateRenderer = null;
+  disposeStructureRenderer();
   webglContext = null;
+  renderCanvasEl = null;
 }

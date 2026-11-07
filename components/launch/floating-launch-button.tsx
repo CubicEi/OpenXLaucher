@@ -248,7 +248,9 @@ export function FloatingLaunchButton() {
                     {isLaunching ? (
                       <>
                         <Loader2 className="size-3 animate-spin" />
-                        {status === "preparing" ? t("launch.status.preparing") : "Launching"}
+                        {status === "preparing"
+                          ? t("launch.status.preparing")
+                          : t("launch.status.launching")}
                       </>
                     ) : isRunning ? (
                       <>

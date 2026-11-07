@@ -22,10 +22,10 @@ import {
   type FlyCoords,
 } from "@/components/process-list/fly-to-process-list";
 import {
-  DownloadCornerNoticeProvider,
   useDownloadCornerNotice,
   type PushDownloadCornerNoticeInput,
 } from "@/components/download/download-corner-notice";
+import { useI18n } from "@/components/i18n/use-i18n";
 import {
   downloadTaskLabel,
   formatJavaInvokeError,
@@ -202,14 +202,11 @@ interface QueueItem {
 }
 
 export function DownloadProvider({ children }: { children: React.ReactNode }) {
-  return (
-    <DownloadCornerNoticeProvider>
-      <DownloadProviderInner>{children}</DownloadProviderInner>
-    </DownloadCornerNoticeProvider>
-  );
+  return <DownloadProviderInner>{children}</DownloadProviderInner>;
 }
 
 function DownloadProviderInner({ children }: { children: React.ReactNode }) {
+  const { t } = useI18n();
   const { pushNotice, dismissNotice } = useDownloadCornerNotice();
   const [tasks, setTasks] = useState<DownloadTask[]>([]);
   const unlistensRef = useRef<UnlistenFn[]>([]);
@@ -222,6 +219,8 @@ function DownloadProviderInner({ children }: { children: React.ReactNode }) {
   const taskIdCounterRef = useRef(1_000_000);
   /** Local placeholder IDs cancelled before backend bind — remap cancel to real taskId. */
   const cancelledLocalIdsRef = useRef(new Set<number>());
+  /** 任务状态快照：用于检测「刚完成」并弹出右下角提示 */
+  const taskStatusSnapshotRef = useRef<Map<string, DownloadTaskStatus>>(new Map());
   const showJavaPrecheckFailure = useCallback(
     (message: string) => {
       pushNotice({
@@ -231,6 +230,37 @@ function DownloadProviderInner({ children }: { children: React.ReactNode }) {
     },
     [pushNotice]
   );
+
+  useEffect(() => {
+    const snapshot = taskStatusSnapshotRef.current;
+    const seen = new Set<string>();
+    for (const task of tasks) {
+      const key = task.clientId || `id:${task.taskId}`;
+      seen.add(key);
+      const prev = snapshot.get(key);
+      const next = task.status;
+      if (
+        prev &&
+        prev !== next &&
+        (next === "success" || next === "warning") &&
+        prev !== "success" &&
+        prev !== "warning"
+      ) {
+        const name = (task.label || "").trim() || String(task.taskId);
+        pushNotice({
+          variant: "success",
+          message:
+            next === "warning"
+              ? t("processList.taskCompletedWithWarning", { name })
+              : t("processList.taskCompleted", { name }),
+        });
+      }
+      snapshot.set(key, next);
+    }
+    for (const key of [...snapshot.keys()]) {
+      if (!seen.has(key)) snapshot.delete(key);
+    }
+  }, [tasks, pushNotice, t]);
 
   /** Strict Java preflight — returns false when UI should abort (no tasks created yet). */
   const ensureJavaForPlan = useCallback(

@@ -1,14 +1,14 @@
 use reqwest::header;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::sync::{OnceCell, Semaphore};
 pub const CURSEFORGE_API_KEY: &str = "$2a$10$VTAFCxje5a1Jkqv0aGWjQ.fULedAEPctDqppOkNMRVv.edVnG7KQ6";
 pub const DEFAULT_MAX_CONCURRENT: usize = 256;
 /// 下载响应体：连续多久未收到字节则超时（不设整体下载时长上限）。
 pub const DOWNLOAD_IDLE_TIMEOUT: Duration = Duration::from_secs(120);
-static SHARED_CLIENT: OnceCell<Arc<reqwest::Client>> = OnceCell::const_new();
-static MODRINTH_CLIENT: OnceCell<Arc<reqwest::Client>> = OnceCell::const_new();
-static CURSEFORGE_CLIENT: OnceCell<Arc<reqwest::Client>> = OnceCell::const_new();
+static SHARED_CLIENT: Mutex<Option<Arc<reqwest::Client>>> = Mutex::new(None);
+static MODRINTH_CLIENT: Mutex<Option<Arc<reqwest::Client>>> = Mutex::new(None);
+static CURSEFORGE_CLIENT: Mutex<Option<Arc<reqwest::Client>>> = Mutex::new(None);
 static GLOBAL_SEMAPHORE: OnceCell<Arc<Semaphore>> = OnceCell::const_new();
 fn proxy_url_from_env() -> Option<String> {
     for key in ["HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy", "ALL_PROXY", "all_proxy"] {
@@ -51,55 +51,89 @@ pub fn base_client_builder() -> reqwest::ClientBuilder {
 pub fn client_builder_with_timeout(timeout: Duration) -> reqwest::ClientBuilder {
     base_client_builder().timeout(timeout)
 }
+
+/// 代理设置变更后调用：下次请求会使用新的环境变量重建客户端。
+pub fn reset_cached_http_clients() {
+    if let Ok(mut g) = SHARED_CLIENT.lock() {
+        *g = None;
+    }
+    if let Ok(mut g) = MODRINTH_CLIENT.lock() {
+        *g = None;
+    }
+    if let Ok(mut g) = CURSEFORGE_CLIENT.lock() {
+        *g = None;
+    }
+}
+
 pub async fn shared_client() -> Arc<reqwest::Client> {
-    SHARED_CLIENT
-        .get_or_init(|| async {
-            Arc::new(
-                base_client_builder()
-                    .build()
-                    .expect("Failed to build shared HTTP client"),
-            )
-        })
-        .await
-        .clone()
+    {
+        let slot = SHARED_CLIENT.lock().expect("shared client mutex");
+        if let Some(ref c) = *slot {
+            return c.clone();
+        }
+    }
+    let built = Arc::new(
+        base_client_builder()
+            .build()
+            .expect("Failed to build shared HTTP client"),
+    );
+    let mut slot = SHARED_CLIENT.lock().expect("shared client mutex");
+    if slot.is_none() {
+        *slot = Some(built.clone());
+    }
+    slot.as_ref().expect("shared client").clone()
 }
+
 pub async fn curseforge_client() -> Arc<reqwest::Client> {
-    CURSEFORGE_CLIENT
-        .get_or_init(|| async {
-            let mut headers = header::HeaderMap::new();
-            if let Ok(value) = header::HeaderValue::from_str(CURSEFORGE_API_KEY) {
-                headers.insert(header::HeaderName::from_static("x-api-key"), value);
-            }
-            Arc::new(
-                base_client_builder()
-                    .default_headers(headers)
-                    .build()
-                    .expect("Failed to build CurseForge HTTP client"),
-            )
-        })
-        .await
-        .clone()
+    {
+        let slot = CURSEFORGE_CLIENT.lock().expect("curseforge mutex");
+        if let Some(ref c) = *slot {
+            return c.clone();
+        }
+    }
+    let mut headers = header::HeaderMap::new();
+    if let Ok(value) = header::HeaderValue::from_str(CURSEFORGE_API_KEY) {
+        headers.insert(header::HeaderName::from_static("x-api-key"), value);
+    }
+    let built = Arc::new(
+        base_client_builder()
+            .default_headers(headers)
+            .build()
+            .expect("Failed to build CurseForge HTTP client"),
+    );
+    let mut slot = CURSEFORGE_CLIENT.lock().expect("curseforge mutex");
+    if slot.is_none() {
+        *slot = Some(built.clone());
+    }
+    slot.as_ref().expect("curseforge client").clone()
 }
+
 pub async fn modrinth_client() -> Arc<reqwest::Client> {
-    MODRINTH_CLIENT
-        .get_or_init(|| async {
-            let mut headers = header::HeaderMap::new();
-            if let Ok(api_value) = "v2".parse::<header::HeaderValue>() {
-                headers.insert(
-                    header::HeaderName::from_static("x-modrinth-api-version"),
-                    api_value,
-                );
-            }
-            Arc::new(
-                base_client_builder()
-                    .default_headers(headers)
-                    .timeout(Duration::from_secs(300))
-                    .build()
-                    .expect("Failed to build Modrinth HTTP client"),
-            )
-        })
-        .await
-        .clone()
+    {
+        let slot = MODRINTH_CLIENT.lock().expect("modrinth mutex");
+        if let Some(ref c) = *slot {
+            return c.clone();
+        }
+    }
+    let mut headers = header::HeaderMap::new();
+    if let Ok(api_value) = "v2".parse::<header::HeaderValue>() {
+        headers.insert(
+            header::HeaderName::from_static("x-modrinth-api-version"),
+            api_value,
+        );
+    }
+    let built = Arc::new(
+        base_client_builder()
+            .default_headers(headers)
+            .timeout(Duration::from_secs(300))
+            .build()
+            .expect("Failed to build Modrinth HTTP client"),
+    );
+    let mut slot = MODRINTH_CLIENT.lock().expect("modrinth mutex");
+    if slot.is_none() {
+        *slot = Some(built.clone());
+    }
+    slot.as_ref().expect("modrinth client").clone()
 }
 pub async fn global_semaphore() -> Arc<Semaphore> {
     GLOBAL_SEMAPHORE

@@ -42,8 +42,8 @@ use handler::cache_paths::{
     list_cached_mods,
 };
 use handler::config::{
-    get_java_download_dir, get_launcher_paths_config, run_portable_first_launch_setup,
-    save_launcher_paths_config,
+    get_java_download_dir, get_launcher_paths_config, get_network_proxy_preference,
+    run_portable_first_launch_setup, save_launcher_paths_config, set_network_proxy_preference,
 };
 use handler::instance_export::{
     cancel_instance_export_cmd, estimate_instance_export_size_cmd, export_instance_modpack_cmd,
@@ -235,6 +235,8 @@ pub fn run() {
             check_mod_installed,
             get_launcher_paths_config,
             save_launcher_paths_config,
+            get_network_proxy_preference,
+            set_network_proxy_preference,
             run_portable_first_launch_setup,
             maybe_install_bundled_modpack_cmd,
             export_instance_modpack_cmd,
@@ -379,7 +381,7 @@ pub fn run() {
 
             updater::update_ack::write_update_ack_if_requested();
 
-            system_proxy::apply_system_proxy_env();
+            system_proxy::reapply_system_proxy_from_preferences();
             app_paths::ensure_portable_dirs();
             if let Err(error) = updater::identity::ensure_portable_self_hash() {
                 eprintln!("[identity] {}", error);

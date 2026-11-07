@@ -134,7 +134,11 @@ export interface ResourcePanelProps {
   // 文件副标题（可选回调）- 从文件名或其他信息生成的描述
   getFileSubtitle?: (file: FileItem) => string;
   // 预览（查看器）回调 - 点击眼睛图标时触发（如投影预览）
-  onOpenViewer?: (file: FileItem, side: "left" | "right") => void;
+  onOpenViewer?: (
+    file: FileItem,
+    side: "left" | "right",
+    context?: { instanceRelativePath?: string[] },
+  ) => void;
   // 启用预览按钮的文件扩展名（小写不含点，如 ["litematic", "schem", "schematic", "nbt"]）
   viewerExtensions?: string[];
   /** fileName → available update (mods page) */
@@ -496,7 +500,11 @@ export default function ResourcePanel({
                       className="size-7 shrink-0"
                       onClick={(e) => {
                         e.stopPropagation();
-                        onOpenViewer!(file, side);
+                        onOpenViewer!(
+                          file,
+                          side,
+                          side === "left" ? { instanceRelativePath: leftDirectoryPath } : undefined,
+                        );
                       }}
                       title="预览"
                     >

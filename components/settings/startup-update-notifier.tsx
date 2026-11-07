@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { getVersion } from "@tauri-apps/api/app";
 import { invoke } from "@tauri-apps/api/core";
 import { useRouter } from "next/navigation";
@@ -17,6 +17,10 @@ import {
   shouldRunStartupUpdateCheck,
   shouldShowStartupUpdatePrompt,
 } from "@/lib/launcher-update-session";
+import {
+  shouldDeferStartupUpdatePrompt,
+  subscribeOnboardingComplete,
+} from "@/lib/onboarding";
 import { isUpdateCheckTimeoutError } from "@/lib/update-check";
 import { ChangelogMarkdown } from "@/components/settings/changelog-markdown";
 import { Button } from "@/components/ui/button";
@@ -50,6 +54,19 @@ export function StartupUpdateNotifier({ delayMs = 1500 }: { delayMs?: number }) 
   const [updateFailedOpen, setUpdateFailedOpen] = useState(false);
   const [installedVersion, setInstalledVersion] = useState<string>("");
   const [updateFailureMessage, setUpdateFailureMessage] = useState<string>("");
+  /** 开箱期间查到更新时先记下，结束后再弹 */
+  const deferredUpdatePromptRef = useRef(false);
+  const availableUpdateRef = useRef<AvailableUpdate | null>(null);
+
+  const tryOpenUpdatePrompt = (update: AvailableUpdate) => {
+    if (!shouldShowStartupUpdatePrompt(update.version)) return;
+    if (shouldDeferStartupUpdatePrompt()) {
+      deferredUpdatePromptRef.current = true;
+      return;
+    }
+    deferredUpdatePromptRef.current = false;
+    setUpdateOpen(true);
+  };
 
   useEffect(() => {
     let active = true;
@@ -101,10 +118,10 @@ export function StartupUpdateNotifier({ delayMs = 1500 }: { delayMs?: number }) 
               notes: changelog,
               prepared: true,
             });
-            setAvailableUpdate({ version: result.target_version, changelog });
-            if (shouldShowStartupUpdatePrompt(result.target_version)) {
-              setUpdateOpen(true);
-            }
+            const update = { version: result.target_version, changelog };
+            availableUpdateRef.current = update;
+            setAvailableUpdate(update);
+            tryOpenUpdatePrompt(update);
             return;
           }
 
@@ -135,6 +152,16 @@ export function StartupUpdateNotifier({ delayMs = 1500 }: { delayMs?: number }) 
       window.clearTimeout(timer);
     };
   }, [delayMs]);
+
+  useEffect(() => {
+    return subscribeOnboardingComplete(() => {
+      const update = availableUpdateRef.current;
+      if (!update || !deferredUpdatePromptRef.current) return;
+      if (!shouldShowStartupUpdatePrompt(update.version)) return;
+      deferredUpdatePromptRef.current = false;
+      setUpdateOpen(true);
+    });
+  }, []);
 
   const dismissUpdatePrompt = () => {
     markStartupUpdatePromptDismissed(availableUpdate?.version);

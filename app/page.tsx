@@ -8,14 +8,12 @@ import {
   Boxes,
   Loader2,
   Play,
-  Shirt,
   User,
   UserPlus,
   Users,
 } from "lucide-react";
 import { HOME_QUICK_ACCESS_ACTIONS } from "@/constants";
 import { AccountSwitcher } from "@/components/accounts/account-switcher";
-import { SkinCapeManager } from "@/components/accounts/skin-cape-manager";
 import { SkinViewer3D } from "@/components/accounts/skin-viewer-3d";
 import { useAccountContext } from "@/components/accounts/account-provider";
 import { LaunchStatusBadge } from "@/components/launch/launch-status-badge";
@@ -34,9 +32,10 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import {
-  Dialog,
-  DialogContent,
-} from "@/components/ui/dialog";
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { useInstancePath } from "@/hooks/use-instance-path";
 import type { Account } from "@/types";
 import {
@@ -48,7 +47,6 @@ import {
 export default function Home() {
   const router = useRouter();
   const [isProfileSelectorOpen, setIsProfileSelectorOpen] = useState(false);
-  const [isSkinManagerOpen, setIsSkinManagerOpen] = useState(false);
   const { selectedProfile, selectProfile } = useAccountContext();
   const {
     config,
@@ -128,9 +126,6 @@ export default function Home() {
               <h1 className="mt-1 text-xl font-semibold tracking-tight">
                 {t("home.welcomeBack")}{selectedProfile?.name ?? t("home.adventurer")}
               </h1>
-              <p className="mt-1 text-sm text-muted-foreground">
-                {t("home.manageYourGameVersionsResourcesAndLaunchStatusHere")}
-              </p>
             </div>
             <LaunchStatusBadge status={status} className="mt-1" />
           </header>
@@ -150,47 +145,12 @@ export default function Home() {
                 </CardContent>
 
                 <div className="border-t border-border">
-                  <CardContent className="space-y-3 py-4">
-                    <div className="flex items-center gap-3">
-                      <div className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-muted text-base font-semibold text-muted-foreground">
-                        {selectedProfile ? (
-                          selectedProfile.name.charAt(0).toUpperCase()
-                        ) : (
-                          <User className="size-5" />
-                        )}
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <p className="truncate text-sm font-medium">
-                          {selectedProfile?.name ?? t("home.notSignedIn")}
-                        </p>
-                        <p className="truncate text-xs text-muted-foreground">
-                          {profileStatus}
-                        </p>
-                      </div>
-                    </div>
-
-                    <div className="flex flex-col gap-2">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="w-full gap-2"
-                        onClick={() => setIsProfileSelectorOpen(true)}
-                      >
-                        <Users className="size-3.5" />
-                        {t("home.manageAccounts")}
-                      </Button>
-                      {selectedProfile?.authType === "microsoft" && (
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          className="w-full gap-2"
-                          onClick={() => setIsSkinManagerOpen(true)}
-                        >
-                          <Shirt className="size-3.5" />
-                          {t("home.skinsAndCapes")}
-                        </Button>
-                      )}
-                    </div>
+                  <CardContent className="py-4">
+                    <HomeAccountSummary
+                      selectedProfile={selectedProfile}
+                      profileStatus={profileStatus}
+                      onManageAccounts={() => setIsProfileSelectorOpen(true)}
+                    />
                   </CardContent>
                 </div>
               </Card>
@@ -325,47 +285,12 @@ export default function Home() {
                 </CardContent>
 
                 <div className="border-t border-border">
-                  <CardContent className="space-y-3 py-4">
-                    <div className="flex items-center gap-3">
-                      <div className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-muted text-base font-semibold text-muted-foreground">
-                        {selectedProfile ? (
-                          selectedProfile.name.charAt(0).toUpperCase()
-                        ) : (
-                          <User className="size-5" />
-                        )}
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <p className="truncate text-sm font-medium">
-                          {selectedProfile?.name ?? t("home.notSignedIn")}
-                        </p>
-                        <p className="truncate text-xs text-muted-foreground">
-                          {profileStatus}
-                        </p>
-                      </div>
-                    </div>
-
-                    <div className="flex flex-col gap-2">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="w-full gap-2"
-                        onClick={() => setIsProfileSelectorOpen(true)}
-                      >
-                        <Users className="size-3.5" />
-                        {t("home.manageAccounts")}
-                      </Button>
-                      {selectedProfile?.authType === "microsoft" && (
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          className="w-full gap-2"
-                          onClick={() => setIsSkinManagerOpen(true)}
-                        >
-                          <Shirt className="size-3.5" />
-                          {t("home.skinsAndCapes")}
-                        </Button>
-                      )}
-                    </div>
+                  <CardContent className="py-4">
+                    <HomeAccountSummary
+                      selectedProfile={selectedProfile}
+                      profileStatus={profileStatus}
+                      onManageAccounts={() => setIsProfileSelectorOpen(true)}
+                    />
                   </CardContent>
                 </div>
               </Card>
@@ -379,20 +304,53 @@ export default function Home() {
         onClose={() => setIsProfileSelectorOpen(false)}
         onSelect={handleProfileSelect}
       />
+    </div>
+  );
+}
 
-      <Dialog
-        open={isSkinManagerOpen}
-        onOpenChange={(open) => setIsSkinManagerOpen(open)}
-      >
-        <DialogContent className="max-h-[90vh] sm:max-w-4xl">
-          {selectedProfile && (
-            <SkinCapeManager
-              account={selectedProfile}
-              onClose={() => setIsSkinManagerOpen(false)}
-            />
-          )}
-        </DialogContent>
-      </Dialog>
+function HomeAccountSummary({
+  selectedProfile,
+  profileStatus,
+  onManageAccounts,
+}: {
+  selectedProfile: Account | null;
+  profileStatus: string;
+  onManageAccounts: () => void;
+}) {
+  const { t } = useI18n();
+
+  return (
+    <div className="flex items-center gap-3">
+      <div className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-muted text-base font-semibold text-muted-foreground">
+        {selectedProfile ? (
+          selectedProfile.name.charAt(0).toUpperCase()
+        ) : (
+          <User className="size-5" />
+        )}
+      </div>
+      <div className="min-w-0 flex-1 leading-tight">
+        <p className="truncate text-sm font-medium leading-snug">
+          {selectedProfile?.name ?? t("home.notSignedIn")}
+        </p>
+        <p className="truncate text-xs leading-snug text-muted-foreground">
+          {profileStatus}
+        </p>
+      </div>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="size-7 shrink-0"
+            onClick={onManageAccounts}
+            aria-label={t("home.manageAccounts")}
+          >
+            <Users className="size-3.5" />
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent side="top">{t("home.manageAccounts")}</TooltipContent>
+      </Tooltip>
     </div>
   );
 }

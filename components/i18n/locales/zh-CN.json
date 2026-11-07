@@ -53,7 +53,7 @@
     "loadingWorld": "加载世界",
     "ready": "准备完成",
     "panel": {
-      "stopPreparing": "停止准备",
+      "stopPreparing": "停止登录",
       "freeingSystemMemory": "正在释放系统内存...",
       "freedAboutValueMbCleanAgain": "已释放约 {value} MB 内存 · 再次清理",
       "freeMemoryClearSystemCache": "一键清理内存（释放系统缓存）",
@@ -73,14 +73,14 @@
     },
     "status": {
       "ready": "就绪",
-      "preparing": "准备中",
+      "preparing": "登录中",
       "launching": "启动中",
       "running": "运行中",
       "stopped": "已停止",
       "error": "错误"
     },
     "progress": {
-      "preparing": "准备中...",
+      "preparing": "登录中...",
       "analyzingLaunchLogs": "正在分析启动日志..."
     },
     "report": {
@@ -275,6 +275,31 @@
     "remoteVersionBeta": "测试版",
     "remoteVersionAlpha": "内测版"
   },
+  "onboarding": {
+    "title": "开箱设置",
+    "stepWelcome": "欢迎",
+    "stepAccount": "账户",
+    "stepInstance": "游戏版本",
+    "stepOf": "第 {current} / {total} 步",
+    "startSetup": "开始设置",
+    "addAccount": "添加账户",
+    "addAccountHint": "登录任意账户后即可继续。支持正版、LittleSkin、第三方与离线。",
+    "waitingForLogin": "请在登录窗口中完成账户设置…",
+    "accountReady": "已登录：{name}",
+    "continueToInstance": "继续选择版本",
+    "skipRemaining": "跳过其余设置",
+    "instanceTitle": "选择或下载游戏版本",
+    "instanceHint": "选择已安装的版本，或前往下载。也可稍后再设置。",
+    "noVersions": "暂无已安装版本",
+    "goDownload": "去下载游戏",
+    "refreshVersions": "刷新列表",
+    "selectVersion": "选择此版本",
+    "versionAlreadySelected": "已选择版本：{name}",
+    "finish": "完成",
+    "resumeBanner": "开箱设置尚未完成：请选择游戏版本，或跳过。",
+    "resumeContinue": "继续设置",
+    "resumeSkip": "跳过"
+  },
   "home": {
     "modLoader": "模组加载器",
     "addAnAccountToLaunchTheGame": "添加账户后即可启动游戏",
@@ -286,7 +311,6 @@
     "launchNow": "立即启动",
     "welcomeBack": "欢迎回来，",
     "adventurer": "冒险者",
-    "manageYourGameVersionsResourcesAndLaunchStatusHere": "在这里管理你的游戏版本、资源与启动状态。",
     "accountsAndCharacters": "账户与角色",
     "chooseAPlayerAndManageSkinsAndCapes": "选择玩家并管理皮肤、披风",
     "notSignedIn": "尚未登录",
@@ -450,7 +474,12 @@
     },
     "general": {
       "updateDescription": "检查更新、查看说明并安装新版本",
-      "manageUpdates": "管理更新"
+      "manageUpdates": "管理更新",
+      "systemProxyTitle": "网络",
+      "systemProxyDescription": "是否使用操作系统中配置的 HTTP 代理",
+      "useSystemProxy": "使用系统代理",
+      "systemProxyHint": "关闭时直连；开启后由启动器读取系统代理并用于下载与 API 请求（未设置系统代理则无影响）。若已设置 HTTP_PROXY 等环境变量，将优先使用环境变量。",
+      "toggleSystemProxy": "切换是否使用系统代理"
     },
     "page": {
       "title": "启动器设置",
@@ -462,11 +491,11 @@
       "end": "— 已经到底了 —"
     },
     "languageSection": {
-      "title": "语言",
+      "title": "语言 / Language",
       "description": "选择启动器界面语言",
       "systemLanguage": "首次使用时会根据系统语言自动选择。",
       "chinese": "中文",
-      "english": "英文"
+      "english": "English"
     }
   },
   "sidebar": {
@@ -939,6 +968,8 @@
     "clearFinished": "清除已完成",
     "cancelTask": "取消任务",
     "removeTask": "移除任务",
+    "taskCompleted": "{name} 任务完成",
+    "taskCompletedWithWarning": "{name} 任务完成（部分失败）",
     "emptyTitle": "暂无任务",
     "emptyHint": "开始下载游戏版本、模组或执行更新后，任务会出现在这里。",
     "stage": {

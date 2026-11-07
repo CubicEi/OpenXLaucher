@@ -571,3 +571,63 @@ pub async fn run_portable_first_launch_setup() -> Result<PortableFirstLaunchResu
         selected_minecraft_path: cfg.selected_minecraft_path,
     })
 }
+
+fn read_launcher_json_root() -> serde_json::Value {
+    let path = launcher_config_path();
+    if !path.exists() {
+        return serde_json::json!({});
+    }
+    fs::read_to_string(&path)
+        .ok()
+        .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
+        .filter(|v| v.is_object())
+        .unwrap_or_else(|| serde_json::json!({}))
+}
+
+fn write_launcher_json_root(mut root: serde_json::Value) -> Result<(), String> {
+    let path = launcher_config_path();
+    if !root.is_object() {
+        root = serde_json::json!({});
+    }
+    let text = serde_json::to_string_pretty(&root).map_err(|e| e.to_string())?;
+    if let Some(parent) = path.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    fs::write(&path, text).map_err(|e| e.to_string())
+}
+
+/// `launcher.json` → `general.use_system_proxy`：是否把 Windows/macOS 系统代理同步到本进程（默认 **false**）。
+pub fn network_proxy_preference_enabled() -> bool {
+    let root = read_launcher_json_root();
+    root.get("general")
+        .and_then(|g| g.get("use_system_proxy"))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+}
+
+#[tauri::command]
+pub fn get_network_proxy_preference() -> bool {
+    network_proxy_preference_enabled()
+}
+
+#[tauri::command]
+pub fn set_network_proxy_preference(enabled: bool) -> Result<(), String> {
+    let mut root = read_launcher_json_root();
+    let map = root
+        .as_object_mut()
+        .ok_or_else(|| "launcher.json 根不是对象".to_string())?;
+    if !map.get("general").map(|v| v.is_object()).unwrap_or(false) {
+        map.insert("general".to_string(), serde_json::json!({}));
+    }
+    let general = map
+        .get_mut("general")
+        .and_then(|v| v.as_object_mut())
+        .ok_or_else(|| "general 字段无效".to_string())?;
+    general.insert(
+        "use_system_proxy".to_string(),
+        serde_json::Value::Bool(enabled),
+    );
+    write_launcher_json_root(root)?;
+    crate::system_proxy::reapply_system_proxy_from_preferences();
+    Ok(())
+}
