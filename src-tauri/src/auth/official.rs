@@ -172,67 +172,114 @@ pub fn fetch_yggdrasil_skin_variant(uuid: &str, sessionserver_base: &str) -> Opt
     }
     None
 }
-/*
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // 初始化 SQLite 数据库
-    let connection = setup_database()?;
-    let client = Client::new();
-    let client_id = "1662e9cb-e526-4bea-8237-11526075b7f3";
-
-    // 从上到下分别是：添加新账户，检查刷新过期账户，手动下载账号皮肤
-    add_new_account(&client, &connection, client_id,).await?;
-    check_account_time(&client, &connection, client_id,"Elanda_seaweeds").await?;
-    download_player_skin(&client, "6e75722406c4461fb917cf32ace6790c").await?;
-    Ok(())
+fn is_transient_http_status(status: reqwest::StatusCode) -> bool {
+    matches!(status.as_u16(), 408 | 429 | 502 | 503 | 504)
 }
-*/
+
+fn is_retryable_auth_error(msg: &str) -> bool {
+    if is_network_error_message(msg) {
+        return true;
+    }
+    let upper = msg.to_ascii_uppercase();
+    for code in ["HTTP 408", "HTTP 429", "HTTP 502", "HTTP 503", "HTTP 504"] {
+        if upper.contains(code) {
+            return true;
+        }
+    }
+    false
+}
+
+/// 对暂态网络 / 408·429·5xx 最多尝试 3 次，退避 1s → 2s → 4s。
+/// 错误以 String 传递，避免 `Box<dyn Error>` 跨 await 破坏 Tauri command 的 Send。
+async fn retry_on_transient<T, F, Fut>(label: &str, mut op: F) -> Result<T, String>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = Result<T, String>>,
+{
+    const MAX_ATTEMPTS: u32 = 3;
+    let mut attempt = 0u32;
+    loop {
+        attempt += 1;
+        match op().await {
+            Ok(v) => return Ok(v),
+            Err(msg) => {
+                if !is_retryable_auth_error(&msg) || attempt >= MAX_ATTEMPTS {
+                    return Err(msg);
+                }
+                let backoff_secs = 1u64 << (attempt - 1);
+                eprintln!(
+                    "[正版检测] {} 暂态失败，第{}/{}次，{}s后重试: {}",
+                    label, attempt, MAX_ATTEMPTS, backoff_secs, msg
+                );
+                sleep(Duration::from_secs(backoff_secs)).await;
+            }
+        }
+    }
+}
+
+fn map_reqwest_err(e: impl std::fmt::Display) -> String {
+    e.to_string()
+}
+
+fn map_xsts_http_error(status: reqwest::StatusCode, text: &str) -> String {
+    if let Ok(err_resp) = serde_json::from_str::<XSTSErrorResponse>(text) {
+        match err_resp.x_err {
+            Some(2148916233) => {
+                "该 Microsoft 账户未关联 Xbox 账户，请先前往 xbox.com 注册".to_string()
+            }
+            Some(2148916235) => "您所在地区不支持 Xbox Live，无法使用正版登录".to_string(),
+            Some(2148916236) | Some(2148916237) => "需要在 Xbox 官网完成成人验证".to_string(),
+            Some(2148916238) => "未成年账户需要家长在 Microsoft Family 中审批".to_string(),
+            Some(code) => format!("XSTS 错误码: {}", code),
+            None => err_resp
+                .message
+                .unwrap_or_else(|| format!("HTTP {}: {}", status, text)),
+        }
+    } else if text.is_empty() {
+        format!(
+            "XSTS 服务器返回 HTTP {} 且响应体为空，可能是账户权限问题",
+            status
+        )
+    } else {
+        format!("HTTP {}: {}", status, text)
+    }
+}
+
 async fn get_device_code(
     client: &Client,
     client_id: &str,
-) -> Result<DeviceCodeResponse, Box<dyn std::error::Error>> {
+) -> Result<DeviceCodeResponse, String> {
     let params = [
         ("client_id", client_id),
         ("scope", "XboxLive.signin offline_access"),
     ];
-    let response = client
-        .post("https://login.microsoftonline.com/consumers/oauth2/v2.0/devicecode")
-        .form(&params)
-        .send()
-        .await?
-        .json::<DeviceCodeResponse>()
-        .await?;
-    Ok(response)
-}
-
-async fn poll_for_token(
-    client: &Client,
-    client_id: &str,
-    device_code: &str,
-    interval: u64,
-) -> Result<TokenResponse, Box<dyn std::error::Error>> {
-    loop {
-        let params = [
-            ("grant_type", "urn:ietf:params:oauth:grant-type:device_code"),
-            ("client_id", client_id),
-            ("device_code", device_code),
-        ];
+    retry_on_transient("设备码请求", || async {
         let response = client
-            .post("https://login.microsoftonline.com/consumers/oauth2/v2.0/token")
+            .post("https://login.microsoftonline.com/consumers/oauth2/v2.0/devicecode")
             .form(&params)
             .send()
-            .await?;
-        if response.status().is_success() {
-            return Ok(response.json::<TokenResponse>().await?);
+            .await
+            .map_err(map_reqwest_err)?;
+        let status = response.status();
+        if is_transient_http_status(status) {
+            return Err(format!("HTTP {}", status.as_u16()));
         }
-        sleep(Duration::from_secs(interval)).await;
-    }
+        if !status.is_success() {
+            let text = response.text().await.unwrap_or_default();
+            return Err(format!("HTTP {}: {}", status, text));
+        }
+        response
+            .json::<DeviceCodeResponse>()
+            .await
+            .map_err(map_reqwest_err)
+    })
+    .await
 }
 
 async fn authenticate_with_xbox_live(
     client: &Client,
     access_token: &str,
-) -> Result<XboxLiveTokenResponse, Box<dyn std::error::Error>> {
+) -> Result<XboxLiveTokenResponse, String> {
     let body = serde_json::json!({
         "Properties": {
             "AuthMethod": "RPS",
@@ -242,20 +289,33 @@ async fn authenticate_with_xbox_live(
         "RelyingParty": "http://auth.xboxlive.com",
         "TokenType": "JWT"
     });
-    let response = client
-        .post("https://user.auth.xboxlive.com/user/authenticate")
-        .json(&body)
-        .send()
-        .await?
-        .json::<XboxLiveTokenResponse>()
-        .await?;
-    Ok(response)
+    retry_on_transient("Xbox Live 认证", || async {
+        let response = client
+            .post("https://user.auth.xboxlive.com/user/authenticate")
+            .json(&body)
+            .send()
+            .await
+            .map_err(map_reqwest_err)?;
+        let status = response.status();
+        if is_transient_http_status(status) {
+            return Err(format!("HTTP {}", status.as_u16()));
+        }
+        if !status.is_success() {
+            let text = response.text().await.unwrap_or_default();
+            return Err(format!("HTTP {}: {}", status, text));
+        }
+        response
+            .json::<XboxLiveTokenResponse>()
+            .await
+            .map_err(map_reqwest_err)
+    })
+    .await
 }
 
 async fn get_xsts_token(
     client: &Client,
     xbox_token: &str,
-) -> Result<XboxLiveTokenResponse, Box<dyn std::error::Error>> {
+) -> Result<XboxLiveTokenResponse, String> {
     let body = serde_json::json!({
         "Properties": {
             "SandboxId": "RETAIL",
@@ -264,72 +324,70 @@ async fn get_xsts_token(
         "RelyingParty": "rp://api.minecraftservices.com/",
         "TokenType": "JWT"
     });
-    let resp = client
-        .post("https://xsts.auth.xboxlive.com/xsts/authorize")
-        .json(&body)
-        .send()
-        .await?;
-    let status = resp.status();
-    let text = resp.text().await?;
-    if !status.is_success() {
-        // 尝试解析 XSTS 错误响应
-        let xsts_err_msg = if let Ok(err_resp) = serde_json::from_str::<XSTSErrorResponse>(&text) {
-            match err_resp.x_err {
-                Some(2148916233) => {
-                    "该 Microsoft 账户未关联 Xbox 账户，请先前往 xbox.com 注册".to_string()
-                }
-                Some(2148916235) => "您所在地区不支持 Xbox Live，无法使用正版登录".to_string(),
-                Some(2148916236) | Some(2148916237) => "需要在 Xbox 官网完成成人验证".to_string(),
-                Some(2148916238) => "未成年账户需要家长在 Microsoft Family 中审批".to_string(),
-                Some(code) => format!("XSTS 错误码: {}", code),
-                None => err_resp
-                    .message
-                    .unwrap_or_else(|| format!("HTTP {}: {}", status, text)),
-            }
-        } else if text.is_empty() {
-            format!(
-                "XSTS 服务器返回 HTTP {} 且响应体为空，可能是账户权限问题",
-                status
-            )
-        } else {
-            format!("HTTP {}: {}", status, text)
-        };
-        return Err(xsts_err_msg.into());
-    }
-    let response = serde_json::from_str::<XboxLiveTokenResponse>(&text)
-        .map_err(|e| format!("解析 XSTS 响应失败: {} (响应: {})", e, text))?;
-    Ok(response)
+    retry_on_transient("XSTS 认证", || async {
+        let resp = client
+            .post("https://xsts.auth.xboxlive.com/xsts/authorize")
+            .json(&body)
+            .send()
+            .await
+            .map_err(map_reqwest_err)?;
+        let status = resp.status();
+        let text = resp.text().await.map_err(map_reqwest_err)?;
+        if is_transient_http_status(status) {
+            return Err(format!("HTTP {}", status.as_u16()));
+        }
+        if !status.is_success() {
+            return Err(map_xsts_http_error(status, &text));
+        }
+        serde_json::from_str::<XboxLiveTokenResponse>(&text)
+            .map_err(|e| format!("解析 XSTS 响应失败: {} (响应: {})", e, text))
+    })
+    .await
 }
 
 async fn authenticate_with_minecraft(
     client: &Client,
     user_hash: &str,
     xsts_token: &str,
-) -> Result<MinecraftLoginResponse, Box<dyn std::error::Error>> {
+) -> Result<MinecraftLoginResponse, String> {
     let body = serde_json::json!({
         "identityToken": format!("XBL3.0 x={};{}", user_hash, xsts_token)
     });
-    let response = client
-        .post("https://api.minecraftservices.com/authentication/login_with_xbox")
-        .json(&body)
-        .send()
-        .await?
-        .json::<MinecraftLoginResponse>()
-        .await?;
-    Ok(response)
+    retry_on_transient("Minecraft 认证", || async {
+        let response = client
+            .post("https://api.minecraftservices.com/authentication/login_with_xbox")
+            .json(&body)
+            .send()
+            .await
+            .map_err(map_reqwest_err)?;
+        let status = response.status();
+        if is_transient_http_status(status) {
+            return Err(format!("HTTP {}", status.as_u16()));
+        }
+        if !status.is_success() {
+            let text = response.text().await.unwrap_or_default();
+            return Err(format!("HTTP {}: {}", status, text));
+        }
+        response
+            .json::<MinecraftLoginResponse>()
+            .await
+            .map_err(map_reqwest_err)
+    })
+    .await
 }
 
 async fn check_mc_purchase(
     client: &Client,
     access_token: &str,
-) -> Result<String, Box<dyn std::error::Error>> {
+) -> Result<String, String> {
     let response = client
         .get("https://api.minecraftservices.com/entitlements/mcstore")
         .bearer_auth(access_token)
         .send()
-        .await?;
+        .await
+        .map_err(map_reqwest_err)?;
     if response.status().is_success() {
-        let json: serde_json::Value = response.json().await?;
+        let json: serde_json::Value = response.json().await.map_err(map_reqwest_err)?;
         let items = json.get("items").and_then(|v| v.as_array());
         if items.is_none() || items.unwrap().is_empty() {
             return Ok("您还没有购买mc，请购买后再登录游玩".to_string());
@@ -341,35 +399,67 @@ async fn check_mc_purchase(
 async fn get_minecraft_profile(
     client: &Client,
     access_token: &str,
-) -> Result<MinecraftProfileResponse, Box<dyn std::error::Error>> {
-    let response = client
-        .get("https://api.minecraftservices.com/minecraft/profile")
-        .bearer_auth(access_token)
-        .send()
-        .await?
-        .json::<MinecraftProfileResponse>()
-        .await?;
-    Ok(response)
+) -> Result<MinecraftProfileResponse, String> {
+    retry_on_transient("获取 Minecraft 个人资料", || async {
+        let response = client
+            .get("https://api.minecraftservices.com/minecraft/profile")
+            .bearer_auth(access_token)
+            .send()
+            .await
+            .map_err(map_reqwest_err)?;
+        let status = response.status();
+        if is_transient_http_status(status) {
+            return Err(format!("HTTP {}", status.as_u16()));
+        }
+        if !status.is_success() {
+            let text = response.text().await.unwrap_or_default();
+            return Err(format!("HTTP {}: {}", status, text));
+        }
+        response
+            .json::<MinecraftProfileResponse>()
+            .await
+            .map_err(map_reqwest_err)
+    })
+    .await
 }
 
 async fn refresh_access_token(
     client: &Client,
     client_id: &str,
     refresh_token: &str,
-) -> Result<TokenResponse, Box<dyn std::error::Error>> {
+) -> Result<TokenResponse, String> {
     let params = [
         ("grant_type", "refresh_token"),
         ("client_id", client_id),
         ("refresh_token", refresh_token),
     ];
-    let response = client
-        .post("https://login.microsoftonline.com/consumers/oauth2/v2.0/token")
-        .form(&params)
-        .send()
-        .await?
-        .json::<TokenResponse>()
-        .await?;
-    Ok(response)
+    retry_on_transient("Microsoft Token 刷新", || async {
+        let response = client
+            .post("https://login.microsoftonline.com/consumers/oauth2/v2.0/token")
+            .form(&params)
+            .send()
+            .await
+            .map_err(map_reqwest_err)?;
+        let status = response.status();
+        let text = response.text().await.unwrap_or_default();
+        if is_transient_http_status(status) {
+            return Err(format!("HTTP {}", status.as_u16()));
+        }
+        if !status.is_success() {
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) {
+                if let Some(err) = v.get("error").and_then(|e| e.as_str()) {
+                    let desc = v
+                        .get("error_description")
+                        .and_then(|d| d.as_str())
+                        .unwrap_or("");
+                    return Err(format!("OAuth {}: {}", err, desc));
+                }
+            }
+            return Err(format!("HTTP {}: {}", status, text));
+        }
+        serde_json::from_str::<TokenResponse>(&text).map_err(map_reqwest_err)
+    })
+    .await
 }
 
 // 初始化数据库
@@ -402,89 +492,6 @@ fn save_account_info(
         "INSERT OR REPLACE INTO accounts (uuid, username, refresh_token, access_token, time) VALUES ('{}', '{}', '{}', '{}', '{}')",
         uuid, username, refresh_token, access_token, current_time
     ))?;
-    Ok(())
-}
-async fn check_account_time(
-    client: &Client,
-    connection: &Connection,
-    client_id: &str,
-    username: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let query = format!(
-        "SELECT uuid, refresh_token, access_token, time FROM accounts WHERE username = '{}'",
-        username
-    );
-    let mut stmt = connection.prepare(query)?;
-
-    if let State::Row = stmt.next()? {
-        let uuid: String = stmt.read::<String, _>(0)?;
-        let refresh_token: String = stmt.read::<String, _>(1)?;
-        let _access_token: String = stmt.read::<String, _>(2)?;
-        let last_login_time: i64 = stmt.read::<i64, _>(3)?;
-
-        let current_time = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)?
-            .as_secs();
-
-        if current_time - last_login_time as u64 > 29 * 24 * 3600 {
-            // Token is older than 29 days, re-login using device code flow
-            println!("Token is older than 29 days, initiating device code flow...");
-
-            let device_code_response = get_device_code(client, client_id).await?;
-            println!(
-                "Please visit {} and enter code: {}",
-                device_code_response.verification_uri, device_code_response.user_code
-            );
-
-            let token_response = poll_for_token(
-                client,
-                client_id,
-                &device_code_response.device_code,
-                device_code_response.interval,
-            )
-            .await?;
-
-            let xbox_token_response = authenticate_with_xbox_live(client, &token_response.access_token).await?;
-            let xsts_token_response = get_xsts_token(client, &xbox_token_response.token).await?;
-            let minecraft_login_response = authenticate_with_minecraft(
-                client,
-                &xbox_token_response.display_claims.xui[0].uhs,
-                &xsts_token_response.token,
-            )
-            .await?;
-
-            save_account_info(
-                connection,
-                username,
-                &uuid,
-                &token_response.refresh_token,
-                &minecraft_login_response.access_token,
-            )?;
-
-            println!("Device code flow completed. Tokens updated.");
-        } else if current_time - last_login_time as u64 > 11 * 3600 {
-            // Token is older than 11 hours, refresh it
-            println!("Token is older than 11 hours, refreshing access token...");
-
-            let refreshed_token_response =
-                refresh_access_token(client, client_id, &refresh_token).await?;
-
-            save_account_info(
-                connection,
-                username,
-                &uuid,
-                &refreshed_token_response.refresh_token,
-                &refreshed_token_response.access_token,
-            )?;
-
-            println!("Access token refreshed.");
-        } else {
-            println!("Token is still valid.");
-        }
-    } else {
-        println!("No account found with username: {}", username);
-    }
-
     Ok(())
 }
 async fn download_player_skin(
@@ -1297,98 +1304,22 @@ pub fn delete_cached_skin(uuid: String) -> Result<usize, String> {
     }
     Ok(deleted_count)
 }
-async fn add_new_account(
-    client: &Client,
-    connection: &Connection,
-    client_id: &str,
-) -> Result<(String, String), Box<dyn std::error::Error>> {
-    println!("开始新账户登录流程...");
-
-    // 1. 获取设备代码
-    let device_code_response = get_device_code(client, client_id).await?;
-    println!(
-        "请访问 {} 并输入代码: {}",
-        device_code_response.verification_uri, device_code_response.user_code
-    );
-
-    // 记录开始时间
-    let start_time = Instant::now();
-    let timeout = Duration::from_secs(300); // 5 分钟超时
-
-    loop {
-        // 检查是否超时
-        if start_time.elapsed() >= timeout {
-            return Err("登录超时".into());
-        }
-
-        // 2. 轮询获取token
-        let token_response = poll_for_token(
-            client,
-            client_id,
-            &device_code_response.device_code,
-            device_code_response.interval,
-        )
-        .await;
-
-        match token_response {
-            Ok(token) => {
-                // 3. Xbox Live认证
-                let xbox_token_response =
-                    authenticate_with_xbox_live(client, &token.access_token).await?;
-
-                // 4. 获取XSTS token
-                let xsts_token_response = get_xsts_token(client, &xbox_token_response.token).await?;
-
-                // 5. Minecraft认证
-                let minecraft_login_response = authenticate_with_minecraft(
-                    client,
-                    &xbox_token_response.display_claims.xui[0].uhs,
-                    &xsts_token_response.token,
-                )
-                .await?;
-
-                // 6. 检查是否拥有Minecraft
-                let purchase_status =
-                    check_mc_purchase(client, &minecraft_login_response.access_token).await?;
-                if purchase_status.contains("还没有购买") {
-                    return Err(purchase_status.into());
-                }
-
-                // 7. 获取Minecraft个人资料
-                let profile =
-                    get_minecraft_profile(client, &minecraft_login_response.access_token).await?;
-
-                // 8. 下载玩家皮肤
-                download_player_skin(client, &profile.id).await?;
-
-                // 9. 保存账户信息到数据库
-                save_account_info(
-                    connection,
-                    &profile.name,
-                    &profile.id,
-                    &token.refresh_token,
-                    &minecraft_login_response.access_token,
-                )?;
-
-                // 返回用户名和UUID
-                return Ok((profile.name, profile.id));
-            }
-            Err(_) => {
-                // 如果未成功获取token，继续等待
-                sleep(Duration::from_secs(device_code_response.interval)).await;
-            }
-        }
-    }
-}
-
 // ======================== Tauri Commands ========================
 
-/// 构造带连接超时和读取超时的 HTTP 客户端，避免断网时无限卡死
+/// 构造带连接超时和读取超时的 HTTP 客户端，避免断网时无限卡死（皮肤/披风等非登录链）
 fn build_http_client() -> Result<Client, String> {
     crate::http_client::client_builder_with_timeout(Duration::from_secs(30))
         .connect_timeout(Duration::from_secs(10))
         .build()
         .map_err(|e| format!("无法创建 HTTP 客户端: {}", e))
+}
+
+/// 登录 / 静默刷新专用：更宽松超时，须与前端 `MS_LAUNCH_*_BUDGET_MS` 对齐
+fn build_auth_http_client() -> Result<Client, String> {
+    crate::http_client::client_builder_with_timeout(Duration::from_secs(45))
+        .connect_timeout(Duration::from_secs(20))
+        .build()
+        .map_err(|e| format!("无法创建认证 HTTP 客户端: {}", e))
 }
 
 /// 判断是否为网络/连通性类错误（超时、DNS、连接被拒等）
@@ -1443,7 +1374,7 @@ pub async fn ms_request_device_code() -> Result<DeviceCodeInfo, String> {
     eprintln!("[正版检测] 步骤4：⟡ 进入强制重新登录流程！请求设备授权码...");
     // 重置取消标志（新的一次登录流程开始）
     MS_LOGIN_CANCELLED.store(false, Ordering::SeqCst);
-    let client = build_http_client()?;
+    let client = build_auth_http_client()?;
     let resp = get_device_code(&client, CLIENT_ID)
         .await
         .map_err(|e| friendly_net_err(e))?;
@@ -1466,10 +1397,11 @@ pub async fn ms_request_device_code() -> Result<DeviceCodeInfo, String> {
 #[tauri::command]
 pub async fn ms_poll_and_login(device_code: String, interval: u64) -> Result<AccountInfo, String> {
     eprintln!("[正版检测] 步骤4：开始轮询微软登录授权（间隔={}秒，超时=300秒）", interval);
-    let client = build_http_client()?;
+    let client = build_auth_http_client()?;
     let start_time = Instant::now();
     let timeout = Duration::from_secs(300); // 5 分钟超时
     let mut poll_count: u32 = 0;
+    let mut poll_interval = interval.max(1);
 
     loop {
         // 检查用户是否已取消登录
@@ -1483,7 +1415,7 @@ pub async fn ms_poll_and_login(device_code: String, interval: u64) -> Result<Acc
             return Err("登录超时，请重试".to_string());
         }
 
-        sleep(Duration::from_secs(interval)).await;
+        sleep(Duration::from_secs(poll_interval)).await;
 
         // sleep 之后再次检查取消状态
         if MS_LOGIN_CANCELLED.load(Ordering::SeqCst) {
@@ -1493,31 +1425,89 @@ pub async fn ms_poll_and_login(device_code: String, interval: u64) -> Result<Acc
 
         poll_count += 1;
         if poll_count % 10 == 1 {
-            eprintln!("[正版检测] 步骤4：轮询中... 第{}次请求（已等待约{}秒）", poll_count, poll_count * interval as u32);
+            eprintln!(
+                "[正版检测] 步骤4：轮询中... 第{}次请求（间隔={}秒）",
+                poll_count, poll_interval
+            );
         }
 
-        // 单次轮询尝试
+        // 单次轮询尝试（暂态网络 / 5xx 短重试）
         let params = [
             ("grant_type", "urn:ietf:params:oauth:grant-type:device_code"),
             ("client_id", CLIENT_ID),
             ("device_code", device_code.as_str()),
         ];
-        let response = client
-            .post("https://login.microsoftonline.com/consumers/oauth2/v2.0/token")
-            .form(&params)
-            .send()
-            .await
-            .map_err(|e| friendly_net_err(e))?;
+        let poll_result = retry_on_transient("设备码 Token 轮询", || async {
+            let response = client
+                .post("https://login.microsoftonline.com/consumers/oauth2/v2.0/token")
+                .form(&params)
+                .send()
+                .await
+                .map_err(map_reqwest_err)?;
+            let status = response.status();
+            let text = response.text().await.unwrap_or_default();
+            if is_transient_http_status(status) {
+                return Err(format!("HTTP {}", status.as_u16()));
+            }
+            Ok((status, text))
+        })
+        .await;
 
-        if !response.status().is_success() {
-            continue; // 用户尚未授权，继续轮询
+        let (status, text) = match poll_result {
+            Ok(v) => v,
+            Err(msg) => {
+                if is_retryable_auth_error(&msg) {
+                    eprintln!("[正版检测] 步骤4：轮询暂态失败，继续等待: {}", msg);
+                    continue;
+                }
+                return Err(friendly_net_err(msg));
+            }
+        };
+
+        if !status.is_success() {
+            let oauth_error = serde_json::from_str::<serde_json::Value>(&text)
+                .ok()
+                .and_then(|v| {
+                    v.get("error")
+                        .and_then(|e| e.as_str())
+                        .map(|s| s.to_string())
+                });
+            match oauth_error.as_deref() {
+                Some("authorization_pending") | None => {
+                    // 尚未授权，或无法解析时按 pending 继续
+                    continue;
+                }
+                Some("slow_down") => {
+                    poll_interval = poll_interval.saturating_add(5);
+                    eprintln!(
+                        "[正版检测] 步骤4：收到 slow_down，轮询间隔调整为 {} 秒",
+                        poll_interval
+                    );
+                    continue;
+                }
+                Some("expired_token") => {
+                    return Err("设备码已过期，请重新获取验证码".to_string());
+                }
+                Some("authorization_declined") => {
+                    return Err("用户拒绝了微软授权".to_string());
+                }
+                Some(other) => {
+                    let desc = serde_json::from_str::<serde_json::Value>(&text)
+                        .ok()
+                        .and_then(|v| {
+                            v.get("error_description")
+                                .and_then(|d| d.as_str())
+                                .map(|s| s.to_string())
+                        })
+                        .unwrap_or_default();
+                    return Err(format!("微软授权失败（{}）: {}", other, desc));
+                }
+            }
         }
 
         eprintln!("[正版检测] 步骤4：✓ 用户已授权！Microsoft Token 获取成功（第{}次轮询）", poll_count);
 
-        let token: TokenResponse = response
-            .json()
-            .await
+        let token: TokenResponse = serde_json::from_str(&text)
             .map_err(|e| format!("解析 Token 失败: {}", e))?;
 
         // Xbox Live 认证
@@ -1526,13 +1516,8 @@ pub async fn ms_poll_and_login(device_code: String, interval: u64) -> Result<Acc
             .await
             .map_err(|e| {
                 let msg = e.to_string();
-                if msg.contains("connect")
-                    || msg.contains("timed out")
-                    || msg.contains("timeout")
-                    || msg.contains("dns")
-                    || msg.contains("resolve")
-                {
-                    format!("网络连接失败，请检查您的网络后重试（{}）", msg)
+                if is_network_error_message(&msg) || is_retryable_auth_error(&msg) {
+                    friendly_net_err(msg)
                 } else {
                     format!("Xbox Live 认证失败: {}", msg)
                 }
@@ -2013,7 +1998,7 @@ pub async fn ms_silent_refresh_account(uuid: String) -> Result<AccountInfo, Stri
     ensure_ms_auth_not_cancelled(cancel_gen)?;
 
     // ── 第二步：HTTP / await 部分（作用域中不再保留任何 db 相关对象）──
-    let client = build_http_client().map_err(|e| e.to_string())?;
+    let client = build_auth_http_client().map_err(|e| e.to_string())?;
 
     eprintln!("[正版检测] 步骤3：正在请求 Microsoft Token 刷新接口...");
     // 2) 调用 Microsoft token endpoint 刷新 access_token

@@ -53,7 +53,7 @@
     "loadingWorld": "Loading world",
     "ready": "Ready",
     "panel": {
-      "stopPreparing": "Stop preparing",
+      "stopPreparing": "Stop sign-in",
       "freeingSystemMemory": "Freeing system memory...",
       "freedAboutValueMbCleanAgain": "Freed about {value} MB · Clean again",
       "freeMemoryClearSystemCache": "Free memory (clear system cache)",
@@ -73,14 +73,14 @@
     },
     "status": {
       "ready": "Ready",
-      "preparing": "Preparing",
+      "preparing": "Signing in",
       "launching": "Launching",
       "running": "Running",
       "stopped": "Stopped",
       "error": "Error"
     },
     "progress": {
-      "preparing": "Preparing...",
+      "preparing": "Signing in...",
       "analyzingLaunchLogs": "Analyzing launch logs..."
     },
     "report": {
@@ -286,7 +286,6 @@
     "launchNow": "Launch now",
     "welcomeBack": "Welcome back, ",
     "adventurer": "Adventurer",
-    "manageYourGameVersionsResourcesAndLaunchStatusHere": "Manage your game versions, resources, and launch status here.",
     "accountsAndCharacters": "Accounts and characters",
     "chooseAPlayerAndManageSkinsAndCapes": "Choose a player and manage skins and capes",
     "notSignedIn": "Not signed in",

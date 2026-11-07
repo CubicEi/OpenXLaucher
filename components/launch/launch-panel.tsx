@@ -200,7 +200,9 @@ export function LaunchPanel() {
                 {isLaunching && !hasRunningInstances ? (
                   <>
                     <Loader2 className="size-4 animate-spin" />
-                    {status === "preparing" ? t("launch.panel.stopPreparing") : "Launching"}
+                    {status === "preparing"
+                      ? t("launch.panel.stopPreparing")
+                      : t("launch.status.launching")}
                   </>
                 ) : hasRunningInstances || isRunning ? (
                   <>

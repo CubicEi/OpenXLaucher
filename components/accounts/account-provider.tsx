@@ -23,7 +23,12 @@ import {
   type DeviceCodeInfo,
 } from "@/lib/auth";
 import { readMigratedLocalStorage } from "@/lib/storage-migrate";
+import {
+  MS_LAUNCH_DEVICE_CODE_BUDGET_MS,
+  MS_LAUNCH_SILENT_REFRESH_BUDGET_MS,
+} from "@/lib/auth-timeouts";
 import { LoginDialog } from "@/components/accounts/login-dialog";
+import { useSettings } from "@/components/settings/settings-provider";
 
 type LoginState = "idle" | "loading" | "error";
 
@@ -132,6 +137,8 @@ export type MicrosoftLaunchPrepResult =
   | { ok: false; reason: "cancelled" | "network" | "credentials" };
 
 export function AccountProvider({ children }: { children: React.ReactNode }) {
+  const { settings } = useSettings();
+  const useSystemProxy = settings.general.useSystemProxy;
   const [profiles, setProfiles] = useState<Account[]>([]);
   const [selectedProfile, setSelectedProfile] = useState<Account | null>(null);
   const [loginState, setLoginState] = useState<LoginState>("idle");
@@ -218,9 +225,19 @@ export function AccountProvider({ children }: { children: React.ReactNode }) {
         setMicrosoftLaunchFallbackToken(fallback);
         setMicrosoftLaunchTokenError(tokenErrorMsg || null);
 
-        const forcedLoginIntro = (name: string, err: string) =>
-          `检测到你的微软正版账号「${name}」无法获取 Minecraft 登录令牌（${err || "凭据已失效"}）。` +
-          `请完成下方的微软正版登录后再启动游戏；也可先关闭此窗口，或使用旧令牌尝试启动（旧令牌可能无法加入正版验证服务器）。`;
+        const proxyHint = useSystemProxy
+          ? "若持续失败，可在设置中调整或关闭「使用系统代理」后重试。"
+          : "";
+        const forcedLoginIntro = (name: string, err: string) => {
+          const reason = isMicrosoftTokenTransientError(err)
+            ? `可能是网络波动（${err || "连接异常"}）`
+            : `无法获取 Minecraft 登录令牌（${err || "凭据已失效"}）`;
+          return (
+            `检测到你的微软正版账号「${name}」${reason}。` +
+            `请完成下方的微软正版登录后再启动游戏；也可先关闭此窗口，或使用旧令牌尝试启动（旧令牌可能无法加入正版验证服务器）。` +
+            (proxyHint ? ` ${proxyHint}` : "")
+          );
+        };
 
         void (async () => {
           try {
@@ -232,7 +249,11 @@ export function AccountProvider({ children }: { children: React.ReactNode }) {
             // 先请求验证码：网络失败则不弹出「重新登录正版」窗口
             let codeInfo: DeviceCodeInfo | null = null;
             try {
-              codeInfo = await withTimeout(msRequestDeviceCode(), 10000, "DEVICE_CODE_REQUEST");
+              codeInfo = await withTimeout(
+                msRequestDeviceCode(),
+                MS_LAUNCH_DEVICE_CODE_BUDGET_MS,
+                "DEVICE_CODE_REQUEST"
+              );
             } catch (reqErr) {
               const msg = reqErr instanceof Error ? reqErr.message : String(reqErr);
               if (msLoginVersionRef.current !== currentVersion) {
@@ -247,7 +268,7 @@ export function AccountProvider({ children }: { children: React.ReactNode }) {
               setForcedMicrosoftLoginMessage(forcedLoginIntro(pName, tokenErrorMsg));
               setLoginError(
                 isMicrosoftTokenTransientError(msg)
-                  ? `获取验证码失败（${msg}），请检查网络后重试，或尝试使用旧令牌登录。`
+                  ? `获取验证码失败（${msg}），请检查网络后重试，或尝试使用旧令牌登录。${proxyHint ? ` ${proxyHint}` : ""}`
                   : `获取验证码失败（${msg}），请稍后重试。`
               );
               setLoginState("error");
@@ -332,7 +353,7 @@ export function AccountProvider({ children }: { children: React.ReactNode }) {
         })();
       });
     },
-    []
+    [useSystemProxy]
   );
 
   const prepareMicrosoftAccountForLaunch = useCallback(
@@ -347,33 +368,61 @@ export function AccountProvider({ children }: { children: React.ReactNode }) {
       const cancelEpoch = msLoginVersionRef.current;
       const wasCancelled = () => msLoginVersionRef.current !== cancelEpoch;
 
-      let tokenErrorMsg = "";
-      try {
-        const refreshed = await withTimeout(msSilentRefreshAccount(puuid), 20000, "MC_TOKEN_REFRESH");
-        if (wasCancelled()) {
-          return { ok: false, reason: "cancelled" };
-        }
-        if (refreshed?.access_token) {
-          await applyMicrosoftRefresh(profile.id, puuid, profile.name, refreshed);
+      const trySilentRefresh = async (): Promise<
+        | { ok: true; accessToken: string }
+        | { ok: false; error: string }
+      > => {
+        try {
+          const refreshed = await withTimeout(
+            msSilentRefreshAccount(puuid),
+            MS_LAUNCH_SILENT_REFRESH_BUDGET_MS,
+            "MC_TOKEN_REFRESH"
+          );
           if (wasCancelled()) {
-            return { ok: false, reason: "cancelled" };
+            return { ok: false, error: "MS_AUTH_CANCELLED" };
           }
-          return { ok: true, accessToken: refreshed.access_token };
+          if (refreshed?.access_token) {
+            await applyMicrosoftRefresh(profile.id, puuid, profile.name, refreshed);
+            if (wasCancelled()) {
+              return { ok: false, error: "MS_AUTH_CANCELLED" };
+            }
+            return { ok: true, accessToken: refreshed.access_token };
+          }
+          return { ok: false, error: "MC_TOKEN_REFRESH_EMPTY" };
+        } catch (e: unknown) {
+          if (wasCancelled()) {
+            return { ok: false, error: "MS_AUTH_CANCELLED" };
+          }
+          return { ok: false, error: e instanceof Error ? e.message : String(e) };
         }
-        tokenErrorMsg = "MC_TOKEN_REFRESH_EMPTY";
-      } catch (e: unknown) {
-        if (wasCancelled()) {
-          return { ok: false, reason: "cancelled" };
-        }
-        tokenErrorMsg = e instanceof Error ? e.message : String(e);
+      };
+
+      let first = await trySilentRefresh();
+      if (first.ok) {
+        return { ok: true, accessToken: first.accessToken };
       }
 
+      let tokenErrorMsg = first.error;
       if (isMicrosoftAuthCancelled(tokenErrorMsg)) {
         return { ok: false, reason: "cancelled" };
       }
-
       if (isMicrosoftOfficialAuthRejection(tokenErrorMsg)) {
         return { ok: false, reason: "credentials" };
+      }
+
+      // 暂态失败时整链再试一次，再失败才强制设备码
+      if (isMicrosoftTokenTransientError(tokenErrorMsg) || tokenErrorMsg.includes("MC_TOKEN_REFRESH")) {
+        const second = await trySilentRefresh();
+        if (second.ok) {
+          return { ok: true, accessToken: second.accessToken };
+        }
+        tokenErrorMsg = second.error;
+        if (isMicrosoftAuthCancelled(tokenErrorMsg)) {
+          return { ok: false, reason: "cancelled" };
+        }
+        if (isMicrosoftOfficialAuthRejection(tokenErrorMsg)) {
+          return { ok: false, reason: "credentials" };
+        }
       }
 
       if (wasCancelled()) {

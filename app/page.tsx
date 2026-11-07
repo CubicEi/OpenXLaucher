@@ -128,9 +128,6 @@ export default function Home() {
               <h1 className="mt-1 text-xl font-semibold tracking-tight">
                 {t("home.welcomeBack")}{selectedProfile?.name ?? t("home.adventurer")}
               </h1>
-              <p className="mt-1 text-sm text-muted-foreground">
-                {t("home.manageYourGameVersionsResourcesAndLaunchStatusHere")}
-              </p>
             </div>
             <LaunchStatusBadge status={status} className="mt-1" />
           </header>

@@ -579,7 +579,7 @@ fn read_launcher_json_root() -> serde_json::Value {
     }
     fs::read_to_string(&path)
         .ok()
-        .and_then(|t| serde_json::from_str(&t).ok())
+        .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
         .filter(|v| v.is_object())
         .unwrap_or_else(|| serde_json::json!({}))
 }

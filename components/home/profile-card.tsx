@@ -8,6 +8,7 @@ import { Loader2, Play, Users, UserPlus, Square } from "lucide-react";
 import type { Account } from "@/types";
 import { useLaunchContext } from "@/components/launch/launch-provider";
 import { VersionSelectorDialog } from "@/components/launch/version-selector-dialog";
+import { useI18n } from "@/components/i18n/use-i18n";
 type ProfileCardProps = {
   selectedProfile: Account | null;
   onOpenProfileSelector: () => void;
@@ -17,6 +18,7 @@ export function ProfileCard({
   selectedProfile,
   onOpenProfileSelector,
 }: ProfileCardProps) {
+  const { t } = useI18n();
   const { config, status, launchGame, cancelLaunch, errorMessage } = useLaunchContext();
   const isLaunching = status === "preparing" || status === "launching";
   const isRunning = status === "running";
@@ -95,7 +97,9 @@ export function ProfileCard({
               {isLaunching ? (
                 <>
                   <Loader2 className="size-4 animate-spin" />
-                  {status === "preparing" ? "停止准备" : "停止启动"}
+                  {status === "preparing"
+                    ? t("launch.panel.stopPreparing")
+                    : t("home.cancelLaunch")}
                 </>
               ) : isRunning ? (
                 <>

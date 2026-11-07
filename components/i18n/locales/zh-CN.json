@@ -53,7 +53,7 @@
     "loadingWorld": "加载世界",
     "ready": "准备完成",
     "panel": {
-      "stopPreparing": "停止准备",
+      "stopPreparing": "停止登录",
       "freeingSystemMemory": "正在释放系统内存...",
       "freedAboutValueMbCleanAgain": "已释放约 {value} MB 内存 · 再次清理",
       "freeMemoryClearSystemCache": "一键清理内存（释放系统缓存）",
@@ -73,14 +73,14 @@
     },
     "status": {
       "ready": "就绪",
-      "preparing": "准备中",
+      "preparing": "登录中",
       "launching": "启动中",
       "running": "运行中",
       "stopped": "已停止",
       "error": "错误"
     },
     "progress": {
-      "preparing": "准备中...",
+      "preparing": "登录中...",
       "analyzingLaunchLogs": "正在分析启动日志..."
     },
     "report": {
@@ -286,7 +286,6 @@
     "launchNow": "立即启动",
     "welcomeBack": "欢迎回来，",
     "adventurer": "冒险者",
-    "manageYourGameVersionsResourcesAndLaunchStatusHere": "在这里管理你的游戏版本、资源与启动状态。",
     "accountsAndCharacters": "账户与角色",
     "chooseAPlayerAndManageSkinsAndCapes": "选择玩家并管理皮肤、披风",
     "notSignedIn": "尚未登录",
