@@ -13,6 +13,7 @@ function readLitematicFromNBTData(nbtdata) {
 
   var litematic = new Litematic();
   litematic.regions = new Array();
+  litematic.regionNames = new Array();
 
   var regions = nbtdata.value.Regions.value;
   for (let regionName in regions) {
@@ -24,19 +25,38 @@ function readLitematicFromNBTData(nbtdata) {
     // Find the minimum number of bits needed to express all blocks
     nbits = Math.ceil(Math.log2(blockPalette.length));
 
-    width = region.Size.value.x.value; 
-    height = region.Size.value.y.value;
-    depth = region.Size.value.z.value; 
+    // Litematica Size may be negative (selection direction). Volume uses abs();
+    // normalize Position to the min corner so structure bounds stay positive.
+    var sizeX = region.Size.value.x.value;
+    var sizeY = region.Size.value.y.value;
+    var sizeZ = region.Size.value.z.value;
+    width = Math.abs(sizeX);
+    height = Math.abs(sizeY);
+    depth = Math.abs(sizeZ);
 
     var blockData = region.BlockStates.value;
 
-    var blocks = processNBTRegionData(blockData, nbits, width, height, depth);
+    var blocks = processNBTRegionData(blockData, nbits, sizeX, sizeY, sizeZ);
 
     var litematicRegion = new LitematicRegion(width, height, depth);
     litematicRegion.blocks = blocks;
     litematicRegion.blockPalette = blockPalette;
+    litematicRegion.name = regionName;
+    var px = 0, py = 0, pz = 0;
+    if (region.Position && region.Position.value) {
+      var pos = region.Position.value;
+      px = pos.x ? pos.x.value : 0;
+      py = pos.y ? pos.y.value : 0;
+      pz = pos.z ? pos.z.value : 0;
+    }
+    litematicRegion.position = {
+      x: Math.min(px, px + sizeX),
+      y: Math.min(py, py + sizeY),
+      z: Math.min(pz, pz + sizeZ),
+    };
 
     litematic.regions.push(litematicRegion);
+    litematic.regionNames.push(regionName);
   }
 
   return litematic;

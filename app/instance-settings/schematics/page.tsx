@@ -9,8 +9,8 @@ import ResourcePanel from "@/components/resource-panel";
 import { useInstancePath } from "@/hooks/use-instance-path";
 import { useResourceManager } from "@/hooks/use-resource-manager";
 import { fadeSlideUp } from "@/lib/motion";
-import { invoke } from "@tauri-apps/api/core";
 import { FileItem } from "@/components/resource-panel";
+import { openSchematicViewer } from "@/lib/open-schematic-viewer";
 
 export default function SchematicsPage() {
   const router = useRouter();
@@ -18,36 +18,34 @@ export default function SchematicsPage() {
 
   const viewerExtensions = ["schem", "schematic", "litematic", "nbt"];
 
-  const handleOpenViewer = useCallback(async (file: FileItem, side: "left" | "right") => {
-    if (!file) return;
-    try {
-      let absPath: string | null = null;
-      if (side === "left" && instanceDir) {
-        absPath = `${instanceDir}/schematics/${file.name}`;
-      } else if (side === "right") {
-        if (typeof (file as any).path === "string") {
-          absPath = (file as any).path;
-        } else if (file.name) {
-          const cacheRoot = await invoke<string | null>("get_mod_cache_dir_cmd", {
-            kind: "world",
-            mcVersion: selectedInstance?.minecraft_version ?? "",
-            modLoader: "",
-          }).catch(() => null);
-          if (cacheRoot) {
-            absPath = `${cacheRoot.replace(/\\/g, "/")}/${file.name}`;
-          }
-        }
-      }
-      if (!absPath) return;
+  const schematicSubtitle = useCallback((file: FileItem) => {
+    const dot = file.name.lastIndexOf(".");
+    const ext = dot >= 0 ? file.name.slice(dot + 1).toLowerCase() : "—";
+    const sizeKb = file.size > 0 ? `${(file.size / 1024).toFixed(1)} KB` : "";
+    return [`.${ext}`, sizeKb].filter(Boolean).join(" · ");
+  }, []);
 
-      const b64 = await invoke<string>("read_file_base64", { path: absPath });
-      const key = `schematic_viewer:${Date.now()}`;
-      sessionStorage.setItem(key, JSON.stringify({ name: file.name, b64 }));
-      router.push(`/game-settings/schematics/viewer?k=${encodeURIComponent(key)}`);
-    } catch (e) {
-      console.error("预览打开失败", e);
-    }
-  }, [instanceDir, router, selectedInstance]);
+  const handleOpenViewer = useCallback(
+    async (
+      file: FileItem,
+      side: "left" | "right",
+      context?: { instanceRelativePath?: string[] },
+    ) => {
+      if (!file || file.isDir) return;
+      try {
+        await openSchematicViewer(router, file, side, {
+          instanceDir,
+          instanceSubdir: "schematics",
+          instanceRelativePath: context?.instanceRelativePath,
+          minecraftVersion: selectedInstance?.minecraft_version,
+          source: "instance-settings",
+        });
+      } catch (e) {
+        console.error("预览打开失败", e);
+      }
+    },
+    [instanceDir, router, selectedInstance],
+  );
 
   const {
     filteredInstanceFiles,
@@ -155,6 +153,8 @@ export default function SchematicsPage() {
       onRefresh={refresh}
       onOpenViewer={handleOpenViewer}
       viewerExtensions={viewerExtensions}
+      getFileSubtitle={schematicSubtitle}
+      simplifyName={(name) => name.replace(/\.(schem|schematic|litematic|nbt)$/i, "")}
     />
   );
 }
