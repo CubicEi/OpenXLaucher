@@ -21,10 +21,19 @@ declare global {
     parseSchematicBufferToLitematic: (nbtdata: any, fileName: string) => { litematic: any; format: string };
     getMaterialList: (litematic: any) => Record<string, number>;
     structureFromLitematic: (litematic: any, y_min?: number, y_max?: number, regionIndex?: number) => any;
+    structureFromLitematicAsync: (
+      litematic: any,
+      y_min?: number,
+      y_max?: number,
+      regionIndex?: number,
+      onProgress?: (p: number) => void,
+    ) => Promise<any>;
     setStructure: (structure: any, reset_view?: boolean) => void;
+    setStructureAsync: (structure: any, reset_view?: boolean) => Promise<void>;
     render: () => void;
     createRenderCanvas: (canvas: HTMLCanvasElement) => void;
     destroyRenderCanvas: () => void;
+    syncRendererViewport: (force?: boolean) => boolean;
     structureLitematic: any;
   }
 }
@@ -163,7 +172,10 @@ function SchematicViewerPageContent() {
   const [maxY, setMaxY] = useState(0);
   const [fileName, setFileName] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [loadingProgress, setLoadingProgress] = useState<number | null>(null);
+  const [loadingPhase, setLoadingPhase] = useState<string | null>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const buildGenerationRef = useRef(0);
   const [runtimeGlobals, setRuntimeGlobals] = useState({
     deepslate: false,
     glMatrix: false,
@@ -304,6 +316,14 @@ function SchematicViewerPageContent() {
     const canvas = canvasRef.current;
 
     const resizeCanvas = () => {
+      // syncRendererViewport updates canvas buffer + DeepSlate projection/viewport
+      if (typeof window.syncRendererViewport === "function") {
+        const changed = window.syncRendererViewport(true);
+        if (changed && typeof window.render === "function") {
+          window.render();
+        }
+        return;
+      }
       const dpr = window.devicePixelRatio || 1;
       const rect = canvas.getBoundingClientRect();
       const w = Math.max(1, Math.round(rect.width));
@@ -313,14 +333,16 @@ function SchematicViewerPageContent() {
         canvas.height = h * dpr;
       }
     };
-    resizeCanvas();
-    window.addEventListener("resize", resizeCanvas);
-    const ro = new ResizeObserver(resizeCanvas);
-    if (canvas.parentElement) ro.observe(canvas.parentElement);
 
     if (window.createRenderCanvas) {
       window.createRenderCanvas(canvas);
     }
+    resizeCanvas();
+    window.addEventListener("resize", resizeCanvas);
+    const ro = new ResizeObserver(resizeCanvas);
+    if (canvas.parentElement) ro.observe(canvas.parentElement);
+    // Also observe the canvas itself (fullscreen / flex layout changes)
+    ro.observe(canvas);
 
     return () => {
       window.removeEventListener("resize", resizeCanvas);
@@ -336,7 +358,8 @@ function SchematicViewerPageContent() {
   }, []);
 
   const applyLitematicToViewer = useCallback(
-    (litematic: any, nbtdata: any, name: string, format: string) => {
+    async (litematic: any, nbtdata: any, name: string, format: string) => {
+      const gen = ++buildGenerationRef.current;
       window.structureLitematic = litematic;
       const names = litematic.regionNames?.length
         ? litematic.regionNames
@@ -350,9 +373,6 @@ function SchematicViewerPageContent() {
       setMinLayer(0);
       setMaxLayer(Math.max(0, mY - 1));
       setFileName(name);
-
-      const counts = window.getMaterialList(litematic);
-      setBlockCounts(counts);
 
       const region0 = litematic.regions[0];
       let infoName = name.replace(/\.(litematic|schem|schematic|nbt)$/i, "");
@@ -384,6 +404,31 @@ function SchematicViewerPageContent() {
           : null,
       );
 
+      setLoadingPhase(L({ "zh-CN": "构建结构…", "en-US": "Building structure…" }));
+      setLoadingProgress(0);
+      const structure = await window.structureFromLitematicAsync(
+        litematic,
+        0,
+        -1,
+        structureRegionArg(initialView),
+        (p) => {
+          if (buildGenerationRef.current === gen) setLoadingProgress(p * 0.85);
+        },
+      );
+      if (buildGenerationRef.current !== gen) return;
+
+      setLoadingPhase(L({ "zh-CN": "生成网格…", "en-US": "Baking meshes…" }));
+      setLoadingProgress(0.9);
+      await window.setStructureAsync(structure, true);
+      if (buildGenerationRef.current !== gen) return;
+
+      setLoadingPhase(L({ "zh-CN": "统计材料…", "en-US": "Counting materials…" }));
+      setLoadingProgress(0.96);
+      await new Promise((r) => setTimeout(r, 0));
+      const counts = window.getMaterialList(litematic);
+      if (buildGenerationRef.current !== gen) return;
+      setBlockCounts(counts);
+
       setSchematicInfo({
         name: infoName,
         description: infoDesc,
@@ -393,45 +438,45 @@ function SchematicViewerPageContent() {
         format,
         blocks: Object.values(counts).reduce((a: number, b: number) => a + b, 0),
       });
-
-      const structure = window.structureFromLitematic(
-        litematic,
-        0,
-        -1,
-        structureRegionArg(initialView),
-      );
-      window.setStructure(structure, true);
+      setLoadingProgress(1);
     },
     [L, structureRegionArg],
   );
 
   const processFileBuffer = useCallback(
-    (buffer: ArrayBuffer, name: string) => {
+    async (buffer: ArrayBuffer, name: string) => {
       if (!window.deepslateResources) {
-        alert(L({ "zh-CN": "资源尚未就绪，请稍候", "en-US": "Resources not ready yet" }));
+        setAutoLoadError(L({ "zh-CN": "资源尚未就绪，请稍候", "en-US": "Resources not ready yet" }));
         return false;
       }
 
       setIsLoading(true);
+      setLoadingProgress(null);
+      setLoadingPhase(L({ "zh-CN": "解析文件…", "en-US": "Parsing file…" }));
       setAutoLoadError(null);
 
       try {
+        await new Promise((r) => setTimeout(r, 0));
         const nbtdata = window.deepslate.readNbt(new Uint8Array(buffer));
         const parsed = window.parseSchematicBufferToLitematic(nbtdata, name);
-        applyLitematicToViewer(parsed.litematic, nbtdata, name, parsed.format);
+        await applyLitematicToViewer(parsed.litematic, nbtdata, name, parsed.format);
         return true;
       } catch (e) {
         console.error("[schematic-viewer] Load failed:", e);
         const msg = e instanceof Error ? e.message : String(e);
-        alert(
+        setSchematicInfo(null);
+        setBlockCounts(null);
+        setAutoLoadError(
           L({
-            "zh-CN": `无法加载该文件：\n${msg}`,
-            "en-US": `Failed to load file:\n${msg}`,
+            "zh-CN": `无法加载该文件：${msg}`,
+            "en-US": `Failed to load file: ${msg}`,
           }),
         );
         return false;
       } finally {
         setIsLoading(false);
+        setLoadingProgress(null);
+        setLoadingPhase(null);
       }
     },
     [L, applyLitematicToViewer],
@@ -443,14 +488,14 @@ function SchematicViewerPageContent() {
       reader.readAsArrayBuffer(file);
       reader.onload = () => {
         if (reader.result) {
-          processFileBuffer(reader.result as ArrayBuffer, file.name);
+          void processFileBuffer(reader.result as ArrayBuffer, file.name);
         }
       };
       reader.onerror = () => {
-        alert("Failed to read file");
+        setAutoLoadError(L({ "zh-CN": "读取文件失败", "en-US": "Failed to read file" }));
       };
     },
-    [processFileBuffer]
+    [L, processFileBuffer],
   );
 
   const handleDrop = useCallback(
@@ -462,33 +507,60 @@ function SchematicViewerPageContent() {
     [handleFileLoad]
   );
 
+  const rebuildStructure = useCallback(
+    async (
+      min: number,
+      maxExclusive: number,
+      view: "merge" | number,
+      resetViewFlag: boolean,
+    ) => {
+      if (!window.structureLitematic) return;
+      const gen = ++buildGenerationRef.current;
+      setIsLoading(true);
+      setLoadingPhase(L({ "zh-CN": "更新结构…", "en-US": "Updating structure…" }));
+      setLoadingProgress(0);
+      try {
+        const structure = await window.structureFromLitematicAsync(
+          window.structureLitematic,
+          min,
+          maxExclusive,
+          structureRegionArg(view),
+          (p) => {
+            if (buildGenerationRef.current === gen) setLoadingProgress(p * 0.9);
+          },
+        );
+        if (buildGenerationRef.current !== gen) return;
+        setLoadingProgress(0.95);
+        await window.setStructureAsync(structure, resetViewFlag);
+      } catch (e) {
+        console.error("[schematic-viewer] rebuild failed:", e);
+        setAutoLoadError(e instanceof Error ? e.message : String(e));
+      } finally {
+        if (buildGenerationRef.current === gen) {
+          setIsLoading(false);
+          setLoadingProgress(null);
+          setLoadingPhase(null);
+        }
+      }
+    },
+    [L, structureRegionArg],
+  );
+
   const handleLayerChange = useCallback(
     (min: number, max: number) => {
       if (!window.structureLitematic) return;
       if (min > max) return;
       setMinLayer(min);
       setMaxLayer(max);
-      const structure = window.structureFromLitematic(
-        window.structureLitematic,
-        min,
-        max + 1,
-        structureRegionArg(regionView),
-      );
-      window.setStructure(structure);
+      void rebuildStructure(min, max + 1, regionView, false);
     },
-    [regionView, structureRegionArg],
+    [regionView, rebuildStructure],
   );
 
   const resetView = useCallback(() => {
     if (!window.structureLitematic) return;
-    const structure = window.structureFromLitematic(
-      window.structureLitematic,
-      minLayer,
-      maxLayer + 1,
-      structureRegionArg(regionView),
-    );
-    window.setStructure(structure, true);
-  }, [minLayer, maxLayer, regionView, structureRegionArg]);
+    void rebuildStructure(minLayer, maxLayer + 1, regionView, true);
+  }, [minLayer, maxLayer, regionView, rebuildStructure]);
 
   const handleRegionViewChange = useCallback(
     (next: "merge" | number) => {
@@ -498,15 +570,9 @@ function SchematicViewerPageContent() {
       setMaxY(mY);
       setMinLayer(0);
       setMaxLayer(Math.max(0, mY - 1));
-      const structure = window.structureFromLitematic(
-        window.structureLitematic,
-        0,
-        -1,
-        structureRegionArg(next),
-      );
-      window.setStructure(structure, true);
+      void rebuildStructure(0, -1, next, true);
     },
-    [structureRegionArg],
+    [rebuildStructure],
   );
 
   const exitToSchematics = useCallback(() => {
@@ -599,9 +665,10 @@ function SchematicViewerPageContent() {
           const b64 = await invoke<string>("read_file_base64", { path: pathParam });
           const buffer = base64ToArrayBuffer(b64);
           const fileName = nameParam || pathParam.split(/[\\/]/).pop() || "schematic";
-          const ok = processFileBuffer(buffer, fileName);
+          const ok = await processFileBuffer(buffer, fileName);
           if (!ok) {
-            setAutoLoadError(
+            setAutoLoadError((prev) =>
+              prev ||
               L({
                 "zh-CN": `无法从路径加载：${pathParam}`,
                 "en-US": `Could not load schematic from: ${pathParam}`,
@@ -631,7 +698,7 @@ function SchematicViewerPageContent() {
           );
           return;
         }
-        processFileBuffer(base64ToArrayBuffer(obj.b64), obj.name);
+        await processFileBuffer(base64ToArrayBuffer(obj.b64), obj.name);
         try {
           sessionStorage.removeItem(keyParam!);
         } catch {}
@@ -775,10 +842,24 @@ function SchematicViewerPageContent() {
 
       {(isLoading || isAutoOpening) && !loadError && (
         <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm">
-          <div className="text-center">
+          <div className="text-center max-w-xs px-4">
             <div className="w-12 h-12 border-4 border-zinc-600 border-t-sky-400 rounded-full animate-spin mx-auto mb-4" />
             <p className="text-zinc-200 text-sm">
-              {L({ "zh-CN": "加载文件中...", "en-US": "Loading file..." })}
+              {loadingPhase || L({ "zh-CN": "加载文件中...", "en-US": "Loading file..." })}
+            </p>
+            {loadingProgress != null && (
+              <div className="mt-3 h-1.5 w-48 mx-auto rounded-full bg-zinc-800 overflow-hidden">
+                <div
+                  className="h-full bg-sky-400 transition-[width] duration-150"
+                  style={{ width: `${Math.round(Math.min(1, Math.max(0, loadingProgress)) * 100)}%` }}
+                />
+              </div>
+            )}
+            <p className="text-zinc-500 text-[11px] mt-2">
+              {L({
+                "zh-CN": "大型投影会分片构建，请勿关闭窗口",
+                "en-US": "Large schematics build in slices — keep this window open",
+              })}
             </p>
           </div>
         </div>
