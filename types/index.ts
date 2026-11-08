@@ -408,14 +408,22 @@ export type InstanceExportOptions = {
   format: "modrinth" | "curseforge" | string;
   outputMode: "pack_only" | "portable_folder" | string;
   outputPath: string;
+  /** 不向 Modrinth/CurseForge 解析下载索引，将所选文件全部打进 overrides */
+  embedAllFiles?: boolean;
   includeLauncher: boolean;
   includeMods: boolean;
   includeModConfigs: boolean;
   includeShaderpacks: boolean;
   includeShaderConfigs: boolean;
   includeResourcepacks: boolean;
+  /** 勾选导出的资源包文件/目录名；缺省表示全部 */
+  resourcepackNames?: string[];
+  /** 勾选导出的光影包文件/目录名；缺省表示全部 */
+  shaderpackNames?: string[];
   includeGameSettings: boolean;
   includeSaves: boolean;
+  includeSchematics?: boolean;
+  includeServerList?: boolean;
 };
 
 export type InstanceExportProgressPayload = {

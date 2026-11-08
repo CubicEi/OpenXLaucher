@@ -17,6 +17,7 @@ import { ThemeSlot } from "./theme-slot";
 function routeIdFromPathname(pathname: string): CoreRouteId | undefined {
   const path = normalizeAppPathname(pathname);
   if (path === "/") return "core.home";
+  if (path === "/profiles") return "core.profiles";
   if (path === "/launch") return "core.launch";
   if (path === "/download/detail") return "core.download.detail";
   if (path === "/download") return "core.download";

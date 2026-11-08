@@ -22,6 +22,8 @@ type SkinViewer3DProps = {
   height?: number;
   modelType?: "classic" | "slim";
   autoRotate?: boolean;
+  /** 去掉画布圆角与底色框 */
+  frameless?: boolean;
 };
 
 function normalizeTextureUrl(url?: string): string | null {
@@ -36,6 +38,35 @@ function toSkinviewModel(modelType: "classic" | "slim"): "slim" | "default" {
   return modelType === "slim" ? "slim" : "default";
 }
 
+function applyFullBodyView(viewer: any) {
+  const player = viewer.playerObject;
+  if (player) {
+    player.position.set(0, 0, 0);
+    player.rotation.set(0, 0, 0);
+  }
+
+  viewer.fov = 50;
+  viewer.zoom = 0.9;
+  if (typeof viewer.adjustCameraDistance === "function") {
+    viewer.adjustCameraDistance();
+  }
+
+  try {
+    viewer.camera.rotation.x = -0.15;
+    viewer.camera.position.y = 0;
+    viewer.camera.position.z = 55;
+  } catch {}
+
+  if (viewer.controls) {
+    viewer.controls.enabled = true;
+    viewer.controls.enableRotate = true;
+    viewer.controls.enableZoom = true;
+    viewer.controls.enablePan = false;
+    viewer.controls.target.set(0, 0, 0);
+    viewer.controls.update();
+  }
+}
+
 export function SkinViewer3D({
   skinSrc,
   capeSrc,
@@ -43,6 +74,7 @@ export function SkinViewer3D({
   height = 400,
   modelType = "classic",
   autoRotate = true,
+  frameless = false,
 }: SkinViewer3DProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -87,12 +119,8 @@ export function SkinViewer3D({
         model,
         devicePixelRatio: typeof window !== "undefined" ? window.devicePixelRatio : 1,
         preserveDrawingBuffer: true,
-        controls: {
-          enabled: true,
-          zoom: true,
-          rotate: true,
-          pan: false,
-        },
+        enableControls: true,
+        animation: undefined,
       } as any);
 
       // 双保险：部分版本构造选项可能忽略 model，立刻再设一次
@@ -107,12 +135,7 @@ export function SkinViewer3D({
         }
       } catch {}
 
-      // 初始视角
-      try {
-        viewer.camera.rotation.x = -0.15;
-        viewer.camera.position.y = 0;
-        viewer.camera.position.z = 55;
-      } catch {}
+      applyFullBodyView(viewer);
 
       try {
         viewer.setSize(width, height);
@@ -199,6 +222,7 @@ export function SkinViewer3D({
     if (!viewerRef.current) return;
     try {
       viewerRef.current.setSize(width, height);
+      applyFullBodyView(viewerRef.current);
     } catch {}
   }, [width, height]);
 
@@ -225,7 +249,11 @@ export function SkinViewer3D({
     >
       <canvas
         ref={canvasRef}
-        className="rounded-lg bg-gradient-to-b from-transparent to-black/5"
+        className={
+          frameless
+            ? "bg-transparent"
+            : "rounded-lg bg-gradient-to-b from-transparent to-black/5"
+        }
         style={{ width: "100%", height: "100%", display: "block" }}
       />
       {!loaded && !error && (

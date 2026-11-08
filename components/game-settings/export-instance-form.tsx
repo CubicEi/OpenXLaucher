@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { FlyCoords } from "@/components/process-list/fly-to-process-list";
 import { invoke } from "@tauri-apps/api/core";
 import { Loader2, Package, Upload } from "lucide-react";
@@ -15,16 +15,32 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { useI18n } from "@/components/i18n/use-i18n";
-import { ExportIncludeItem } from "@/components/game-settings/export-include-item";
+import {
+  ExportIncludeExpandable,
+  ExportIncludeItem,
+} from "@/components/game-settings/export-include-item";
 import { fadeSlideUp } from "@/lib/motion";
 import {
   GAME_SETTINGS_EXPORT_ICON_BG,
   GAME_SETTINGS_EXPORT_ICON_TEXT,
 } from "@/constants/index";
 import { cn } from "@/lib/utils";
-import type { InstanceExportOptions } from "@/types";
+import type { DirEntry, InstanceExportOptions } from "@/types";
 
 const SAVE_SIZE_WARN_BYTES = 512 * 1024 * 1024;
+const PACK_FILE_EXTS = new Set(["zip", "jar"]);
+
+function isPackEntry(entry: DirEntry): boolean {
+  if (entry.is_dir) return true;
+  return PACK_FILE_EXTS.has((entry.extension || "").toLowerCase());
+}
+
+function toggleName(list: string[], name: string, next: boolean): string[] {
+  if (next) {
+    return list.includes(name) ? list : [...list, name];
+  }
+  return list.filter((n) => n !== name);
+}
 
 /** 与启动配置「游戏进程优先级」一致的分段切换 */
 function ExportSegment<T extends string>({
@@ -92,15 +108,22 @@ export function ExportInstanceForm({
   const [summary, setSummary] = useState("");
   const [format, setFormat] = useState<PackFormat>("modrinth");
   const [outputMode, setOutputMode] = useState<OutputMode>("pack_only");
+  const [embedAllFiles, setEmbedAllFiles] = useState(false);
 
   const [includeMods, setIncludeMods] = useState(true);
-  const [includeModConfigs, setIncludeModConfigs] = useState(true);
-  const [includeShaderpacks, setIncludeShaderpacks] = useState(true);
-  const [includeShaderConfigs, setIncludeShaderConfigs] = useState(true);
-  const [includeResourcepacks, setIncludeResourcepacks] = useState(true);
+  const [includeModConfigs, setIncludeModConfigs] = useState(false);
+  const [includeShaderConfigs, setIncludeShaderConfigs] = useState(false);
   const [includeGameSettings, setIncludeGameSettings] = useState(true);
   const [includeSaves, setIncludeSaves] = useState(false);
-  const [includeLauncher, setIncludeLauncher] = useState(true);
+  const [includeSchematics, setIncludeSchematics] = useState(false);
+  const [includeServerList, setIncludeServerList] = useState(false);
+
+  const [resourcepackNames, setResourcepackNames] = useState<string[]>([]);
+  const [shaderpackNames, setShaderpackNames] = useState<string[]>([]);
+  const [availableResourcepacks, setAvailableResourcepacks] = useState<string[]>([]);
+  const [availableShaderpacks, setAvailableShaderpacks] = useState<string[]>([]);
+  const [resourceExpanded, setResourceExpanded] = useState(false);
+  const [shaderExpanded, setShaderExpanded] = useState(false);
 
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -108,6 +131,50 @@ export function ExportInstanceForm({
   const [pendingExport, setPendingExport] = useState(false);
   const exportBtnRef = useRef<HTMLButtonElement>(null);
   const flyOriginRef = useRef<FlyCoords | null>(null);
+
+  const instanceRoot = useMemo(() => {
+    if (!minecraftPath || !instanceFolder) return "";
+    return `${minecraftPath.replace(/[\\/]+$/, "")}/versions/${instanceFolder}`;
+  }, [minecraftPath, instanceFolder]);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadPacks(subdir: "resourcepacks" | "shaderpacks") {
+      if (!instanceRoot) return [] as string[];
+      try {
+        const entries = await invoke<DirEntry[]>("vm_list_dir", {
+          dirPath: `${instanceRoot}/${subdir}`,
+          extensionsFilter: [] as string[],
+        });
+        return entries
+          .filter(isPackEntry)
+          .map((e) => e.name)
+          .sort((a, b) => a.localeCompare(b));
+      } catch {
+        return [] as string[];
+      }
+    }
+
+    void (async () => {
+      const [resources, shaders] = await Promise.all([
+        loadPacks("resourcepacks"),
+        loadPacks("shaderpacks"),
+      ]);
+      if (cancelled) return;
+      setAvailableResourcepacks(resources);
+      setAvailableShaderpacks(shaders);
+      // Default export only includes mods + game settings; packs stay unchecked.
+      setResourcepackNames([]);
+      setShaderpackNames([]);
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [instanceRoot]);
+
+  const includeResourcepacks = resourcepackNames.length > 0;
+  const includeShaderpacks = shaderpackNames.length > 0;
 
   const resolveFlyOrigin = (): FlyCoords | undefined => {
     if (flyOriginRef.current) return flyOriginRef.current;
@@ -134,6 +201,7 @@ export function ExportInstanceForm({
       format,
       outputMode,
       outputPath,
+      embedAllFiles,
       // Portable always bundles the launcher; pack_only never does.
       includeLauncher: outputMode === "portable_folder",
       includeMods,
@@ -141,8 +209,12 @@ export function ExportInstanceForm({
       includeShaderpacks,
       includeShaderConfigs,
       includeResourcepacks,
+      resourcepackNames,
+      shaderpackNames,
       includeGameSettings,
       includeSaves,
+      includeSchematics,
+      includeServerList,
     }),
     [
       minecraftPath,
@@ -152,13 +224,18 @@ export function ExportInstanceForm({
       summary,
       format,
       outputMode,
+      embedAllFiles,
       includeMods,
       includeModConfigs,
       includeShaderpacks,
       includeShaderConfigs,
       includeResourcepacks,
+      resourcepackNames,
+      shaderpackNames,
       includeGameSettings,
       includeSaves,
+      includeSchematics,
+      includeServerList,
       defaultPackName,
     ],
   );
@@ -217,23 +294,8 @@ export function ExportInstanceForm({
 
   const formDisabled = disabled || submitting;
 
-  const includeItems: {
-    checked: boolean;
-    setChecked: (v: boolean) => void;
-    labelKey: Parameters<typeof t>[0];
-  }[] = [
-    { checked: includeMods, setChecked: setIncludeMods, labelKey: "gameSettings.exportIncludeMods" },
-    { checked: includeModConfigs, setChecked: setIncludeModConfigs, labelKey: "gameSettings.exportIncludeModConfigs" },
-    { checked: includeShaderpacks, setChecked: setIncludeShaderpacks, labelKey: "gameSettings.exportIncludeShaderpacks" },
-    { checked: includeShaderConfigs, setChecked: setIncludeShaderConfigs, labelKey: "gameSettings.exportIncludeShaderConfigs" },
-    { checked: includeResourcepacks, setChecked: setIncludeResourcepacks, labelKey: "gameSettings.exportIncludeResourcepacks" },
-    { checked: includeGameSettings, setChecked: setIncludeGameSettings, labelKey: "gameSettings.exportIncludeGameSettings" },
-    { checked: includeSaves, setChecked: setIncludeSaves, labelKey: "gameSettings.exportIncludeSaves" },
-  ];
-
   return (
     <div className="flex h-full flex-col gap-4 overflow-hidden p-4">
-      {/* 与模组管理页 ResourcePanel 标题栏一致：图标 + 标题 + 右侧操作 */}
       <motion.div
         variants={fadeSlideUp}
         initial="initial"
@@ -281,7 +343,6 @@ export function ExportInstanceForm({
         transition={{ delay: 0.05 }}
         className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden md:flex-row"
       >
-        {/* 左侧约 1/3：元数据与输出选项（行距约为默认 80%） */}
         <section className="flex min-h-0 w-full flex-col gap-3 overflow-y-auto md:w-1/3 md:shrink-0 md:border-r md:border-border md:pr-4">
           <div className="grid gap-1.5">
             <Label className="text-xs">{t("gameSettings.exportPackName")}</Label>
@@ -332,12 +393,7 @@ export function ExportInstanceForm({
             <ExportSegment
               value={outputMode}
               disabled={formDisabled}
-              onChange={(mode) => {
-                if (mode === "portable_folder") {
-                  setIncludeLauncher(true);
-                }
-                setOutputMode(mode);
-              }}
+              onChange={setOutputMode}
               options={[
                 { value: "pack_only", label: t("gameSettings.exportModePackOnly") },
                 { value: "portable_folder", label: t("gameSettings.exportModePortable") },
@@ -346,6 +402,17 @@ export function ExportInstanceForm({
             {outputMode === "portable_folder" && (
               <p className="text-[11px] leading-snug text-muted-foreground">
                 {t("gameSettings.exportPortableHint")}
+              </p>
+            )}
+            <ExportIncludeItem
+              checked={embedAllFiles}
+              label={t("gameSettings.exportEmbedAllFiles")}
+              disabled={formDisabled}
+              onToggle={setEmbedAllFiles}
+            />
+            {embedAllFiles && (
+              <p className="text-[11px] leading-snug text-muted-foreground">
+                {t("gameSettings.exportEmbedAllFilesHint")}
               </p>
             )}
           </div>
@@ -357,26 +424,124 @@ export function ExportInstanceForm({
           )}
         </section>
 
-        {/* 右侧约 2/3：包含内容纵向列表 */}
         <section className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden md:pl-1">
           <p className="mb-2 shrink-0 text-xs font-medium text-muted-foreground">
             {t("gameSettings.exportInclude")}
           </p>
           <div className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto rounded-xl border border-border bg-card p-2">
-            {includeItems.map((item) => (
-              <ExportIncludeItem
-                key={item.labelKey}
-                checked={item.checked}
-                label={t(item.labelKey)}
-                disabled={formDisabled}
-                onToggle={item.setChecked}
-              />
-            ))}
             <ExportIncludeItem
-              checked={outputMode === "portable_folder" ? true : includeLauncher}
+              checked={includeMods}
+              label={t("gameSettings.exportIncludeMods")}
+              disabled={formDisabled}
+              onToggle={(next) => {
+                setIncludeMods(next);
+                if (!next) setIncludeModConfigs(false);
+              }}
+            />
+            <ExportIncludeItem
+              checked={includeModConfigs}
+              label={t("gameSettings.exportIncludeModConfigs")}
+              disabled={formDisabled || !includeMods}
+              onToggle={setIncludeModConfigs}
+            />
+
+            <ExportIncludeExpandable
+              checked={includeResourcepacks}
+              label={t("gameSettings.exportIncludeResourcepacks")}
+              disabled={formDisabled}
+              expanded={resourceExpanded}
+              onExpandedChange={setResourceExpanded}
+              onToggle={(next) => {
+                setResourcepackNames(next ? [...availableResourcepacks] : []);
+              }}
+            >
+              {availableResourcepacks.length === 0 ? (
+                <p className="px-3 py-2 pl-9 text-xs text-muted-foreground">
+                  {t("gameSettings.exportIncludeEmptyPacks")}
+                </p>
+              ) : (
+                availableResourcepacks.map((name) => (
+                  <ExportIncludeItem
+                    key={name}
+                    indent
+                    checked={resourcepackNames.includes(name)}
+                    label={name}
+                    disabled={formDisabled}
+                    onToggle={(next) =>
+                      setResourcepackNames((prev) => toggleName(prev, name, next))
+                    }
+                  />
+                ))
+              )}
+            </ExportIncludeExpandable>
+
+            <ExportIncludeExpandable
+              checked={includeShaderpacks || includeShaderConfigs}
+              label={t("gameSettings.exportIncludeShaderpacks")}
+              disabled={formDisabled}
+              expanded={shaderExpanded}
+              onExpandedChange={setShaderExpanded}
+              onToggle={(next) => {
+                setIncludeShaderConfigs(next);
+                setShaderpackNames(next ? [...availableShaderpacks] : []);
+              }}
+            >
+              <ExportIncludeItem
+                indent
+                checked={includeShaderConfigs}
+                label={t("gameSettings.exportIncludeSelectedShaderConfig")}
+                disabled={formDisabled}
+                onToggle={setIncludeShaderConfigs}
+              />
+              {availableShaderpacks.length === 0 ? (
+                <p className="px-3 py-2 pl-9 text-xs text-muted-foreground">
+                  {t("gameSettings.exportIncludeEmptyPacks")}
+                </p>
+              ) : (
+                availableShaderpacks.map((name) => (
+                  <ExportIncludeItem
+                    key={name}
+                    indent
+                    checked={shaderpackNames.includes(name)}
+                    label={name}
+                    disabled={formDisabled}
+                    onToggle={(next) =>
+                      setShaderpackNames((prev) => toggleName(prev, name, next))
+                    }
+                  />
+                ))
+              )}
+            </ExportIncludeExpandable>
+
+            <ExportIncludeItem
+              checked={includeGameSettings}
+              label={t("gameSettings.exportIncludeGameSettings")}
+              disabled={formDisabled}
+              onToggle={setIncludeGameSettings}
+            />
+            <ExportIncludeItem
+              checked={includeSaves}
+              label={t("gameSettings.exportIncludeSaves")}
+              disabled={formDisabled}
+              onToggle={setIncludeSaves}
+            />
+            <ExportIncludeItem
+              checked={includeSchematics}
+              label={t("gameSettings.exportIncludeSchematics")}
+              disabled={formDisabled}
+              onToggle={setIncludeSchematics}
+            />
+            <ExportIncludeItem
+              checked={includeServerList}
+              label={t("gameSettings.exportIncludeServerList")}
+              disabled={formDisabled}
+              onToggle={setIncludeServerList}
+            />
+            <ExportIncludeItem
+              checked={outputMode === "portable_folder"}
               label={t("gameSettings.exportIncludeLauncher")}
-              disabled={formDisabled || outputMode === "portable_folder"}
-              onToggle={setIncludeLauncher}
+              disabled
+              onToggle={() => {}}
             />
           </div>
           {includeSaves && (
@@ -398,7 +563,9 @@ export function ExportInstanceForm({
             </p>
             <div className="flex items-center justify-end gap-2">
               <Button
+                type="button"
                 variant="outline"
+                size="sm"
                 onClick={() => {
                   setSizeWarnOpen(false);
                   setPendingExport(false);
@@ -407,11 +574,13 @@ export function ExportInstanceForm({
                 {t("common.cancel")}
               </Button>
               <Button
-                onClick={async () => {
+                type="button"
+                size="sm"
+                onClick={() => {
                   setSizeWarnOpen(false);
                   if (pendingExport) {
                     setPendingExport(false);
-                    await runExport();
+                    void runExport();
                   }
                 }}
               >

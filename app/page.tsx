@@ -2,7 +2,6 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
 import {
   ArrowRight,
   Boxes,
@@ -13,7 +12,6 @@ import {
   Users,
 } from "lucide-react";
 import { HOME_QUICK_ACCESS_ACTIONS } from "@/constants";
-import { AccountSwitcher } from "@/components/accounts/account-switcher";
 import { SkinViewer3D } from "@/components/accounts/skin-viewer-3d";
 import { useAccountContext } from "@/components/accounts/account-provider";
 import { LaunchStatusBadge } from "@/components/launch/launch-status-badge";
@@ -40,14 +38,14 @@ import { useInstancePath } from "@/hooks/use-instance-path";
 import type { Account } from "@/types";
 import {
   createInAppLinkHandler,
+  navigateWithMainTransition,
   onInAppLinkPointerDown,
 } from "@/lib/main-navigation-transition";
 
-/** 首页仪表盘：把启动状态、实例资源与账户操作集中在一个可滚动页面。 */
+/** 首页仪表盘：把启动状态、实例资源与档案操作集中在一个可滚动页面。 */
 export default function Home() {
   const router = useRouter();
-  const [isProfileSelectorOpen, setIsProfileSelectorOpen] = useState(false);
-  const { selectedProfile, selectProfile } = useAccountContext();
+  const { selectedProfile } = useAccountContext();
   const {
     config,
     configLoaded,
@@ -94,8 +92,8 @@ export default function Home() {
     ? profileStatusMap[selectedProfile.status] ?? selectedProfile.status
     : t("home.addAnAccountToLaunchTheGame");
 
-  const handleProfileSelect = (profile: Account) => {
-    selectProfile(profile);
+  const openProfilesPage = () => {
+    navigateWithMainTransition(router, "/profiles");
   };
 
   const handlePrimaryAction = async () => {
@@ -149,7 +147,7 @@ export default function Home() {
                     <HomeAccountSummary
                       selectedProfile={selectedProfile}
                       profileStatus={profileStatus}
-                      onManageAccounts={() => setIsProfileSelectorOpen(true)}
+                      onManageProfiles={openProfilesPage}
                     />
                   </CardContent>
                 </div>
@@ -289,7 +287,7 @@ export default function Home() {
                     <HomeAccountSummary
                       selectedProfile={selectedProfile}
                       profileStatus={profileStatus}
-                      onManageAccounts={() => setIsProfileSelectorOpen(true)}
+                      onManageProfiles={openProfilesPage}
                     />
                   </CardContent>
                 </div>
@@ -298,12 +296,6 @@ export default function Home() {
           </div>
         )}
       </PageEnter>
-
-      <AccountSwitcher
-        open={isProfileSelectorOpen}
-        onClose={() => setIsProfileSelectorOpen(false)}
-        onSelect={handleProfileSelect}
-      />
     </div>
   );
 }
@@ -311,11 +303,11 @@ export default function Home() {
 function HomeAccountSummary({
   selectedProfile,
   profileStatus,
-  onManageAccounts,
+  onManageProfiles,
 }: {
   selectedProfile: Account | null;
   profileStatus: string;
-  onManageAccounts: () => void;
+  onManageProfiles: () => void;
 }) {
   const { t } = useI18n();
 
@@ -343,7 +335,7 @@ function HomeAccountSummary({
             variant="ghost"
             size="icon"
             className="size-7 shrink-0"
-            onClick={onManageAccounts}
+            onClick={onManageProfiles}
             aria-label={t("home.manageAccounts")}
           >
             <Users className="size-3.5" />

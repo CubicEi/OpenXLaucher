@@ -6,6 +6,7 @@ export const BUILTIN_THEME_ID = "builtin.default" as const;
 
 export const CORE_ROUTE_IDS = [
   "core.home",
+  "core.profiles",
   "core.launch",
   "core.download",
   "core.download.detail",

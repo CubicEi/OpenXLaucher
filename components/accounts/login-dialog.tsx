@@ -269,7 +269,7 @@ export function LoginDialog({
                     <AlertCircle className="size-5 text-amber-500 shrink-0" />
                   )}
                   <CardTitle>
-                    {forcedMode ? "需要重新登录正版账号" : "添加账户"}
+                    {forcedMode ? "需要重新登录正版账号" : "添加档案"}
                   </CardTitle>
                 </div>
                 <Button variant="ghost" size="icon-sm" onClick={handleClose} aria-label="关闭">

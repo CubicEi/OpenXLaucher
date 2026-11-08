@@ -172,6 +172,7 @@
     "coreRoute": {
       "enum": [
         "core.home",
+        "core.profiles",
         "core.launch",
         "core.download",
         "core.download.detail",
