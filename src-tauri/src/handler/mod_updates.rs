@@ -627,6 +627,101 @@ async fn forward_mod_update_download_progress(
     }
 }
 
+/// Iris: `<packFileName>.txt` (e.g. `Foo.zip.txt`); OptiFine: `<stem>.txt` (e.g. `Foo.txt`).
+fn shader_pack_stem(name: &str) -> &str {
+    let lower = name.to_ascii_lowercase();
+    for ext in [".zip", ".jar"] {
+        if lower.ends_with(ext) {
+            return &name[..name.len() - ext.len()];
+        }
+    }
+    name
+}
+
+fn rename_file_best_effort(src: &Path, dest: &Path) {
+    if !src.is_file() || src == dest {
+        return;
+    }
+    if dest.exists() {
+        let _ = fs::remove_file(dest);
+    }
+    if fs::rename(src, dest).is_ok() {
+        return;
+    }
+    if fs::copy(src, dest).is_ok() {
+        let _ = fs::remove_file(src);
+    }
+}
+
+/// Keep companion shader option txt files in sync when a shader pack file is renamed by update.
+fn sync_shaderpack_config_txt(shaderpacks_dir: &Path, old_pack: &str, new_pack: &str) {
+    let old_pack = old_pack.trim();
+    let new_pack = new_pack.trim();
+    if old_pack.is_empty() || new_pack.is_empty() || old_pack == new_pack {
+        return;
+    }
+
+    // Iris / Oculus: full pack file name + ".txt"
+    let iris_old = shaderpacks_dir.join(format!("{}.txt", old_pack));
+    let iris_new = shaderpacks_dir.join(format!("{}.txt", new_pack));
+    rename_file_best_effort(&iris_old, &iris_new);
+
+    // OptiFine: stem + ".txt" (skip when identical to Iris names, e.g. folder packs)
+    let old_stem = shader_pack_stem(old_pack);
+    let new_stem = shader_pack_stem(new_pack);
+    let opti_old_name = format!("{}.txt", old_stem);
+    let iris_old_name = format!("{}.txt", old_pack);
+    if opti_old_name != iris_old_name {
+        let opti_old = shaderpacks_dir.join(&opti_old_name);
+        let opti_new = shaderpacks_dir.join(format!("{}.txt", new_stem));
+        rename_file_best_effort(&opti_old, &opti_new);
+    }
+}
+
+/// If Iris/Oculus currently selects the old pack, point it at the new file name.
+fn sync_iris_selected_shader_pack(instance_dir: &Path, old_pack: &str, new_pack: &str) {
+    let old_pack = old_pack.trim();
+    let new_pack = new_pack.trim();
+    if old_pack.is_empty() || new_pack.is_empty() || old_pack == new_pack {
+        return;
+    }
+    for rel in ["config/iris.properties", "config/oculus.properties"] {
+        let path = instance_dir.join(rel);
+        if !path.is_file() {
+            continue;
+        }
+        let Ok(content) = fs::read_to_string(&path) else {
+            continue;
+        };
+        let mut changed = false;
+        let mut out = String::with_capacity(content.len() + new_pack.len());
+        for line in content.split_inclusive('\n') {
+            let trimmed = line.trim_start();
+            if let Some(rest) = trimmed.strip_prefix("shaderPack=") {
+                let value = rest.trim_end_matches(['\r', '\n']).trim();
+                if value == old_pack {
+                    let ending = if line.ends_with("\r\n") {
+                        "\r\n"
+                    } else if line.ends_with('\n') {
+                        "\n"
+                    } else {
+                        ""
+                    };
+                    out.push_str("shaderPack=");
+                    out.push_str(new_pack);
+                    out.push_str(ending);
+                    changed = true;
+                    continue;
+                }
+            }
+            out.push_str(line);
+        }
+        if changed {
+            let _ = fs::write(&path, out);
+        }
+    }
+}
+
 async fn perform_single_update(
     app: &AppHandle,
     task_id: u64,
@@ -755,6 +850,11 @@ async fn perform_single_update(
     })?;
 
     let _ = fs::remove_dir_all(&temp_dir);
+
+    if kind == CacheResourceKind::ShaderPack {
+        sync_shaderpack_config_txt(&resource_dir, &update.file_name, &update.new_file_name);
+        sync_iris_selected_shader_pack(instance_dir, &update.file_name, &update.new_file_name);
+    }
 
     if let Some(sha1) = file_sha1_hex(&dest_path) {
         let _ = register_file_at_path(
