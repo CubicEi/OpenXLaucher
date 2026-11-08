@@ -749,6 +749,8 @@
     "exportModePackOnly": "仅整合包文件",
     "exportModePortable": "便携启动器 + 整合包",
     "exportPortableHint": "将生成文件夹：启动器可执行文件、bundled-pack 与 OpenX/bundled-modpack.json",
+    "exportEmbedAllFiles": "打包所有文件以避免下载",
+    "exportEmbedAllFilesHint": "所选内容全部写入整合包，可能会违反某些资源的许可协议",
     "exportInclude": "包含内容",
     "exportIncludeMods": "Mods",
     "exportIncludeModConfigs": "Mod 配置",

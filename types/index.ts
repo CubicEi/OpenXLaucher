@@ -408,6 +408,8 @@ export type InstanceExportOptions = {
   format: "modrinth" | "curseforge" | string;
   outputMode: "pack_only" | "portable_folder" | string;
   outputPath: string;
+  /** 不向 Modrinth/CurseForge 解析下载索引，将所选文件全部打进 overrides */
+  embedAllFiles?: boolean;
   includeLauncher: boolean;
   includeMods: boolean;
   includeModConfigs: boolean;

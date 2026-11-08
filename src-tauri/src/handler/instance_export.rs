@@ -55,6 +55,9 @@ pub struct InstanceExportOptions {
     /// `pack_only` | `portable_folder`
     pub output_mode: String,
     pub output_path: String,
+    /// Skip Modrinth/CurseForge index resolution; pack every selected file into overrides.
+    #[serde(default)]
+    pub embed_all_files: bool,
     pub include_launcher: bool,
     pub include_mods: bool,
     pub include_mod_configs: bool,
@@ -152,6 +155,13 @@ fn rel_path_from(instance_dir: &Path, file: &Path) -> Option<String> {
         .map(|p| p.to_string_lossy().replace('\\', "/"))
 }
 
+fn matches_shader_config_prefix(lower: &str, prefix: &str) -> bool {
+    // Match `config/iris`, `config/iris/...`, and flat files like `config/iris.properties`.
+    lower == prefix
+        || lower.starts_with(&format!("{}/", prefix))
+        || lower.starts_with(&format!("{}.", prefix))
+}
+
 fn is_shader_config_rel(rel: &str) -> bool {
     let lower = rel.replace('\\', "/").to_ascii_lowercase();
     if SHADER_ROOT_FILES
@@ -162,7 +172,104 @@ fn is_shader_config_rel(rel: &str) -> bool {
     }
     SHADER_CONFIG_PREFIXES
         .iter()
-        .any(|prefix| lower == *prefix || lower.starts_with(&format!("{}/", prefix)))
+        .any(|prefix| matches_shader_config_prefix(&lower, prefix))
+}
+
+/// Iris/Oculus store per-pack options as `shaderpacks/<packFileName>.txt`
+/// (e.g. `Complementary.zip.txt`). Also accept stem form `Complementary.txt`.
+fn shader_pack_stem(name: &str) -> &str {
+    let lower = name.to_ascii_lowercase();
+    for ext in [".zip", ".jar"] {
+        if lower.ends_with(ext) {
+            return &name[..name.len() - ext.len()];
+        }
+    }
+    name
+}
+
+fn shaderpack_option_txt_candidates(pack_name: &str) -> Vec<String> {
+    let pack = pack_name.trim();
+    if pack.is_empty() {
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    // Iris/Oculus: append ".txt" to the full pack file/folder name.
+    out.push(format!("{}.txt", pack));
+    let stem = shader_pack_stem(pack);
+    if stem != pack {
+        out.push(format!("{}.txt", stem));
+    }
+    out
+}
+
+fn push_shaderpack_txt_if_exists(
+    root: &Path,
+    file_name: &str,
+    files: &mut Vec<OverrideFile>,
+    seen: &mut HashSet<String>,
+) -> Result<(), String> {
+    let path = root.join(file_name);
+    if !path.is_file() {
+        return Ok(());
+    }
+    let rel = format!("shaderpacks/{}", file_name);
+    validate_relative_path(&rel)?;
+    push_unique(
+        files,
+        seen,
+        OverrideFile {
+            abs: path,
+            rel,
+        },
+    );
+    Ok(())
+}
+
+fn collect_shaderpack_option_txt(
+    instance_dir: &Path,
+    pack_names: &Option<Vec<String>>,
+    files: &mut Vec<OverrideFile>,
+    seen: &mut HashSet<String>,
+) -> Result<(), String> {
+    let root = instance_dir.join("shaderpacks");
+    if !root.is_dir() {
+        return Ok(());
+    }
+
+    let selected: Vec<String> = pack_names
+        .as_ref()
+        .map(|names| {
+            names
+                .iter()
+                .map(|n| n.trim().to_string())
+                .filter(|n| !n.is_empty())
+                .collect()
+        })
+        .unwrap_or_default();
+
+    if !selected.is_empty() {
+        for pack in &selected {
+            for cand in shaderpack_option_txt_candidates(pack) {
+                push_shaderpack_txt_if_exists(&root, &cand, files, seen)?;
+            }
+        }
+        return Ok(());
+    }
+
+    // No pack selection → include every companion .txt under shaderpacks/.
+    for entry in fs::read_dir(&root).map_err(|e| e.to_string())? {
+        let entry = entry.map_err(|e| e.to_string())?;
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        let name = entry.file_name().to_string_lossy().to_string();
+        if !name.to_ascii_lowercase().ends_with(".txt") {
+            continue;
+        }
+        push_shaderpack_txt_if_exists(&root, &name, files, seen)?;
+    }
+    Ok(())
 }
 
 fn is_mod_config_rel(rel: &str) -> bool {
@@ -324,7 +431,20 @@ fn collect_override_files(
         walk_tree(instance_dir, "config", Some(is_mod_config_rel), &mut files)?;
     }
     if opts.include_shader_configs {
-        walk_tree(instance_dir, "config", Some(is_shader_config_rel), &mut files)?;
+        // Register already-collected paths so later push_unique dedupes correctly.
+        for f in &files {
+            seen.insert(f.rel.clone());
+        }
+        let mut shader_cfg = Vec::new();
+        walk_tree(
+            instance_dir,
+            "config",
+            Some(is_shader_config_rel),
+            &mut shader_cfg,
+        )?;
+        for f in shader_cfg {
+            push_unique(&mut files, &mut seen, f);
+        }
         for name in SHADER_ROOT_FILES {
             let p = instance_dir.join(name);
             if p.is_file() {
@@ -333,6 +453,13 @@ fn collect_override_files(
                 push_unique(&mut files, &mut seen, OverrideFile { abs: p, rel });
             }
         }
+        // Per-pack Iris/Oculus option files next to selected shaderpacks.
+        collect_shaderpack_option_txt(
+            instance_dir,
+            &opts.shaderpack_names,
+            &mut files,
+            &mut seen,
+        )?;
     }
     if opts.include_game_settings {
         for name in GAME_SETTING_FILES {
@@ -1013,12 +1140,13 @@ async fn run_export(
             return Err("不支持的整合包格式".to_string());
         }
 
-        let client = modrinth_client().await;
         let mut modrinth_index_files: Vec<ModrinthIndexFileOut> = Vec::new();
         let mut curseforge_files: Vec<CurseForgeFileOut> = Vec::new();
         let mut skip_override: HashSet<String> = HashSet::new();
 
-        if opts.include_mods {
+        // When embed_all_files is on, skip platform lookups and keep every file in overrides.
+        if opts.include_mods && !opts.embed_all_files {
+            let client = modrinth_client().await;
             emit_progress(&app, task_id, 0, overrides.len(), "解析 Mod 索引…");
             for item in &overrides {
                 if !item.rel.replace('\\', "/").starts_with("mods/") {
@@ -1053,6 +1181,14 @@ async fn run_export(
                     }
                 }
             }
+        } else if opts.embed_all_files {
+            emit_progress(
+                &app,
+                task_id,
+                0,
+                overrides.len(),
+                "打包全部本地文件（跳过在线索引）…",
+            );
         }
 
         let pack_name = if opts.pack_name.trim().is_empty() {

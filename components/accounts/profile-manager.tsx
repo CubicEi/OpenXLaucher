@@ -62,8 +62,31 @@ function useElementSize<T extends HTMLElement>() {
   return { ref, size };
 }
 
+/** 官方 creeper.png 面部 UV 提取后重着色为 #EF323D（透明底） */
+const CREEPER_FACE_RED_SRC =
+  "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAIAAAACACAYAAADDPmHLAAABRUlEQVR4nO3cwQ2DMBAAQROlAVrJP9Xnn1YogRQBkmPtTAEIS6v74GMMAAAAAAAAAAAAAAAAAAAA4N9tVx9wvN7nmGj/fi6foXz+x32vwooEECeAOAHECSBOAHECiBNAnADiBBAngDgBxAkgTgBxAogTQJwA4gQQJ4A4AcQJIE4AcQKIE0CcAOIEECeAOAHECSBOAHECiJu6W3+H1ffzZzMB4gQQJ4A4AcQJIE4AcQKIE0CcAOIEECeAOAHECSBOAHECiNvq3/Nnm32fwASIE0CcAOIEECeAOAHECSBOAHECiBNAnADiBBAngDgBxAkgTgBxAogTQJwA4gQQJ4A4AcQJIE4AcQKIE0CcAOIEECeAOAHECSDuORY3e7/+WPz/BiZAnADiBBAngDgBxAkgTgBxAogTQJwA4gQQJ4A4AcQJIE4AcT+llhTALQQ0kwAAAABJRU5ErkJggg==";
+
 function canManageSkinsAndCapes(profile: Account): boolean {
   return profile.authType === "microsoft" && Boolean(profile.accessToken);
+}
+
+/** 选中态底色 / 勾选色（按登录类型，低透明度以保证易读） */
+function selectedAuthTone(authType: Account["authType"]): {
+  bg: string;
+  check: string;
+} {
+  switch (authType) {
+    case "microsoft":
+      return { bg: "bg-[#EF323D]/20", check: "text-[#EF323D]" };
+    case "littleskin":
+      return { bg: "bg-amber-400/25", check: "text-amber-600 dark:text-amber-400" };
+    case "third_party":
+      return { bg: "bg-emerald-500/20", check: "text-emerald-600 dark:text-emerald-400" };
+    case "offline":
+      return { bg: "bg-sky-500/20", check: "text-sky-600 dark:text-sky-400" };
+    default:
+      return { bg: "bg-accent", check: "text-primary" };
+  }
 }
 
 function ProfileDetailPanel({ profile }: { profile: Account }) {
@@ -256,17 +279,35 @@ export function ProfileManager() {
                     </Button>
                   </div>
                 ) : (
-                  profiles.map((profile) => (
+                  profiles.map((profile) => {
+                    const isSelected = selectedProfile?.id === profile.id;
+                    const isMicrosoftSelected =
+                      isSelected && profile.authType === "microsoft";
+                    const tone = isSelected
+                      ? selectedAuthTone(profile.authType)
+                      : null;
+
+                    return (
                     <div
                       key={profile.id}
                       className={cn(
-                        "group flex w-full items-center gap-3 rounded-xl p-3 transition-colors hover:bg-accent",
-                        selectedProfile?.id === profile.id && "bg-accent",
+                        "group relative flex w-full items-center gap-3 overflow-hidden rounded-xl p-3 transition-colors",
+                        tone ? tone.bg : "hover:bg-accent",
                       )}
                     >
+                      {isMicrosoftSelected && (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img
+                          src={CREEPER_FACE_RED_SRC}
+                          alt=""
+                          aria-hidden
+                          className="pointer-events-none absolute bottom-1.5 right-1.5 size-10 select-none opacity-50 [image-rendering:pixelated]"
+                          draggable={false}
+                        />
+                      )}
                       <button
                         type="button"
-                        className="flex min-w-0 flex-1 items-center gap-3 text-left"
+                        className="relative z-[1] flex min-w-0 flex-1 items-center gap-3 text-left"
                         onClick={() => selectProfile(profile)}
                       >
                         <Avatar>
@@ -283,8 +324,8 @@ export function ProfileManager() {
                           <p className="truncate text-sm font-medium">{profile.name}</p>
                           <p className="text-xs text-muted-foreground">{profile.status}</p>
                         </div>
-                        {selectedProfile?.id === profile.id && (
-                          <Check className="size-4 shrink-0 text-primary" />
+                        {isSelected && tone && (
+                          <Check className={cn("size-4 shrink-0", tone.check)} />
                         )}
                       </button>
 
@@ -293,7 +334,7 @@ export function ProfileManager() {
                           variant="ghost"
                           size="icon-sm"
                           disabled={refreshingSkinId === profile.id}
-                          className="opacity-0 transition-opacity touch-manipulation group-hover:opacity-100 disabled:opacity-100"
+                          className="relative z-[1] opacity-0 transition-opacity touch-manipulation group-hover:opacity-100 disabled:opacity-100"
                           onClick={(e) => {
                             e.stopPropagation();
                             if (!profile.uuid || refreshingSkinId) return;
@@ -328,7 +369,7 @@ export function ProfileManager() {
                       <Button
                         variant="ghost"
                         size="icon-sm"
-                        className="opacity-0 transition-opacity touch-manipulation group-hover:opacity-100"
+                        className="relative z-[1] opacity-0 transition-opacity touch-manipulation group-hover:opacity-100"
                         onClick={(e) => {
                           e.stopPropagation();
                           setDeleteTarget(profile);
@@ -338,7 +379,8 @@ export function ProfileManager() {
                         <Trash2 className="size-3.5 text-muted-foreground" />
                       </Button>
                     </div>
-                  ))
+                    );
+                  })
                 )}
               </CardContent>
             </Card>

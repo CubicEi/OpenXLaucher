@@ -749,6 +749,8 @@
     "exportModePackOnly": "Pack file only",
     "exportModePortable": "Portable launcher + pack",
     "exportPortableHint": "Creates a folder with the launcher executable, bundled-pack, and OpenX/bundled-modpack.json",
+    "exportEmbedAllFiles": "Bundle all files to skip downloads",
+    "exportEmbedAllFilesHint": "Pack every selected file into the archive, may violate some resource's license agreement",
     "exportInclude": "Include",
     "exportIncludeMods": "Mods",
     "exportIncludeModConfigs": "Mod configs",

@@ -108,14 +108,15 @@ export function ExportInstanceForm({
   const [summary, setSummary] = useState("");
   const [format, setFormat] = useState<PackFormat>("modrinth");
   const [outputMode, setOutputMode] = useState<OutputMode>("pack_only");
+  const [embedAllFiles, setEmbedAllFiles] = useState(false);
 
   const [includeMods, setIncludeMods] = useState(true);
-  const [includeModConfigs, setIncludeModConfigs] = useState(true);
-  const [includeShaderConfigs, setIncludeShaderConfigs] = useState(true);
+  const [includeModConfigs, setIncludeModConfigs] = useState(false);
+  const [includeShaderConfigs, setIncludeShaderConfigs] = useState(false);
   const [includeGameSettings, setIncludeGameSettings] = useState(true);
   const [includeSaves, setIncludeSaves] = useState(false);
   const [includeSchematics, setIncludeSchematics] = useState(false);
-  const [includeServerList, setIncludeServerList] = useState(true);
+  const [includeServerList, setIncludeServerList] = useState(false);
 
   const [resourcepackNames, setResourcepackNames] = useState<string[]>([]);
   const [shaderpackNames, setShaderpackNames] = useState<string[]>([]);
@@ -162,8 +163,9 @@ export function ExportInstanceForm({
       if (cancelled) return;
       setAvailableResourcepacks(resources);
       setAvailableShaderpacks(shaders);
-      setResourcepackNames(resources);
-      setShaderpackNames(shaders);
+      // Default export only includes mods + game settings; packs stay unchecked.
+      setResourcepackNames([]);
+      setShaderpackNames([]);
     })();
 
     return () => {
@@ -199,6 +201,7 @@ export function ExportInstanceForm({
       format,
       outputMode,
       outputPath,
+      embedAllFiles,
       // Portable always bundles the launcher; pack_only never does.
       includeLauncher: outputMode === "portable_folder",
       includeMods,
@@ -221,6 +224,7 @@ export function ExportInstanceForm({
       summary,
       format,
       outputMode,
+      embedAllFiles,
       includeMods,
       includeModConfigs,
       includeShaderpacks,
@@ -400,6 +404,17 @@ export function ExportInstanceForm({
                 {t("gameSettings.exportPortableHint")}
               </p>
             )}
+            <ExportIncludeItem
+              checked={embedAllFiles}
+              label={t("gameSettings.exportEmbedAllFiles")}
+              disabled={formDisabled}
+              onToggle={setEmbedAllFiles}
+            />
+            {embedAllFiles && (
+              <p className="text-[11px] leading-snug text-muted-foreground">
+                {t("gameSettings.exportEmbedAllFilesHint")}
+              </p>
+            )}
           </div>
 
           {error && (
@@ -418,12 +433,15 @@ export function ExportInstanceForm({
               checked={includeMods}
               label={t("gameSettings.exportIncludeMods")}
               disabled={formDisabled}
-              onToggle={setIncludeMods}
+              onToggle={(next) => {
+                setIncludeMods(next);
+                if (!next) setIncludeModConfigs(false);
+              }}
             />
             <ExportIncludeItem
               checked={includeModConfigs}
               label={t("gameSettings.exportIncludeModConfigs")}
-              disabled={formDisabled}
+              disabled={formDisabled || !includeMods}
               onToggle={setIncludeModConfigs}
             />
 
