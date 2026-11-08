@@ -6,18 +6,9 @@ import { useRouter } from "next/navigation";
 import { invoke } from "@tauri-apps/api/core";
 import {
   Gamepad2,
-  Puzzle,
-  Image as ImageIcon,
-  Globe,
-  Map,
-  Sparkles,
-  Database,
-  Camera,
   Package,
-  ChevronRight,
   Trash2,
   Loader2,
-  type LucideIcon,
 } from "lucide-react";
 import { useLaunchContext } from "@/components/launch/launch-provider";
 import { SELECT_VERSION_PATH } from "@/components/launch/version-selector-panel";
@@ -37,8 +28,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { useI18n, type Translation } from "@/components/i18n/use-i18n";
-import { GAME_SETTINGS_FEATURE_NAV } from "./feature-nav";
+import { useI18n } from "@/components/i18n/use-i18n";
 import {
   createInAppLinkHandler,
   navigateWithMainTransition,
@@ -51,52 +41,8 @@ import {
 } from "@/lib/instance-name";
 import { setRetargetContext } from "@/lib/retarget-version";
 
-const FEATURE_META: Record<
-  (typeof GAME_SETTINGS_FEATURE_NAV)[number]["href"],
-  { description: Translation; icon: LucideIcon }
-> = {
-  "/game-settings/export": {
-    description: "gameSettings.exportInstanceHint",
-    icon: Package,
-  },
-  "/game-settings/mods": {
-    description: "gameSettings.addRemoveAndManageMods",
-    icon: Puzzle,
-  },
-  "/game-settings/resources": {
-    description: "gameSettings.switchAndManageTextureResourcePacks",
-    icon: ImageIcon,
-  },
-  "/game-settings/worlds": {
-    description: "gameSettings.manageYourWorldSaves",
-    icon: Globe,
-  },
-  "/game-settings/shaders": {
-    description: "gameSettings.configureShaderEffectsAndShaders",
-    icon: Sparkles,
-  },
-  "/game-settings/datapacks": {
-    description: "gameSettings.manageMinecraftDatapacks",
-    icon: Database,
-  },
-  "/game-settings/schematics": {
-    description: "gameSettings.manageBuildingSchematicFiles",
-    icon: Map,
-  },
-  "/game-settings/screenshots": {
-    description: "gameSettings.viewScreenshotsSavedInGame",
-    icon: Camera,
-  },
-};
-
-const SETTING_ENTRIES = GAME_SETTINGS_FEATURE_NAV.map((item) => ({
-  ...item,
-  ...FEATURE_META[item.href],
-}));
-
 /**
  * 游戏设置 · 核心设置页
- * 布局：左侧约 2/3 预留核心设置区 · 右侧约 1/3 垂直词条列表
  */
 export default function GameSettings() {
   const router = useRouter();
@@ -287,129 +233,63 @@ export default function GameSettings() {
           </div>
         </PageEnterItem>
 
-        <div className="flex min-h-0 flex-1 flex-col gap-4">
-          <div className="flex min-h-0 flex-1 flex-col gap-4 md:flex-row md:items-stretch">
-            <PageEnterItem
-              aria-label={t("gameSettings.coreSettings")}
-              className="flex min-h-[12rem] min-w-0 flex-[2] flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-sm md:min-h-0"
-            >
-              <div className="border-b border-border bg-muted/20 px-4 py-2.5">
-                <p className="text-xs font-medium text-muted-foreground">
-                  {t("gameSettings.coreSettings")}
+        <PageEnterItem
+          aria-label={t("gameSettings.coreSettings")}
+          className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-sm"
+        >
+          <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
+            {!isConfigured ? (
+              <div className="flex flex-1 flex-col items-center justify-center gap-3 p-5 text-center">
+                <div className="flex size-12 items-center justify-center rounded-full bg-muted">
+                  <Gamepad2 className="size-6 text-muted-foreground" />
+                </div>
+                <p className="text-sm font-medium">
+                  {t("gameSettings.pleaseClickTheTitleAboveToSelectAGame")}
+                </p>
+                <p className="max-w-sm text-xs text-muted-foreground">
+                  {t("gameSettings.afterConfigurationYouCanManageModsResourcePacksAnd")}
                 </p>
               </div>
-              <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
-                {!isConfigured ? (
-                  <div className="flex flex-1 flex-col items-center justify-center gap-3 p-5 text-center">
-                    <div className="flex size-12 items-center justify-center rounded-full bg-muted">
-                      <Gamepad2 className="size-6 text-muted-foreground" />
-                    </div>
-                    <p className="text-sm font-medium">
-                      {t("gameSettings.pleaseClickTheTitleAboveToSelectAGame")}
-                    </p>
-                    <p className="max-w-sm text-xs text-muted-foreground">
-                      {t("gameSettings.afterConfigurationYouCanManageModsResourcePacksAnd")}
-                    </p>
+            ) : (
+              <ul className="divide-y divide-border">
+                <li className="flex items-center gap-3 px-4 py-3">
+                  <span className="min-w-0 flex-1 text-sm font-medium">
+                    {t("gameSettings.renameVersionFolder")}
+                  </span>
+                  <Button
+                    size="sm"
+                    className="shrink-0"
+                    disabled={renaming}
+                    onClick={() => setRenameDialogOpen(true)}
+                  >
+                    {renaming ? (
+                      <Loader2 className="size-3.5 animate-spin" />
+                    ) : null}
+                    {t("gameSettings.startRenameVersion")}
+                  </Button>
+                </li>
+                <li className="flex items-center gap-3 px-4 py-3">
+                  <div className="min-w-0 flex-1">
+                    <span className="block text-sm font-medium">
+                      {t("gameSettings.retargetVersion")}
+                    </span>
+                    <span className="mt-0.5 block text-xs text-muted-foreground">
+                      {t("gameSettings.retargetVersionHint")}
+                    </span>
                   </div>
-                ) : (
-                  <ul className="divide-y divide-border">
-                    <li className="flex items-center gap-3 px-4 py-3">
-                      <span className="min-w-0 flex-1 text-sm font-medium">
-                        {t("gameSettings.renameVersionFolder")}
-                      </span>
-                      <Button
-                        size="sm"
-                        className="shrink-0"
-                        disabled={renaming}
-                        onClick={() => setRenameDialogOpen(true)}
-                      >
-                        {renaming ? (
-                          <Loader2 className="size-3.5 animate-spin" />
-                        ) : null}
-                        {t("gameSettings.startRenameVersion")}
-                      </Button>
-                    </li>
-                    <li className="flex items-center gap-3 px-4 py-3">
-                      <div className="min-w-0 flex-1">
-                        <span className="block text-sm font-medium">
-                          {t("gameSettings.retargetVersion")}
-                        </span>
-                        <span className="mt-0.5 block text-xs text-muted-foreground">
-                          {t("gameSettings.retargetVersionHint")}
-                        </span>
-                      </div>
-                      <Button
-                        size="sm"
-                        className="shrink-0"
-                        disabled={!isConfigured || versionInstallBusy}
-                        onClick={handleStartRetarget}
-                      >
-                        {t("gameSettings.retargetVersionStart")}
-                      </Button>
-                    </li>
-                    <li className="flex items-center gap-3 px-4 py-3">
-                      <div className="min-w-0 flex-1">
-                        <span className="block text-sm font-medium">
-                          {t("gameSettings.exportInstance")}
-                        </span>
-                        <span className="mt-0.5 block text-xs text-muted-foreground">
-                          {t("gameSettings.exportInstanceHint")}
-                        </span>
-                      </div>
-                      <Button
-                        size="sm"
-                        className="shrink-0"
-                        disabled={!isConfigured || !effectiveVersionDirName}
-                        onClick={() =>
-                          navigateWithMainTransition(router, "/game-settings/export")
-                        }
-                      >
-                        {t("gameSettings.exportInstanceStart")}
-                      </Button>
-                    </li>
-                  </ul>
-                )}
-              </div>
-            </PageEnterItem>
-
-            <PageEnterItem
-              aria-label={t("gameSettings.featureEntries")}
-              className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-sm md:flex-[1]"
-            >
-              <div className="shrink-0 border-b border-border bg-muted/20 px-4 py-2.5">
-                <p className="text-xs font-medium text-muted-foreground">
-                  {t("gameSettings.featureEntries")}
-                </p>
-              </div>
-              <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
-                {SETTING_ENTRIES.map((entry) => {
-                  const Icon = entry.icon;
-                  return (
-                    <Link
-                      key={entry.href}
-                      href={entry.href}
-                      onPointerDown={onInAppLinkPointerDown}
-                      onClick={createInAppLinkHandler(router, entry.href)}
-                      suppressHydrationWarning
-                      className="group flex items-center gap-3 border-b border-border px-4 py-3 text-left transition-colors last:border-b-0 hover:bg-accent/40"
-                    >
-                      <Icon className="size-4 shrink-0 text-muted-foreground" />
-                      <div className="min-w-0 flex-1">
-                        <span className="block text-sm font-medium leading-tight">
-                          {t(entry.label)}
-                        </span>
-                        <span className="mt-0.5 block truncate text-xs text-muted-foreground">
-                          {t(entry.description)}
-                        </span>
-                      </div>
-                      <ChevronRight className="size-4 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100" />
-                    </Link>
-                  );
-                })}
-              </div>
-            </PageEnterItem>
+                  <Button
+                    size="sm"
+                    className="shrink-0"
+                    disabled={!isConfigured || versionInstallBusy}
+                    onClick={handleStartRetarget}
+                  >
+                    {t("gameSettings.retargetVersionStart")}
+                  </Button>
+                </li>
+              </ul>
+            )}
           </div>
-        </div>
+        </PageEnterItem>
       </div>
 
       <InstanceNameDialog

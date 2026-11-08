@@ -15,7 +15,7 @@ type SkinPreviewProps = {
  * 主页中间大尺寸 3D 皮肤预览
  * - 居中展示，占据主要视觉空间
  * - 有皮肤：3D 渲染
- * - 无皮肤/未登录：显示"点击创建账户"提示
+ * - 无皮肤/未登录：显示"点击添加档案"提示
  */
 export function SkinPreview({ profile }: SkinPreviewProps) {
   const hasSkin = !!profile?.skinUrl;
@@ -48,13 +48,13 @@ export function SkinPreview({ profile }: SkinPreviewProps) {
               </div>
             </div>
           ) : (
-            // 完全未登录：邀请创建账户
+            // 完全未登录：邀请创建档案
             <div className="relative flex flex-col items-center justify-center gap-3 text-muted-foreground">
               <div className="size-24 rounded-2xl bg-muted flex items-center justify-center shadow-sm">
                 <UserPlus className="size-10" />
               </div>
               <div className="text-center text-sm">
-                点击右侧「管理账户」添加你的角色
+                点击右侧「管理档案」添加你的角色
               </div>
             </div>
           )}

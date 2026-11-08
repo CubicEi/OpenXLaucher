@@ -19,6 +19,7 @@ import { JavaIncompatibleDialog } from "@/components/launch/java-incompatible-di
 import { GameExitErrorDialog } from "@/components/launch/game-exit-error-dialog";
 import { StartupOnboardingHost } from "@/components/onboarding/startup-onboarding-host";
 import { CornerNoticeProvider } from "@/components/global/corner-notice";
+import { ScrollbarProximity } from "@/components/global/scrollbar-proximity";
 import { APPEARANCE_BOOTSTRAP_SCRIPT } from "@/lib/appearance-bootstrap-script";
 
 export const metadata: Metadata = {
@@ -58,6 +59,7 @@ export default function RootLayout({
                         <TooltipProvider>
                           <ThemeRuntimeProvider>
                             <DeferredGlobalFeatures />
+                            <ScrollbarProximity />
                             <StartupRuntimeDependencyNotifier />
                             <StartupUpdateNotifier />
                             <StartupJavaScan />

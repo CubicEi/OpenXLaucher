@@ -28,7 +28,8 @@ const SHADER_CONFIG_PREFIXES: &[&str] = &[
 
 const SHADER_ROOT_FILES: &[&str] = &["optionsshaders.txt", "optionsof.txt"];
 
-const GAME_SETTING_FILES: &[&str] = &["options.txt", "servers.dat"];
+const GAME_SETTING_FILES: &[&str] = &["options.txt"];
+const SERVER_LIST_FILES: &[&str] = &["servers.dat"];
 
 static EXPORT_TASK_COUNTER: AtomicU64 = AtomicU64::new(2_000_000);
 
@@ -60,8 +61,18 @@ pub struct InstanceExportOptions {
     pub include_shaderpacks: bool,
     pub include_shader_configs: bool,
     pub include_resourcepacks: bool,
+    /// Selected resource pack entry names under `resourcepacks/`. `None` = all.
+    #[serde(default)]
+    pub resourcepack_names: Option<Vec<String>>,
+    /// Selected shader pack entry names under `shaderpacks/`. `None` = all.
+    #[serde(default)]
+    pub shaderpack_names: Option<Vec<String>>,
     pub include_game_settings: bool,
     pub include_saves: bool,
+    #[serde(default)]
+    pub include_schematics: bool,
+    #[serde(default)]
+    pub include_server_list: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -167,25 +178,25 @@ fn walk_files_under(dir: &Path, rel_prefix: &str, out: &mut Vec<OverrideFile>) -
         let entry = entry.map_err(|e| e.to_string())?;
         let path = entry.path();
         let name = entry.file_name().to_string_lossy().to_string();
+        let child_rel = if rel_prefix.is_empty() {
+            name.clone()
+        } else {
+            format!("{}/{}", rel_prefix.trim_end_matches('/'), name)
+        };
         if path.is_dir() {
             if is_version_engine_dir(&name) {
                 continue;
             }
-            walk_files_under(&path, rel_prefix, out)?;
+            walk_files_under(&path, &child_rel, out)?;
             continue;
         }
         if !path.is_file() {
             continue;
         }
-        let rel = if rel_prefix.is_empty() {
-            name.clone()
-        } else {
-            format!("{}/{}", rel_prefix.trim_end_matches('/'), name)
-        };
-        validate_relative_path(&rel)?;
+        validate_relative_path(&child_rel)?;
         out.push(OverrideFile {
             abs: path,
-            rel,
+            rel: child_rel,
         });
     }
     Ok(())
@@ -239,6 +250,49 @@ fn push_unique(
     }
 }
 
+fn push_named_subdir_entries(
+    instance_dir: &Path,
+    sub: &str,
+    names: &[String],
+    out: &mut Vec<OverrideFile>,
+) -> Result<(), String> {
+    let root = instance_dir.join(sub);
+    for name in names {
+        let name = name.trim();
+        if name.is_empty() || name.contains('/') || name.contains('\\') || name == "." || name == ".."
+        {
+            continue;
+        }
+        let path = root.join(name);
+        if path.is_file() {
+            let rel = format!("{}/{}", sub, name);
+            validate_relative_path(&rel)?;
+            out.push(OverrideFile {
+                abs: path,
+                rel,
+            });
+            continue;
+        }
+        if path.is_dir() {
+            let prefix = format!("{}/{}", sub, name);
+            walk_files_under(&path, &prefix, out)?;
+        }
+    }
+    Ok(())
+}
+
+fn collect_named_or_all(
+    instance_dir: &Path,
+    sub: &str,
+    names: &Option<Vec<String>>,
+    out: &mut Vec<OverrideFile>,
+) -> Result<(), String> {
+    match names {
+        None => walk_tree(instance_dir, sub, None, out),
+        Some(list) => push_named_subdir_entries(instance_dir, sub, list, out),
+    }
+}
+
 fn collect_override_files(
     instance_dir: &Path,
     opts: &InstanceExportOptions,
@@ -250,13 +304,21 @@ fn collect_override_files(
         walk_tree(instance_dir, "mods", None, &mut files)?;
     }
     if opts.include_shaderpacks {
-        walk_tree(instance_dir, "shaderpacks", None, &mut files)?;
+        collect_named_or_all(instance_dir, "shaderpacks", &opts.shaderpack_names, &mut files)?;
     }
     if opts.include_resourcepacks {
-        walk_tree(instance_dir, "resourcepacks", None, &mut files)?;
+        collect_named_or_all(
+            instance_dir,
+            "resourcepacks",
+            &opts.resourcepack_names,
+            &mut files,
+        )?;
     }
     if opts.include_saves {
         walk_tree(instance_dir, "saves", None, &mut files)?;
+    }
+    if opts.include_schematics {
+        walk_tree(instance_dir, "schematics", None, &mut files)?;
     }
     if opts.include_mod_configs {
         walk_tree(instance_dir, "config", Some(is_mod_config_rel), &mut files)?;
@@ -286,6 +348,15 @@ fn collect_override_files(
             walk_files_under(&srp, "server-resource-packs", &mut tmp)?;
             for f in tmp {
                 push_unique(&mut files, &mut seen, f);
+            }
+        }
+    }
+    if opts.include_server_list {
+        for name in SERVER_LIST_FILES {
+            let p = instance_dir.join(name);
+            if p.is_file() {
+                let rel = name.to_string();
+                push_unique(&mut files, &mut seen, OverrideFile { abs: p, rel });
             }
         }
     }

@@ -414,8 +414,14 @@ export type InstanceExportOptions = {
   includeShaderpacks: boolean;
   includeShaderConfigs: boolean;
   includeResourcepacks: boolean;
+  /** 勾选导出的资源包文件/目录名；缺省表示全部 */
+  resourcepackNames?: string[];
+  /** 勾选导出的光影包文件/目录名；缺省表示全部 */
+  shaderpackNames?: string[];
   includeGameSettings: boolean;
   includeSaves: boolean;
+  includeSchematics?: boolean;
+  includeServerList?: boolean;
 };
 
 export type InstanceExportProgressPayload = {

@@ -703,7 +703,7 @@ export function LaunchProvider({ children }: { children: React.ReactNode }) {
             prep.reason === "network"
               ? "无法连接微软服务器以刷新登录令牌，请检查网络后重试。"
               : prep.reason === "credentials"
-                ? "当前正版账号缺少有效登录令牌，请在账户中重新登录微软账号。"
+                ? "当前正版账号缺少有效登录令牌，请在档案中重新登录微软账号。"
                 : prep.reason === "cancelled"
                   ? "已取消微软登录，游戏未启动。"
                   : "微软账号准备失败，游戏未启动。";

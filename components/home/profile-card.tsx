@@ -46,10 +46,10 @@ export function ProfileCard({
     >
       <Card className="h-full flex flex-col border shadow-sm">
         <CardHeader className="pb-3">
-          <CardTitle className="text-base">账户与启动</CardTitle>
+          <CardTitle className="text-base">档案与启动</CardTitle>
         </CardHeader>
 
-        {/* 当前账户状态 */}
+        {/* 当前档案状态 */}
         <CardContent className="space-y-3 pt-0 pb-3">
           <div className="rounded-lg border border-border bg-card p-3">
             <div className="flex items-center gap-3">
@@ -65,7 +65,7 @@ export function ProfileCard({
                   {selectedProfile?.name ?? "尚未登录"}
                 </div>
                 <div className="text-xs text-muted-foreground truncate">
-                  {selectedProfile ? "已登录" : "点击下方按钮添加账户"}
+                  {selectedProfile ? "已登录" : "点击下方按钮添加档案"}
                 </div>
               </div>
             </div>
@@ -78,7 +78,7 @@ export function ProfileCard({
                 className="w-full gap-2"
               >
                 <Users className="size-3.5" />
-                管理账户
+                管理档案
               </Button>
             </div>
           </div>
