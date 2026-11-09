@@ -22,13 +22,14 @@ import {
   Sparkles,
   Square,
 } from "lucide-react";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { isAutoJavaSelection } from "@/lib/java-paths";
 import type { LauncherPathsConfig } from "@/types";
 import { useI18n } from "@/components/i18n/use-i18n";
 import { LoaderIcon, inferLoaderKind } from "@/components/launch/loader-icon";
 import { ThemeSlot } from "@/components/themes/theme-slot";
 import { useThemeRuntime } from "@/components/themes/theme-runtime-provider";
+import { resolveLaunchProfileForConfig } from "@/lib/version-profile";
 
 interface MemoryOptimizationReport {
   available_before_mb: number;
@@ -55,21 +56,27 @@ export function LaunchPanel() {
     cancelLaunch,
     runningInstances,
   } = useLaunchContext();
-  const { selectedProfile } = useAccountContext();
+  const { profiles, selectedProfile } = useAccountContext();
   const [javaInstallations, setJavaInstallations] = useState<LauncherPathsConfig["java_installations"]>({});
 
   // 内存清理相关的状态
   const [optimizing, setOptimizing] = useState(false);
   const [lastReport, setLastReport] = useState<MemoryOptimizationReport | null>(null);
   const [optimizeError, setOptimizeError] = useState<string | null>(null);
+
+  const displayProfile = useMemo(
+    () => resolveLaunchProfileForConfig(profiles, selectedProfile, config),
+    [profiles, selectedProfile, config],
+  );
+
   const profileStatusMap: Record<string, string> = {
     "LittleSkin 登录": t("account.littleSkinSignIn"),
     "第三方登录": t("account.thirdPartySignIn"),
     "离线登录": t("account.offlineSignIn"),
     "正版登录": t("account.microsoftSignIn"),
   };
-  const profileStatus = selectedProfile?.status
-    ? profileStatusMap[selectedProfile.status] ?? selectedProfile.status
+  const profileStatus = displayProfile?.status
+    ? profileStatusMap[displayProfile.status] ?? displayProfile.status
     : undefined;
 
   useEffect(() => {
@@ -129,21 +136,21 @@ export function LaunchPanel() {
             </div>
           </div>
 
-          {/* 当前账户 */}
-          {selectedProfile && (
+          {/* 当前版本实际启动档案（可覆盖全局选中） */}
+          {displayProfile && (
             <div className="flex items-center gap-2">
               <Avatar size="sm">
                 <AvatarFallback
                   className={cn(
-                    getAvatarColor(selectedProfile.name),
+                    getAvatarColor(displayProfile.name),
                     "text-white font-medium"
                   )}
                 >
-                  {getAvatarInitials(selectedProfile.name)}
+                  {getAvatarInitials(displayProfile.name)}
                 </AvatarFallback>
               </Avatar>
               <div className="text-right">
-                <p className="text-xs font-medium">{selectedProfile.name}</p>
+                <p className="text-xs font-medium">{displayProfile.name}</p>
                 <p className="text-[10px] text-muted-foreground">
                   {profileStatus}
                 </p>

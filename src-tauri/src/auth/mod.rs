@@ -62,6 +62,9 @@ pub struct AccountInfo {
     /// 皮肤模型: "classic"（粗臂）或 "slim"（细臂 / Alex）
     #[serde(default)]
     pub variant: Option<String>,
+    /// Minecraft access_token 剩余有效秒数（微软链路）；缺省表示未知
+    #[serde(default)]
+    pub expires_in: Option<u64>,
 }
 
 /// 第三方登录后获取到的角色列表

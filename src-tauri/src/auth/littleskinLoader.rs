@@ -286,6 +286,7 @@ impl LittleSkinClient {
                             access_token: token_response.access_token,
                             skin_url: Some(uuid),
                             variant,
+                            expires_in: None,
                         });
                     }
                 }

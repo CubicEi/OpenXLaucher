@@ -1572,6 +1572,7 @@ pub async fn ms_poll_and_login(device_code: String, interval: u64) -> Result<Acc
             access_token: mc_login.access_token.clone(),
             skin_url: Some(profile.id.clone()),
             variant: skin_variant,
+            expires_in: Some(mc_login.expires_in),
         };
 
         // 保存到数据库（非致命，通过 spawn_blocking 隔离 sqlite 线程安全问题）
@@ -2068,6 +2069,7 @@ pub async fn ms_silent_refresh_account(uuid: String) -> Result<AccountInfo, Stri
         access_token: mc_login.access_token,
         skin_url: Some(db_uuid),
         variant: skin_variant,
+        expires_in: Some(mc_login.expires_in),
     })
 }
 

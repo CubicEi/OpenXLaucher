@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { invoke } from "@tauri-apps/api/core";
@@ -10,6 +10,7 @@ import {
   Trash2,
   Loader2,
 } from "lucide-react";
+import { useAccountContext } from "@/components/accounts/account-provider";
 import { useLaunchContext } from "@/components/launch/launch-provider";
 import { SELECT_VERSION_PATH } from "@/components/launch/version-selector-panel";
 import { InstanceNameDialog } from "@/components/download/instance-name-dialog";
@@ -28,7 +29,14 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { useI18n } from "@/components/i18n/use-i18n";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { useI18n, type TranslationKey } from "@/components/i18n/use-i18n";
 import {
   createInAppLinkHandler,
   navigateWithMainTransition,
@@ -40,6 +48,48 @@ import {
   inferLoaderFamilyFromFolder,
 } from "@/lib/instance-name";
 import { setRetargetContext } from "@/lib/retarget-version";
+import {
+  VERSION_PROFILE_GLOBAL,
+  clearVersionProfileOverride,
+  getVersionProfileOverride,
+  renameVersionProfileOverride,
+  setVersionProfileOverride,
+} from "@/lib/version-profile";
+import type { AuthType } from "@/types";
+
+type TranslateFn = (key: TranslationKey, values?: Record<string, string | number>) => string;
+
+function authTypeShortLabel(authType: AuthType, t: TranslateFn): string {
+  switch (authType) {
+    case "offline":
+      return t("gameSettings.authTypeOffline");
+    case "microsoft":
+      return t("gameSettings.authTypeMicrosoft");
+    case "littleskin":
+      return t("gameSettings.authTypeLittleSkin");
+    case "third_party":
+      return t("gameSettings.authTypeThirdParty");
+  }
+}
+
+function ProfileOptionLabel({
+  name,
+  authType,
+  t,
+}: {
+  name: string;
+  authType: AuthType;
+  t: TranslateFn;
+}) {
+  return (
+    <span className="inline-flex min-w-0 items-baseline gap-1.5">
+      <span className="truncate">{name}</span>
+      <span className="shrink-0 text-xs text-muted-foreground">
+        {authTypeShortLabel(authType, t)}
+      </span>
+    </span>
+  );
+}
 
 /**
  * 游戏设置 · 核心设置页
@@ -47,12 +97,15 @@ import { setRetargetContext } from "@/lib/retarget-version";
 export default function GameSettings() {
   const router = useRouter();
   const { config, updateConfig } = useLaunchContext();
+  const { profiles, selectedProfile } = useAccountContext();
   const { tasks } = useDownloadManager();
   const { t } = useI18n();
   const [deleteVersionOpen, setDeleteVersionOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [renameDialogOpen, setRenameDialogOpen] = useState(false);
   const [renaming, setRenaming] = useState(false);
+  const [versionProfileValue, setVersionProfileValue] =
+    useState(VERSION_PROFILE_GLOBAL);
 
   const instancesPath = config.minecraftPath
     ? `${config.minecraftPath}/versions`
@@ -67,6 +120,47 @@ export default function GameSettings() {
     config.loadType !== "0" && config.loadName
       ? config.loadName
       : config.versionName;
+
+  useEffect(() => {
+    if (!config.minecraftPath || !effectiveVersionDirName) {
+      setVersionProfileValue(VERSION_PROFILE_GLOBAL);
+      return;
+    }
+    const override = getVersionProfileOverride(
+      config.minecraftPath,
+      effectiveVersionDirName,
+    );
+    if (override && profiles.some((p) => p.id === override)) {
+      setVersionProfileValue(override);
+    } else {
+      setVersionProfileValue(VERSION_PROFILE_GLOBAL);
+    }
+  }, [config.minecraftPath, effectiveVersionDirName, profiles]);
+
+  const globalProfileLabel = useMemo(() => {
+    if (!selectedProfile) {
+      return t("gameSettings.launchProfileUseGlobal");
+    }
+    return (
+      <ProfileOptionLabel
+        name={t("gameSettings.launchProfileUseGlobalWithName", {
+          name: selectedProfile.name,
+        })}
+        authType={selectedProfile.authType}
+        t={t}
+      />
+    );
+  }, [selectedProfile, t]);
+
+  function handleVersionProfileChange(next: string) {
+    if (!config.minecraftPath || !effectiveVersionDirName) return;
+    setVersionProfileValue(next);
+    setVersionProfileOverride(
+      config.minecraftPath,
+      effectiveVersionDirName,
+      next === VERSION_PROFILE_GLOBAL ? null : next,
+    );
+  }
 
   const versionInstallBusy = tasks.some(
     (task) =>
@@ -111,6 +205,7 @@ export default function GameSettings() {
         minecraftPath: config.minecraftPath,
         versionName: effectiveVersionDirName,
       });
+      clearVersionProfileOverride(config.minecraftPath, effectiveVersionDirName);
       updateConfig({
         versionName: "",
         loadType: "0",
@@ -136,20 +231,23 @@ export default function GameSettings() {
 
     try {
       setRenaming(true);
+      const oldFolder = effectiveVersionDirName;
       const newName = await invoke<string>("vm_rename_version_dir", {
         minecraftPath: config.minecraftPath,
-        oldFolderName: effectiveVersionDirName,
+        oldFolderName: oldFolder,
         newFolderName: resolvedName,
       });
+
+      renameVersionProfileOverride(config.minecraftPath, oldFolder, newName);
 
       const configPatch: {
         versionName?: string;
         loadName?: string;
       } = {};
-      if (config.loadType !== "0" && config.loadName === effectiveVersionDirName) {
+      if (config.loadType !== "0" && config.loadName === oldFolder) {
         configPatch.loadName = newName;
       }
-      if (config.versionName === effectiveVersionDirName) {
+      if (config.versionName === oldFolder) {
         configPatch.versionName = newName;
       }
       if (Object.keys(configPatch).length > 0) {
@@ -252,6 +350,38 @@ export default function GameSettings() {
               </div>
             ) : (
               <ul className="divide-y divide-border">
+                <li className="flex items-center gap-3 px-4 py-3">
+                  <div className="min-w-0 flex-1 pr-3">
+                    <span className="block text-sm font-medium">
+                      {t("gameSettings.launchProfile")}
+                    </span>
+                    <span className="mt-0.5 block text-xs text-muted-foreground">
+                      {t("gameSettings.launchProfileHint")}
+                    </span>
+                  </div>
+                  <Select
+                    value={versionProfileValue}
+                    onValueChange={handleVersionProfileChange}
+                  >
+                    <SelectTrigger className="h-8 w-[min(100%,280px)] shrink-0">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value={VERSION_PROFILE_GLOBAL}>
+                        {globalProfileLabel}
+                      </SelectItem>
+                      {profiles.map((profile) => (
+                        <SelectItem key={profile.id} value={profile.id}>
+                          <ProfileOptionLabel
+                            name={profile.name}
+                            authType={profile.authType}
+                            t={t}
+                          />
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </li>
                 <li className="flex items-center gap-3 px-4 py-3">
                   <span className="min-w-0 flex-1 text-sm font-medium">
                     {t("gameSettings.renameVersionFolder")}

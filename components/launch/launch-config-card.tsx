@@ -33,6 +33,7 @@ import {
   isAutoJavaSelection,
 } from "@/lib/java-paths";
 import { mergeJavaScanIntoPathsConfig } from "@/lib/java-scan-merge";
+import { getVersionProfileOverride } from "@/lib/version-profile";
 
 interface MemoryInfo {
   totalMB: number;
@@ -132,7 +133,7 @@ function PathItem({
 export function LaunchConfigCard() {
   const { t } = useI18n();
   const { config, updateConfig, configLoaded } = useLaunchContext();
-  const { selectedProfile } = useAccountContext();
+  const { profiles, selectedProfile } = useAccountContext();
   const autoMemory = config.autoMemory !== false;
   const { totalMB, usedMB, availableMB, recommendedMB } = useSystemMemory(autoMemory);
 
@@ -259,7 +260,19 @@ export function LaunchConfigCard() {
 
   const handleExportLaunchArgs = async () => {
     try {
-      if (!selectedProfile) {
+      const versionFolder =
+        config.loadType !== "0" && config.loadName
+          ? config.loadName
+          : config.versionName;
+      const overrideId = getVersionProfileOverride(
+        config.minecraftPath,
+        versionFolder,
+      );
+      const exportProfile =
+        (overrideId
+          ? profiles.find((p) => p.id === overrideId)
+          : null) ?? selectedProfile;
+      if (!exportProfile) {
         alert(t("launch.config.selectAnAccountFirst"));
         return;
       }
@@ -275,14 +288,14 @@ export function LaunchConfigCard() {
       // 导出的命令必须与实际启动完全一致：始终以当前账户的认证信息为准，
       // 避免保存过的全局 token/Yggdrasil 地址污染其他账户。
       const isYggdrasilAccount =
-        selectedProfile.authType === "littleskin" ||
-        selectedProfile.authType === "third_party";
+        exportProfile.authType === "littleskin" ||
+        exportProfile.authType === "third_party";
       const accountAuthToken =
-        selectedProfile.authType === "offline"
+        exportProfile.authType === "offline"
           ? "0"
-          : selectedProfile.accessToken || "";
+          : exportProfile.accessToken || "";
       const accountYggdrasilApi = isYggdrasilAccount
-        ? selectedProfile.yggdrasilUrl || config.yggdrasilApi || ""
+        ? exportProfile.yggdrasilUrl || config.yggdrasilApi || ""
         : "";
 
       let exportMaxMemory = config.maxMemory;
@@ -301,9 +314,9 @@ export function LaunchConfigCard() {
         maxMemory: exportMaxMemory,
         versionName: config.versionName,
         minecraftVersion: config.minecraftVersion,
-        playerName: config.playerName || selectedProfile.name,
+        playerName: config.playerName || exportProfile.name,
         authToken: accountAuthToken,
-        uuid: config.uuid || selectedProfile.uuid || selectedProfile.id,
+        uuid: config.uuid || exportProfile.uuid || exportProfile.id,
         authlibInjectorPath: config.authlibInjectorPath,
         yggdrasilApi: accountYggdrasilApi,
         prefetchedData: accountYggdrasilApi ? config.prefetchedData : "",
@@ -317,7 +330,7 @@ export function LaunchConfigCard() {
       const exportData = `# Minecraft 启动命令
 # 导出时间: ${new Date().toLocaleString()}
 # 版本: ${config.versionName || "未设置"}
-# 玩家: ${selectedProfile.name}
+# 玩家: ${exportProfile.name}
 
 ${result}
 `;

@@ -28,6 +28,8 @@ export type AccountInfo = {
   skin_url: string | null;
   /** 皮肤模型 classic | slim（来自 profile） */
   variant?: SkinVariant | string | null;
+  /** Minecraft access_token 有效秒数（微软链路）；缺省未知 */
+  expires_in?: number | null;
 };
 
 /** LittleSkin 账号密码登录结果（一个账号可能多个玩家） */

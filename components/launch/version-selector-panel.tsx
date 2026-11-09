@@ -9,7 +9,6 @@ import {
   PackageOpen,
   Search,
   Loader2,
-  CheckCircle2,
   Settings,
   RefreshCw,
   ArrowLeft,
@@ -276,16 +275,10 @@ export function VersionSelectorPanel({ onAfterSelect }: VersionSelectorPanelProp
                   onClick={() => handleSelectVersion(version)}
                   className="flex min-w-0 flex-1 items-center gap-3 text-left"
                 >
-                  {isSelected ? (
-                    <div className="flex shrink-0 items-center">
-                      <CheckCircle2 className="size-4 shrink-0 text-primary" />
-                    </div>
-                  ) : (
-                    <LoaderIcon
-                      kind={inferLoaderKind(version.loaderType) as LoaderKind}
-                      className="size-6 shrink-0"
-                    />
-                  )}
+                  <LoaderIcon
+                    kind={inferLoaderKind(version.loaderType) as LoaderKind}
+                    className="size-6 shrink-0"
+                  />
 
                   <div className="min-w-0 flex-1 overflow-hidden">
                     <div className="truncate text-sm font-medium">{version.name}</div>

@@ -20,6 +20,10 @@ import { log4jParser } from "@/components/launch/log4j-progress-parser";
 import { useI18n } from "@/components/i18n/use-i18n";
 import { analyzeLaunchLogs } from "@/components/launch/launch-analyzer";
 import { setLaunchInFlight } from "@/lib/launch-in-flight";
+import {
+  effectiveVersionFolder,
+  resolveLaunchProfile,
+} from "@/lib/version-profile";
 import type {
   LaunchAnalysisReport,
   LaunchConfig,
@@ -286,8 +290,12 @@ export function LaunchProvider({ children }: { children: React.ReactNode }) {
     };
   }, [syncStatus]);
 
-  const { selectedProfile, prepareMicrosoftAccountForLaunch, cancelMicrosoftLogin } =
-    useAccountContext();
+  const {
+    profiles,
+    selectedProfile,
+    prepareMicrosoftAccountForLaunch,
+    cancelMicrosoftLogin,
+  } = useAccountContext();
 
   useEffect(() => {
     selectedLogPidRef.current = selectedLogPid;
@@ -571,10 +579,8 @@ export function LaunchProvider({ children }: { children: React.ReactNode }) {
         return;
       }
 
-      // Direction 1: invalidate the in-flight launchGame async chain.
+      // Invalidate in-flight launchGame and stop Microsoft prep immediately.
       launchGenerationRef.current += 1;
-
-      // Direction 2: stop Microsoft token refresh / device-code polling during prep.
       if (inLaunchSession) {
         cancelMicrosoftLogin();
       }
@@ -588,44 +594,41 @@ export function LaunchProvider({ children }: { children: React.ReactNode }) {
 
       const cancelledMessage = t("launch.provider.launchCancelledByUser");
 
+      // Optimistic UI: show stopped right away; kill runs silently in background.
       if (targetPid != null) {
-        try {
-          const result = await invoke<string>("kill_game_process", {
-            pid: targetPid,
-          });
-          const now = Date.now();
-          const entry: LaunchLogEntry = {
-            id: ++logIdRef.current,
-            timestamp: new Date(now).toLocaleTimeString(),
-            level: "warn",
-            message: result,
-          };
-          pushLogToPid(targetPid, entry);
-          if (inLaunchSession) {
-            syncLaunchInFlight(false);
-            setProgress(null);
+        fullyStartedPidsRef.current.delete(targetPid);
+        const next = instances.filter((i) => i.pid !== targetPid);
+        instancesRef.current = next;
+        setRunningInstances(next);
+        setSelectedLogPid((current) => {
+          if (current === targetPid) {
+            return next.length > 0 ? next[next.length - 1]!.pid : null;
           }
-        } catch (e) {
-          if (inLaunchSession) {
-            abortLaunchUi(cancelledMessage);
-          } else {
-            setErrorMessage(e instanceof Error ? e.message : String(e));
-            syncStatus(instancesRef.current);
-          }
-        }
-        return;
+          return current;
+        });
       }
 
-      if (inLaunchSession) {
-        abortLaunchUi(cancelledMessage);
-      }
+      abortLaunchUi(cancelledMessage);
+
+      void invoke<string>("kill_game_process", { pid: targetPid })
+        .then((result) => {
+          if (targetPid != null) {
+            pushLogToPid(targetPid, {
+              id: ++logIdRef.current,
+              timestamp: new Date().toLocaleTimeString(),
+              level: "warn",
+              message: result,
+            });
+          }
+        })
+        .catch(() => {
+          /* UI already stopped; ignore kill errors */
+        });
     },
     [
       status,
       selectedLogPid,
       pushLogToPid,
-      syncStatus,
-      syncLaunchInFlight,
       cancelMicrosoftLogin,
       abortLaunchUi,
       t,
@@ -680,7 +683,15 @@ export function LaunchProvider({ children }: { children: React.ReactNode }) {
         setErrorMessage(t("launch.provider.selectAGameVersion"));
         return;
       }
-      if (!selectedProfile) {
+
+      const versionFolder = effectiveVersionFolder(merged);
+      const launchProfile = resolveLaunchProfile(
+        profiles,
+        selectedProfile,
+        merged.minecraftPath,
+        versionFolder,
+      );
+      if (!launchProfile) {
         setErrorMessage(t("launch.provider.selectAPlayerAccountFirst"));
         return;
       }
@@ -693,8 +704,8 @@ export function LaunchProvider({ children }: { children: React.ReactNode }) {
       addPendingOrSelectedLog("info", t("launch.provider.preparingLaunchArguments"));
 
       let microsoftAccessToken: string | null = null;
-      if (selectedProfile.authType === "microsoft") {
-        const prep = await prepareMicrosoftAccountForLaunch(selectedProfile);
+      if (launchProfile.authType === "microsoft") {
+        const prep = await prepareMicrosoftAccountForLaunch(launchProfile);
         if (sessionAborted()) {
           return;
         }
@@ -755,7 +766,7 @@ export function LaunchProvider({ children }: { children: React.ReactNode }) {
         );
         addPendingOrSelectedLog(
           "info",
-          t("launch.provider.playerName", { name: selectedProfile.name }),
+          t("launch.provider.playerName", { name: launchProfile.name }),
         );
         addPendingOrSelectedLog(
           "info",
@@ -771,14 +782,14 @@ export function LaunchProvider({ children }: { children: React.ReactNode }) {
         }
 
         const isYggdrasilAccount =
-          selectedProfile.authType === "littleskin" ||
-          selectedProfile.authType === "third_party";
+          launchProfile.authType === "littleskin" ||
+          launchProfile.authType === "third_party";
         const accountAuthToken =
-          selectedProfile.authType === "offline"
+          launchProfile.authType === "offline"
             ? "0"
-            : microsoftAccessToken ?? selectedProfile.accessToken ?? "";
+            : microsoftAccessToken ?? launchProfile.accessToken ?? "";
         const accountYggdrasilApi = isYggdrasilAccount
-          ? selectedProfile.yggdrasilUrl || merged.yggdrasilApi || ""
+          ? launchProfile.yggdrasilUrl || merged.yggdrasilApi || ""
           : "";
 
         const result = await invoke<string>("launch_game", {
@@ -788,9 +799,9 @@ export function LaunchProvider({ children }: { children: React.ReactNode }) {
           maxMemory: launchMaxMemory,
           versionName: merged.versionName,
           minecraftVersion: merged.minecraftVersion,
-          playerName: merged.playerName || selectedProfile.name,
+          playerName: merged.playerName || launchProfile.name,
           authToken: accountAuthToken,
-          uuid: merged.uuid || selectedProfile.uuid || selectedProfile.id,
+          uuid: merged.uuid || launchProfile.uuid || launchProfile.id,
           authlibInjectorPath: merged.authlibInjectorPath,
           yggdrasilApi: accountYggdrasilApi,
           prefetchedData: accountYggdrasilApi ? merged.prefetchedData : "",
@@ -831,6 +842,7 @@ export function LaunchProvider({ children }: { children: React.ReactNode }) {
     },
     [
       config,
+      profiles,
       selectedProfile,
       addPendingOrSelectedLog,
       t,
