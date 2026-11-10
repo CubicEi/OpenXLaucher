@@ -430,6 +430,8 @@ export default function GameSettings() {
         hintKey="gameSettings.renameVersionDialogHint"
         confirmKey="gameSettings.renameVersionConfirm"
         confirming={renaming}
+        instancesPath={instancesPath}
+        excludeFolderName={effectiveVersionDirName ?? undefined}
         onConfirm={handleRenameVersionConfirm}
       />
 

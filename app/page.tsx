@@ -16,7 +16,10 @@ import { SkinViewer3D } from "@/components/accounts/skin-viewer-3d";
 import { useAccountContext } from "@/components/accounts/account-provider";
 import { LaunchStatusBadge } from "@/components/launch/launch-status-badge";
 import { useLaunchContext } from "@/components/launch/launch-provider";
-import { VersionSelectorDialog } from "@/components/launch/version-selector-dialog";
+import {
+  SELECT_VERSION_PATH,
+  VersionSelectorDialog,
+} from "@/components/launch/version-selector-dialog";
 import { PageEnter, PageEnterItem } from "@/components/layout/page-enter";
 import { useSettings } from "@/components/settings/settings-provider";
 import { useI18n } from "@/components/i18n/use-i18n";
@@ -42,7 +45,7 @@ import {
   onInAppLinkPointerDown,
 } from "@/lib/main-navigation-transition";
 
-/** 首页仪表盘：把启动状态、实例资源与档案操作集中在一个可滚动页面。 */
+/** 首页：简约布局或经典仪表盘（由外观 → 主页模式决定）。 */
 export default function Home() {
   const router = useRouter();
   const { selectedProfile } = useAccountContext();
@@ -110,11 +113,25 @@ export default function Home() {
       : t("home.cancelLaunch")
     : t("home.launchNow");
 
+  const simplePrimaryActionLabel = isLaunchActive
+    ? primaryActionLabel
+    : t("home.launchGame");
+
+  const simpleVersionTitle = instanceLoading
+    ? null
+    : selectedInstance?.name || displayInstanceName;
+
+  const openSelectVersionPage = () => {
+    navigateWithMainTransition(router, SELECT_VERSION_PATH);
+  };
+
   return (
     <div className="h-full overflow-y-auto">
       <PageEnter
         stagger
-        className="mx-auto flex min-h-full max-w-[1600px] flex-col gap-4 p-4 md:p-5"
+        className={`mx-auto flex min-h-full max-w-[1600px] flex-col p-4 md:p-5 ${
+          homeMode === "simple" ? "gap-0" : "gap-4"
+        }`}
       >
         {homeMode === "full" && (
           <PageEnterItem>
@@ -131,29 +148,68 @@ export default function Home() {
         )}
 
         {homeMode === "simple" ? (
-          <div className="flex justify-end">
-            <PageEnterItem className="lg:sticky lg:top-0 w-[320px]">
-              <Card className="overflow-hidden border shadow-sm">
-                <CardHeader className="pb-2">
-                  <CardTitle>{t("home.accountsAndCharacters")}</CardTitle>
-                  <CardDescription>{t("home.chooseAPlayerAndManageSkinsAndCapes")}</CardDescription>
-                </CardHeader>
-                <CardContent className="flex min-h-[270px] items-center justify-center pt-0">
-                  <SkinPreviewLarge profile={selectedProfile} />
-                </CardContent>
-
-                <div className="border-t border-border">
-                  <CardContent className="py-4">
-                    <HomeAccountSummary
-                      selectedProfile={selectedProfile}
-                      profileStatus={profileStatus}
-                      onManageProfiles={openProfilesPage}
-                    />
-                  </CardContent>
-                </div>
-              </Card>
+          <>
+            <PageEnterItem className="flex flex-col items-start text-left">
+              <p className="text-xs font-medium text-primary">OpenXLauncher</p>
+              <h1 className="mt-1 text-xl font-semibold tracking-tight">
+                {t("home.welcomeBack")}
+                {selectedProfile?.name ?? t("home.adventurer")}
+              </h1>
+              <h2 className="mt-4 max-w-full truncate text-4xl font-semibold tracking-tight sm:text-5xl md:text-6xl">
+                {instanceLoading ? (
+                  <span className="inline-flex items-center justify-start gap-2 text-3xl sm:text-4xl md:text-5xl">
+                    <Loader2 className="size-6 shrink-0 animate-spin" />
+                    {t("home.loadingVersion")}
+                  </span>
+                ) : (
+                  simpleVersionTitle
+                )}
+              </h2>
             </PageEnterItem>
-          </div>
+
+            <PageEnterItem className="mt-auto flex flex-col items-end gap-2 pt-8">
+              <div className="flex w-full max-w-xs flex-col items-stretch gap-2 sm:max-w-sm">
+                {isLaunchActive || canLaunch ? (
+                  <Button
+                    size="lg"
+                    className="gap-2"
+                    disabled={!configLoaded}
+                    onClick={() => void handlePrimaryAction()}
+                  >
+                    {isLaunchActive ? (
+                      <Loader2 className="size-4 animate-spin" />
+                    ) : (
+                      <Play className="size-4" />
+                    )}
+                    {simplePrimaryActionLabel}
+                  </Button>
+                ) : null}
+                <div className="flex gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="h-9 min-h-9 flex-1"
+                    onClick={openSelectVersionPage}
+                  >
+                    {t("home.selectInstance")}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="h-9 min-h-9 flex-1"
+                    onClick={openProfilesPage}
+                  >
+                    {t("home.manageAccounts")}
+                  </Button>
+                </div>
+                {errorMessage && (
+                  <p className="rounded-lg bg-destructive/10 px-3 py-2 text-left text-xs text-destructive">
+                    {errorMessage}
+                  </p>
+                )}
+              </div>
+            </PageEnterItem>
+          </>
         ) : (
           <div className="grid min-h-0 grid-cols-[minmax(0,1fr)_320px] items-start gap-4">
             <section className="flex min-w-0 flex-col gap-4">

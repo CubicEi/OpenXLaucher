@@ -31,7 +31,7 @@ export interface AppearanceSettings {
   themeColor: ThemeColor; // "default" 或 oklch 字符串
   fontSize: number; // 12 ~ 18（整数 px，仅影响文字）
   background: BackgroundConfig;
-  homeMode: HomeMode; // 主页模式：simple 或 full
+  homeMode: HomeMode; // 主页模式：simple（简约）或 full（经典）
 }
 
 export interface GeneralSettings {
@@ -68,20 +68,30 @@ export const DOWNLOAD_TOTAL_WORKERS_SLIDER_UNLIMITED = 257;
 // 预设自定义主题色（调色盘快选按钮）
 //   颜色使用 oklch(l c h) 格式 —— 通过改变 l/c 自动派生整站
 // ============================================================
+export type ThemeColorPresetId =
+  | "graphite"
+  | "jade"
+  | "sky"
+  | "rose"
+  | "amber"
+  | "violet"
+  | "teal"
+  | "crimson";
+
 export interface ColorPreset {
-  name: string;
+  id: ThemeColorPresetId;
   oklch: string; // 主色的 oklch 值
 }
 
 export const COLOR_PRESETS: ColorPreset[] = [
-  { name: "深色", oklch: "oklch(0.216 0.006 56.043)" }, // shadcn 默认深色 primary
-  { name: "翡翠", oklch: "oklch(0.6 0.16 155)" },
-  { name: "天蓝", oklch: "oklch(0.58 0.18 240)" },
-  { name: "玫瑰", oklch: "oklch(0.58 0.22 10)" },
-  { name: "琥珀", oklch: "oklch(0.65 0.18 75)" },
-  { name: "紫罗兰", oklch: "oklch(0.58 0.2 300)" },
-  { name: "青绿", oklch: "oklch(0.55 0.15 185)" },
-  { name: "赤红", oklch: "oklch(0.55 0.22 25)" },
+  { id: "graphite", oklch: "oklch(0.216 0.006 56.043)" },
+  { id: "jade", oklch: "oklch(0.6 0.16 155)" },
+  { id: "sky", oklch: "oklch(0.58 0.18 240)" },
+  { id: "rose", oklch: "oklch(0.58 0.22 10)" },
+  { id: "amber", oklch: "oklch(0.65 0.18 75)" },
+  { id: "violet", oklch: "oklch(0.58 0.2 300)" },
+  { id: "teal", oklch: "oklch(0.55 0.15 185)" },
+  { id: "crimson", oklch: "oklch(0.55 0.22 25)" },
 ];
 
 // ============================================================
@@ -106,7 +116,7 @@ export const DEFAULT_SETTINGS: LauncherSettings = {
       opacity: 0.55,
       blur: 6,
     },
-    homeMode: "full", // 默认完整模式
+    homeMode: "simple", // 默认简约模式
   },
 };
 

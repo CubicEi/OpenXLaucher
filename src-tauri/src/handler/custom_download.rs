@@ -1,7 +1,7 @@
 use serde::Serialize;
 use std::collections::HashMap;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use tauri::{AppHandle, Emitter};
@@ -84,6 +84,45 @@ fn validate_http_url(url: &str) -> Result<(), String> {
     }
 }
 
+/// 若目标目录已有同名文件，在文件名（扩展名前）追加 ` (1)`、` (2)` …（与资源管理器行为一致）。
+fn numbered_copy_stem(stem: &str) -> (String, u32) {
+    if let Some(open) = stem.rfind(" (") {
+        let after = &stem[open + 2..];
+        if after.ends_with(')') {
+            let num_str = &after[..after.len() - 1];
+            if !num_str.is_empty() && num_str.chars().all(|c| c.is_ascii_digit()) {
+                if let Ok(n) = num_str.parse::<u32>() {
+                    return (stem[..open].to_string(), n.saturating_add(1));
+                }
+            }
+        }
+    }
+    (stem.to_string(), 1)
+}
+
+fn next_available_file_name(dir: &Path, file_name: &str) -> String {
+    if !dir.join(file_name).exists() {
+        return file_name.to_string();
+    }
+    let path = Path::new(file_name);
+    let stem = path
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_else(|| file_name.to_string());
+    let ext = path
+        .extension()
+        .map(|e| format!(".{}", e.to_string_lossy()))
+        .unwrap_or_default();
+    let (base_stem, mut index) = numbered_copy_stem(&stem);
+    loop {
+        let candidate = format!("{} ({}){}", base_stem, index, ext);
+        if !dir.join(&candidate).exists() {
+            return candidate;
+        }
+        index = index.saturating_add(1);
+    }
+}
+
 #[tauri::command(rename_all = "camelCase")]
 pub async fn start_custom_download(
     app: AppHandle,
@@ -102,6 +141,7 @@ pub async fn start_custom_download(
         .filter(|s| !s.trim().is_empty())
         .map(|s| sanitize_file_name(&s))
         .unwrap_or_else(|| filename_from_url(&url));
+    let file_name = next_available_file_name(&dir, &file_name);
 
     let task_id = CUSTOM_TASK_COUNTER.fetch_add(1, Ordering::SeqCst);
     let cancel = Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -216,5 +256,42 @@ pub async fn cancel_custom_download(task_id: u64) -> Result<(), String> {
         Ok(())
     } else {
         Err("任务不存在或已结束".into())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs::File;
+
+    #[test]
+    fn numbered_copy_stem_parses_suffix() {
+        assert_eq!(
+            numbered_copy_stem("archive"),
+            ("archive".to_string(), 1)
+        );
+        assert_eq!(
+            numbered_copy_stem("archive (1)"),
+            ("archive".to_string(), 2)
+        );
+        assert_eq!(
+            numbered_copy_stem("archive (9)"),
+            ("archive".to_string(), 10)
+        );
+    }
+
+    #[test]
+    fn next_available_skips_existing() {
+        let dir = std::env::temp_dir().join(format!(
+            "oxl_custom_dl_test_{}",
+            std::process::id()
+        ));
+        let _ = fs::create_dir_all(&dir);
+        File::create(dir.join("a.zip")).unwrap();
+        assert_eq!(next_available_file_name(&dir, "a.zip"), "a (1).zip");
+        File::create(dir.join("a (1).zip")).unwrap();
+        assert_eq!(next_available_file_name(&dir, "a.zip"), "a (2).zip");
+        assert_eq!(next_available_file_name(&dir, "a (1).zip"), "a (2).zip");
+        let _ = fs::remove_dir_all(&dir);
     }
 }

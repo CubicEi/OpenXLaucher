@@ -21,6 +21,7 @@ pub mod launcher;
 pub mod liteloader_handler;
 #[allow(dead_code, non_snake_case)]
 pub mod mod_links;
+pub mod resource_search;
 pub mod mod_parser;
 pub mod mod_platform;
 pub mod mod_platform_probe;

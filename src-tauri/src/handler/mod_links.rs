@@ -313,12 +313,25 @@ pub async fn search_modrinth_projects(
     limit: Option<u32>,
 ) -> Result<String, String> {
     let query = query.trim();
-    if query.is_empty() {
-        return Err("query cannot be empty".to_string());
-    }
-
     let limit = limit.unwrap_or(25).clamp(1, 100);
-    let url = if let Some(project_type) = project_type {
+    let url = if query.is_empty() {
+        let Some(project_type) = project_type else {
+            return Err("query cannot be empty without project_type".to_string());
+        };
+        let project_type = project_type.trim().to_ascii_lowercase();
+        if !matches!(
+            project_type.as_str(),
+            "mod" | "modpack" | "resourcepack" | "shader" | "datapack" | "world"
+        ) {
+            return Err(format!("unsupported Modrinth project type: {}", project_type));
+        }
+        let facets = format!(r#"[["project_type:{}"]]"#, project_type);
+        format!(
+            "https://api.modrinth.com/v2/search?query=&limit={}&index=downloads&facets={}",
+            limit,
+            urlencoding(&facets),
+        )
+    } else if let Some(project_type) = project_type {
         let project_type = project_type.trim().to_ascii_lowercase();
         if !matches!(
             project_type.as_str(),
