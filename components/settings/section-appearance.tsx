@@ -172,11 +172,7 @@ function ThemeColorRow({
           }}
         />
         <div className="min-w-0 flex-1">
-          <p className="text-sm font-medium">
-            {draft === "default"
-              ? t("settings.appearance.themeColorPresetDefault")
-              : t("settings.appearance.themeColorCustomSelected")}
-          </p>
+          <p className="text-sm font-medium">{t("settings.appearance.themeColor")}</p>
           <p className="truncate font-mono text-xs text-muted-foreground">
             {draft === "default" ? "default" : previewColor.toUpperCase()}
           </p>

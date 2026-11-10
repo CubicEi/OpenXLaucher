@@ -65,36 +65,6 @@ export const DOWNLOAD_MAX_TOTAL_WORKERS_MAX = 256;
 export const DOWNLOAD_TOTAL_WORKERS_SLIDER_UNLIMITED = 257;
 
 // ============================================================
-// 预设自定义主题色（调色盘快选按钮）
-//   颜色使用 oklch(l c h) 格式 —— 通过改变 l/c 自动派生整站
-// ============================================================
-export type ThemeColorPresetId =
-  | "graphite"
-  | "jade"
-  | "sky"
-  | "rose"
-  | "amber"
-  | "violet"
-  | "teal"
-  | "crimson";
-
-export interface ColorPreset {
-  id: ThemeColorPresetId;
-  oklch: string; // 主色的 oklch 值
-}
-
-export const COLOR_PRESETS: ColorPreset[] = [
-  { id: "graphite", oklch: "oklch(0.216 0.006 56.043)" },
-  { id: "jade", oklch: "oklch(0.6 0.16 155)" },
-  { id: "sky", oklch: "oklch(0.58 0.18 240)" },
-  { id: "rose", oklch: "oklch(0.58 0.22 10)" },
-  { id: "amber", oklch: "oklch(0.65 0.18 75)" },
-  { id: "violet", oklch: "oklch(0.58 0.2 300)" },
-  { id: "teal", oklch: "oklch(0.55 0.15 185)" },
-  { id: "crimson", oklch: "oklch(0.55 0.22 25)" },
-];
-
-// ============================================================
 // 默认值
 // ============================================================
 export const DEFAULT_SETTINGS: LauncherSettings = {

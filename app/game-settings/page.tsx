@@ -43,6 +43,7 @@ import {
   onInAppLinkPointerDown,
 } from "@/lib/main-navigation-transition";
 import { useDownloadManager } from "@/components/download/download-provider";
+import { useCornerNotice } from "@/components/global/corner-notice";
 import {
   extractMcVersion,
   inferLoaderFamilyFromFolder,
@@ -99,6 +100,7 @@ export default function GameSettings() {
   const { config, updateConfig } = useLaunchContext();
   const { profiles, selectedProfile } = useAccountContext();
   const { tasks } = useDownloadManager();
+  const { pushNotice } = useCornerNotice();
   const { t } = useI18n();
   const [deleteVersionOpen, setDeleteVersionOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -212,13 +214,15 @@ export default function GameSettings() {
         loadName: "",
       });
       setDeleteVersionOpen(false);
-      alert(
-        t("gameSettings.deletedVersionDirectoryEffectiveVersionDirName", {
-          effectiveVersionDirName: effectiveVersionDirName,
-        })
-      );
+      const deletedName = effectiveVersionDirName;
+      pushNotice({
+        variant: "success",
+        message: t("gameSettings.deletedVersionDirectoryEffectiveVersionDirName", {
+          effectiveVersionDirName: deletedName,
+        }),
+      });
     } catch (err) {
-      alert(String(err));
+      pushNotice({ variant: "error", message: String(err) });
     } finally {
       setDeleting(false);
     }
