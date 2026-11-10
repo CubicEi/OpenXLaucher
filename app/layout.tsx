@@ -21,6 +21,7 @@ import { StartupOnboardingHost } from "@/components/onboarding/startup-onboardin
 import { CornerNoticeProvider } from "@/components/global/corner-notice";
 import { ScrollbarProximity } from "@/components/global/scrollbar-proximity";
 import { APPEARANCE_BOOTSTRAP_SCRIPT } from "@/lib/appearance-bootstrap-script";
+import { APPEARANCE_BACKGROUND_BOOTSTRAP_SCRIPT } from "@/lib/appearance-background-bootstrap-script";
 
 export const metadata: Metadata = {
   title: "OpenXLauncher",
@@ -40,6 +41,9 @@ export default function RootLayout({
       <head>
         <script
           dangerouslySetInnerHTML={{ __html: APPEARANCE_BOOTSTRAP_SCRIPT }}
+        />
+        <script
+          dangerouslySetInnerHTML={{ __html: APPEARANCE_BACKGROUND_BOOTSTRAP_SCRIPT }}
         />
       </head>
       <body className="antialiased h-screen flex flex-col overflow-hidden bg-background">

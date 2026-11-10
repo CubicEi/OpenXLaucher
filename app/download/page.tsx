@@ -2,16 +2,22 @@
 
 import { useState, useMemo, useEffect, useCallback } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { Download, Loader2, AlertCircle, RefreshCw, Coffee, Search, ArrowRight, ExternalLink, Box, Palette, Sparkles, Database, Boxes, Map, Package, Layers, Globe } from "lucide-react";
-import { listLinkOnlySitesGrouped, sourceDisplayName, type LinkSiteBrowseCategory } from "@/lib/resource-sources";
-import { Button } from "@/components/ui/button";
 import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from "@/components/ui/dialog";
+  Download,
+  Loader2,
+  AlertCircle,
+  RefreshCw,
+  Coffee,
+  Search,
+  ArrowRight,
+  ExternalLink,
+  type LucideIcon,
+} from "lucide-react";
+import {
+  DOWNLOAD_CENTER_CATEGORY_ICONS,
+  type DownloadEnglishCategoryId,
+} from "@/constants";
+import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { VersionList } from "@/components/download/version-list";
@@ -19,7 +25,9 @@ import { VersionDetail } from "@/components/download/version-detail";
 import { FavoriteModList } from "@/components/download/favorite-mod-list";
 import {
   VersionFilterBar,
+  downloadSubFilterButtonClass,
 } from "@/components/download/version-filter-bar";
+import { cn } from "@/lib/utils";
 import { useMinecraftVersions } from "@/hooks/use-minecraft-versions";
 import { slideInFromRight, slideInFromLeft, fadeIn } from "@/lib/motion";
 import { useDownloadManager } from "@/components/download/download-provider";
@@ -29,16 +37,44 @@ import { useRouter } from "next/navigation";
 import type { MinecraftVersion, MinecraftVersionType } from "@/types";
 
 // -------- English search --------
-type EnglishCategory = "mod" | "modpack" | "resourcepack" | "shaders" | "datapack" | "worlds" | "schematic";
+type EnglishCategory = DownloadEnglishCategoryId;
 
-const ENGLISH_CATEGORIES: { id: EnglishCategory; labelKey: TranslationKey; icon: typeof Box }[] = [
-  { id: "mod", labelKey: "download.category.mods", icon: Box },
-  { id: "modpack", labelKey: "download.category.modpacks", icon: Boxes },
-  { id: "resourcepack", labelKey: "download.category.resourcePacks", icon: Palette },
-  { id: "shaders", labelKey: "download.category.shaders", icon: Sparkles },
-  { id: "datapack", labelKey: "download.category.dataPacks", icon: Database },
-  { id: "worlds", labelKey: "download.category.worlds", icon: Map },
-  { id: "schematic", labelKey: "download.category.schematics", icon: Layers },
+const ENGLISH_CATEGORIES: {
+  id: EnglishCategory;
+  labelKey: TranslationKey;
+  icon: LucideIcon;
+}[] = [
+  { id: "mod", labelKey: "download.category.mods", icon: DOWNLOAD_CENTER_CATEGORY_ICONS.mod },
+  {
+    id: "modpack",
+    labelKey: "download.category.modpacks",
+    icon: DOWNLOAD_CENTER_CATEGORY_ICONS.modpack,
+  },
+  {
+    id: "resourcepack",
+    labelKey: "download.category.resourcePacks",
+    icon: DOWNLOAD_CENTER_CATEGORY_ICONS.resourcepack,
+  },
+  {
+    id: "shaders",
+    labelKey: "download.category.shaders",
+    icon: DOWNLOAD_CENTER_CATEGORY_ICONS.shaders,
+  },
+  {
+    id: "datapack",
+    labelKey: "download.category.dataPacks",
+    icon: DOWNLOAD_CENTER_CATEGORY_ICONS.datapack,
+  },
+  {
+    id: "worlds",
+    labelKey: "download.category.worlds",
+    icon: DOWNLOAD_CENTER_CATEGORY_ICONS.worlds,
+  },
+  {
+    id: "schematic",
+    labelKey: "download.category.schematics",
+    icon: DOWNLOAD_CENTER_CATEGORY_ICONS.schematic,
+  },
 ];
 
 type SearchSource =
@@ -160,7 +196,7 @@ function compareMinecraftVersionsDescending(a: MinecraftVersion, b: MinecraftVer
  */
 export default function DownloadPage() {
   const router = useRouter();
-  const { t, language } = useI18n();
+  const { t } = useI18n();
   const { versions, loading, error, refetch } = useMinecraftVersions();
   const [versionFilter, setVersionFilter] = useState<MinecraftVersionType>("release");
   const [searchQuery, setSearchQuery] = useState("");
@@ -192,15 +228,6 @@ export default function DownloadPage() {
   const [englishLoading, setEnglishLoading] = useState(false);
   const [englishError, setEnglishError] = useState<string | null>(null);
   const [schematicMessage, setSchematicMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
-  const linkSiteGroups = useMemo(() => listLinkOnlySitesGrouped(), []);
-
-  const linkSiteCategoryLabel = useCallback(
-    (category: LinkSiteBrowseCategory): string => {
-      const key = ENGLISH_CATEGORIES.find((c) => c.id === category)?.labelKey;
-      return key ? t(key) : category;
-    },
-    [t],
-  );
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -544,10 +571,10 @@ onClick={() => setTab("favorites")}
                     ).map(([id, label]) => (
                       <Button
                         key={id}
-                        variant={javaVendorFilter === id ? "default" : "ghost"}
+                        variant="ghost"
                         size="sm"
                         onClick={() => setJavaVendorFilter(id)}
-                        className="text-xs"
+                        className={downloadSubFilterButtonClass(javaVendorFilter === id)}
                       >
                         {label}
                       </Button>
@@ -696,68 +723,27 @@ onClick={() => setTab("favorites")}
                   </Button>
                 </div>
                 {/* Six category selection buttons */}
-                <div className="flex flex-wrap items-center gap-2">
+                <div className="flex flex-wrap items-center gap-1">
                   {ENGLISH_CATEGORIES.map((cat) => {
                     const Icon = cat.icon;
                     const isActive = englishCategory === cat.id;
                     return (
-                      <button
+                      <Button
                         key={cat.id}
+                        type="button"
+                        variant="ghost"
+                        size="sm"
                         onClick={() => setEnglishCategory(cat.id)}
-                        className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium transition-all border ${
-                          isActive
-                            ? "bg-primary text-primary-foreground border-primary shadow-sm"
-                            : "bg-background text-foreground hover:bg-accent border-border"
-                        }`}
+                        className={cn(
+                          "gap-1.5",
+                          downloadSubFilterButtonClass(isActive),
+                        )}
                       >
-                        <Icon className="size-3.5" />
+                        <Icon className="size-3.5 shrink-0" />
                         <span>{t(cat.labelKey)}</span>
-                      </button>
+                      </Button>
                     );
                   })}
-                  {linkSiteGroups.length > 0 ? (
-                    <Dialog>
-                      <DialogTrigger asChild>
-                        <button
-                          type="button"
-                          className="inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium transition-all border bg-background text-foreground hover:bg-accent border-border border-dashed"
-                        >
-                          <Globe className="size-3.5" />
-                          <span>{t("download.linkOnlySitesTitle")}</span>
-                        </button>
-                      </DialogTrigger>
-                      <DialogContent className="max-h-[85vh] flex flex-col p-0 gap-0 overflow-hidden">
-                        <DialogHeader>
-                          <DialogTitle>{t("download.linkOnlySitesTitle")}</DialogTitle>
-                        </DialogHeader>
-                        <p className="px-5 pb-2 text-xs text-muted-foreground shrink-0">
-                          {t("download.linkOnlySitesHint")}
-                        </p>
-                        <div className="flex-1 min-h-0 overflow-y-auto px-5 pb-5 space-y-4">
-                          {linkSiteGroups.map((group) => (
-                            <section key={group.category}>
-                              <h3 className="text-xs font-semibold text-foreground mb-2">
-                                {linkSiteCategoryLabel(group.category)}
-                              </h3>
-                              <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-                                {group.sites.map((site) => (
-                                  <button
-                                    key={`${group.category}-${site.id}`}
-                                    type="button"
-                                    onClick={() => void invoke("open_external", { url: site.url })}
-                                    className="flex items-center justify-between gap-2 rounded-md border border-border bg-muted/30 px-2 py-1.5 text-left text-xs hover:bg-accent"
-                                  >
-                                    <span className="truncate font-medium">{sourceDisplayName(site, language)}</span>
-                                    <ExternalLink className="size-3 shrink-0 text-muted-foreground" />
-                                  </button>
-                                ))}
-                              </div>
-                            </section>
-                          ))}
-                        </div>
-                      </DialogContent>
-                    </Dialog>
-                  ) : null}
                 </div>
                 {englishError && (
                   <div className="flex items-center gap-2 text-xs text-destructive">
@@ -813,7 +799,7 @@ onClick={() => setTab("favorites")}
                       {englishResults.map((result) => {
                         const Icon =
                           ENGLISH_CATEGORIES.find((c) => c.id === (categoryForSource(result.projectType || englishCategory) as EnglishCategory))
-                            ?.icon ?? Box;
+                            ?.icon ?? DOWNLOAD_CENTER_CATEGORY_ICONS.mod;
                         return (
                           <button
                             key={`${result.source}-${result.slug}`}

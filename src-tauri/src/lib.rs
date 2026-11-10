@@ -73,9 +73,7 @@ use handler::mod_links::{
     get_mod_files_by_slug, get_mod_links, get_modrinth_mod_files, search_curseforge_projects,
     search_modrinth_projects,
 };
-use handler::resource_search::{
-    download_mcschematic_file, list_resource_link_sites, search_english_resources,
-};
+use handler::resource_search::{download_mcschematic_file, search_english_resources};
 use handler::mod_parser::{parse_mod, parse_mods, parse_mods_in_dir, save_incompatible_mods};
 use handler::mod_platform::{
     get_mod_cover_data_url, get_pack_local_description, get_resource_cover_data_url,
@@ -340,7 +338,6 @@ pub fn run() {
             search_curseforge_projects,
             search_modrinth_projects,
             search_english_resources,
-            list_resource_link_sites,
             download_mcschematic_file,
             export_launch_report,
             get_modrinth_required_dependencies,

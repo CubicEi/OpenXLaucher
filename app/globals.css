@@ -257,7 +257,15 @@ body::before {
 
 /* 有背景图片时 —— body 变透明让图片透出，卡片、侧栏使用半透明 */
 body[data-app-bg="active"] {
-  background-color: transparent;
+  background-color: transparent !important;
+}
+/* 页面壳层若铺满不透明底色，会挡住 body::before 背景图 */
+body[data-app-bg="active"] main,
+body[data-app-bg="active"] [data-page-transition-root] {
+  background-color: transparent !important;
+}
+body[data-app-bg="active"] [data-page-transition-root] :is(.flex.h-full.bg-background, .flex.flex-col.h-full.bg-background) {
+  background-color: transparent !important;
 }
 body[data-app-bg="active"] [data-slot="card"] {
   background-color: color-mix(in oklch, var(--card) 78%, transparent);

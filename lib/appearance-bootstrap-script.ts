@@ -70,6 +70,16 @@ export const APPEARANCE_BOOTSTRAP_SCRIPT = `(function(){
       root.style.setProperty("--app-font-size", fs + "px");
       root.style.setProperty("--app-font-scale", (fs / 14).toFixed(3));
     }
+    var pageBg = appearance.background;
+    var legacyBg = pageBg && pageBg.imageDataUrl && String(pageBg.imageDataUrl);
+    if (legacyBg && legacyBg.length > 0 && legacyBg.length < 400000) {
+      root.style.setProperty("--app-bg", "url(" + JSON.stringify(legacyBg) + ")");
+      var bgOp = typeof pageBg.opacity === "number" ? pageBg.opacity : 0.55;
+      var bgBlur = typeof pageBg.blur === "number" ? pageBg.blur : 6;
+      root.style.setProperty("--app-bg-opacity", Number(bgOp).toFixed(2));
+      root.style.setProperty("--app-bg-blur", Math.round(bgBlur) + "px");
+      document.body.setAttribute("data-app-bg", "active");
+    }
     root.setAttribute("data-session-theme-color", themeColor === "default" ? "default" : themeColor);
     root.setAttribute("data-theme-ready", "");
   } catch (err) {}

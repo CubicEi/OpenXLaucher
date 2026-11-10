@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import { Palette, X } from "lucide-react";
 import { BuiltinColorPicker } from "@/components/settings/builtin-color-picker";
@@ -30,6 +31,11 @@ export function ThemeColorPickerDialog({
 }: ThemeColorPickerDialogProps) {
   const { t } = useI18n();
   const [draft, setDraft] = useState<ThemeColor>(value);
+  const [portalReady, setPortalReady] = useState(false);
+
+  useEffect(() => {
+    setPortalReady(true);
+  }, []);
 
   useEffect(() => {
     if (open) setDraft(value);
@@ -49,10 +55,14 @@ export function ThemeColorPickerDialog({
     if (oklch) setDraft(oklch);
   };
 
-  return (
+  if (!portalReady || typeof document === "undefined") {
+    return null;
+  }
+
+  return createPortal(
     <AnimatePresence>
       {open && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center">
+        <div className="fixed inset-0 z-[200] flex items-center justify-center">
           <motion.div
             variants={overlayFade}
             initial="initial"
@@ -69,6 +79,7 @@ export function ThemeColorPickerDialog({
             exit="exit"
             className="relative z-10 mx-4 w-full max-w-md"
             role="dialog"
+            aria-modal="true"
             aria-labelledby="theme-color-picker-title"
             onClick={(e) => e.stopPropagation()}
           >
@@ -126,6 +137,7 @@ export function ThemeColorPickerDialog({
           </motion.div>
         </div>
       )}
-    </AnimatePresence>
+    </AnimatePresence>,
+    document.body,
   );
 }

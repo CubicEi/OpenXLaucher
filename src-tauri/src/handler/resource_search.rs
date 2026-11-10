@@ -1,22 +1,10 @@
-//! Aggregated English / cross-platform resource search and link-site catalog.
+//! Aggregated English / cross-platform resource search.
 
 use crate::handler::mod_links::{search_curseforge_projects, search_modrinth_projects};
 use crate::http_client::{get_with_retry, shared_client, RetryConfig};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashSet;
-
-const RESOURCE_SOURCES_JSON: &str = include_str!("../../resources/resource_sources.json");
-
-#[derive(Debug, Clone, Deserialize)]
-struct ResourceSourceRow {
-    id: String,
-    name_zh: String,
-    name_en: String,
-    url: String,
-    resource_kinds: Vec<String>,
-    mode: String,
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -64,43 +52,6 @@ pub struct EnglishSearchSources {
     pub modpackindex: Option<SourceCount>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mcschematic: Option<SourceCount>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ResourceLinkSite {
-    pub id: String,
-    pub name_zh: String,
-    pub name_en: String,
-    pub url: String,
-}
-
-fn parse_sources_catalog() -> Result<Vec<ResourceSourceRow>, String> {
-    #[derive(Deserialize)]
-    struct Raw {
-        id: String,
-        #[serde(rename = "nameZh")]
-        name_zh: String,
-        #[serde(rename = "nameEn")]
-        name_en: String,
-        url: String,
-        #[serde(rename = "resourceKinds")]
-        resource_kinds: Vec<String>,
-        mode: String,
-    }
-    let raw: Vec<Raw> =
-        serde_json::from_str(RESOURCE_SOURCES_JSON).map_err(|e| format!("解析资源站目录失败: {}", e))?;
-    Ok(raw
-        .into_iter()
-        .map(|r| ResourceSourceRow {
-            id: r.id,
-            name_zh: r.name_zh,
-            name_en: r.name_en,
-            url: r.url,
-            resource_kinds: r.resource_kinds,
-            mode: r.mode,
-        })
-        .collect())
 }
 
 fn modrinth_type_for_category(category: &str) -> Option<String> {
@@ -339,23 +290,6 @@ async fn search_mcschematic(query: &str, browse: bool, limit: u32) -> Result<Vec
         });
     }
     Ok(out)
-}
-
-#[tauri::command]
-pub fn list_resource_link_sites(category: String) -> Result<String, String> {
-    let cat = category.trim().to_ascii_lowercase();
-    let catalog = parse_sources_catalog()?;
-    let sites: Vec<ResourceLinkSite> = catalog
-        .into_iter()
-        .filter(|row| row.mode == "link_only" && row.resource_kinds.iter().any(|k| k == &cat))
-        .map(|row| ResourceLinkSite {
-            id: row.id,
-            name_zh: row.name_zh,
-            name_en: row.name_en,
-            url: row.url,
-        })
-        .collect();
-    serde_json::to_string(&sites).map_err(|e| e.to_string())
 }
 
 #[tauri::command]

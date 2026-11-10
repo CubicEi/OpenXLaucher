@@ -8,6 +8,19 @@ import {
   resolveIsDark,
   type ThemeColor as PaletteThemeColor,
 } from "@/lib/appearance-palette";
+import {
+  deleteBackgroundImage,
+  hydrateBackgroundConfig,
+  revokeBackgroundObjectUrl,
+} from "@/lib/appearance-background-idb";
+import {
+  applySessionBackgroundToDom,
+  captureSessionBackgroundFromDom,
+  lockSessionBackground,
+} from "@/lib/appearance-background-session";
+import { settingsForLocalStorage } from "@/lib/appearance-background-persist";
+
+export { persistLauncherBackground } from "@/lib/appearance-background-persist";
 
 // ============================================================
 // 类型定义
@@ -17,7 +30,14 @@ export type HomeMode = "simple" | "full";
 export type AppLanguage = "zh-CN" | "en-US";
 
 export interface BackgroundConfig {
+  /** 用于 CSS / 预览的 blob: URL（运行时，不持久化） */
+  imageObjectUrl?: string;
+  /** 内存中的图片数据，持久化写入 IndexedDB */
+  imageBlob?: Blob;
+  /** @deprecated 旧版 localStorage 内联数据，加载后会迁移 */
   imageDataUrl?: string;
+  /** 图片本体在 IndexedDB；localStorage 只存 opacity/blur 与此标记 */
+  hasStoredImage?: boolean;
   opacity: number; // 0 ~ 1（精确到 0.01）
   blur: number; // 0 ~ 20（整数 px）
 }
@@ -183,25 +203,6 @@ const SettingsContext = React.createContext<SettingsContextValue | null>(null);
 // DOM 应用函数（主题色见 lib/appearance-palette — 仅启动锁定）
 // ============================================================
 
-// 应用背景图
-function applyBackgroundToDom(bg: BackgroundConfig, effectiveIsDark: boolean) {
-  const root = document.documentElement;
-  const body = document.body;
-
-  const hasImage = !!bg.imageDataUrl && bg.imageDataUrl.length > 0;
-
-  if (hasImage) {
-    root.style.setProperty("--app-bg", `url("${bg.imageDataUrl}")`);
-    root.style.setProperty("--app-bg-opacity", bg.opacity.toFixed(2));
-    root.style.setProperty("--app-bg-blur", `${Math.round(bg.blur)}px`);
-    body.setAttribute("data-app-bg", "active");
-  } else {
-    root.style.setProperty("--app-bg", "none");
-    body.removeAttribute("data-app-bg");
-  }
-  void effectiveIsDark;
-}
-
 // 应用字体大小 —— 核心是让 body 的 font-size 动态变化，
 // 同时设置 --app-font-scale 让 text-* / h1-h4 也同步缩放
 function applyFontSizeToDom(fontSize: number) {
@@ -230,72 +231,85 @@ function applyThemeModeToDom(mode: ThemeMode) {
 export function SettingsProvider({ children }: { children: React.ReactNode }) {
   const [settings, setSettings] = React.useState<LauncherSettings>(DEFAULT_SETTINGS);
   const [ready, setReady] = React.useState(false);
-
-  // 初始化：读取本地存储
+  // 初始化：读取本地存储 + IndexedDB 背景图
   React.useEffect(() => {
     let cancelled = false;
-    let merged: LauncherSettings = {
-      ...DEFAULT_SETTINGS,
-      general: {
-        ...DEFAULT_SETTINGS.general,
-        language: detectSystemLanguage(),
-      },
-      download: { ...DEFAULT_SETTINGS.download },
-      appearance: {
-        ...DEFAULT_SETTINGS.appearance,
-        background: { ...DEFAULT_SETTINGS.appearance.background },
-      },
-    };
 
-    try {
-      const current = localStorage.getItem(SETTINGS_STORAGE_KEY);
-      let legacyRaw: string | null = null;
-      let legacyKey: string | null = null;
-      if (!current) {
-        for (const key of LEGACY_STORAGE_KEYS) {
-          const value = localStorage.getItem(key);
-          if (value != null) {
-            legacyRaw = value;
-            legacyKey = key;
-            break;
+    void (async () => {
+      let merged: LauncherSettings = {
+        ...DEFAULT_SETTINGS,
+        general: {
+          ...DEFAULT_SETTINGS.general,
+          language: detectSystemLanguage(),
+        },
+        download: { ...DEFAULT_SETTINGS.download },
+        appearance: {
+          ...DEFAULT_SETTINGS.appearance,
+          background: { ...DEFAULT_SETTINGS.appearance.background },
+        },
+      };
+
+      try {
+        const current = localStorage.getItem(SETTINGS_STORAGE_KEY);
+        let legacyRaw: string | null = null;
+        let legacyKey: string | null = null;
+        if (!current) {
+          for (const key of LEGACY_STORAGE_KEYS) {
+            const value = localStorage.getItem(key);
+            if (value != null) {
+              legacyRaw = value;
+              legacyKey = key;
+              break;
+            }
           }
         }
+        const raw = current ?? legacyRaw;
+        if (raw) {
+          const stored = JSON.parse(raw) as Partial<LauncherSettings>;
+          const parsed = legacyKey?.endsWith(":v3")
+            ? migrateSettingsV3(stored as LegacySettings)
+            : stored;
+          merged = {
+            general: {
+              ...DEFAULT_SETTINGS.general,
+              ...(parsed.general ?? {}),
+              language: isAppLanguage(parsed.general?.language)
+                ? parsed.general.language
+                : detectSystemLanguage(),
+              useSystemProxy:
+                typeof parsed.general?.useSystemProxy === "boolean"
+                  ? parsed.general.useSystemProxy
+                  : DEFAULT_SETTINGS.general.useSystemProxy,
+            },
+            download: clampDownloadSettings(parsed.download),
+            appearance: {
+              ...DEFAULT_SETTINGS.appearance,
+              ...parsed.appearance,
+              background: {
+                ...DEFAULT_SETTINGS.appearance.background,
+                ...(parsed.appearance?.background ?? {}),
+              },
+            },
+          };
+        }
+      } catch (e) {
+        console.warn("[settings] 读取失败，使用默认值", e);
       }
-      const raw = current ?? legacyRaw;
-      if (raw) {
-        const stored = JSON.parse(raw) as Partial<LauncherSettings>;
-        const parsed = legacyKey?.endsWith(":v3")
-          ? migrateSettingsV3(stored as LegacySettings)
-          : stored;
-        merged = {
-          general: {
-            ...DEFAULT_SETTINGS.general,
-            ...(parsed.general ?? {}),
-            language: isAppLanguage(parsed.general?.language)
-              ? parsed.general.language
-              : detectSystemLanguage(),
-            useSystemProxy:
-              typeof parsed.general?.useSystemProxy === "boolean"
-                ? parsed.general.useSystemProxy
-                : DEFAULT_SETTINGS.general.useSystemProxy,
-          },
-          download: clampDownloadSettings(parsed.download),
-          appearance: {
-            ...DEFAULT_SETTINGS.appearance,
-            ...parsed.appearance,
-            background: { ...DEFAULT_SETTINGS.appearance.background, ...(parsed.appearance?.background ?? {}) },
-          },
-        };
-      }
-    } catch (e) {
-      console.warn("[settings] 读取失败，使用默认值", e);
-    }
 
-    queueMicrotask(() => {
+      try {
+        const hydratedBg = await hydrateBackgroundConfig(merged.appearance.background);
+        merged = {
+          ...merged,
+          appearance: { ...merged.appearance, background: hydratedBg },
+        };
+      } catch (e) {
+        console.warn("[settings] 背景图加载失败", e);
+      }
+
       if (cancelled) return;
       setSettings(merged);
       setReady(true);
-    });
+    })();
 
     return () => {
       cancelled = true;
@@ -316,7 +330,24 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready]);
 
-  // Persist + apply non-theme-color appearance (mode / font / background)
+  // 页面背景：bootstrap 可能已绘制，锁定会话 URL/不透明度/模糊，本会话内不再变更
+  React.useEffect(() => {
+    if (!ready) return;
+    const hydrated = settings.appearance.background;
+    const captured = captureSessionBackgroundFromDom(hydrated);
+    if (
+      hydrated.imageObjectUrl &&
+      captured.imageObjectUrl &&
+      hydrated.imageObjectUrl !== captured.imageObjectUrl
+    ) {
+      revokeBackgroundObjectUrl(hydrated.imageObjectUrl);
+    }
+    lockSessionBackground(captured);
+    applySessionBackgroundToDom();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ready]);
+
+  // Persist + apply non-theme-color appearance (mode / font)；背景仅「应用+重启」时持久化
   React.useEffect(() => {
     if (!ready) return;
 
@@ -331,10 +362,9 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
     // Theme color CSS vars: session-locked — never apply settings.appearance.themeColor here
     reapplySessionThemeColorToDom(effectiveIsDark);
     applyFontSizeToDom(settings.appearance.fontSize);
-    applyBackgroundToDom(settings.appearance.background, effectiveIsDark);
 
     try {
-      localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(settings));
+      localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(settingsForLocalStorage(settings)));
     } catch (e) {
       console.warn("[settings] 写入失败", e);
     }
@@ -372,12 +402,11 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
     const observer = new MutationObserver(() => {
       const externalIsDark = root.classList.contains("dark");
       reapplySessionThemeColorToDom(externalIsDark);
-      applyBackgroundToDom(settings.appearance.background, externalIsDark);
     });
 
     observer.observe(root, { attributes: true, attributeFilter: ["class"] });
     return () => observer.disconnect();
-  }, [settings.appearance.background, ready]);
+  }, [ready]);
 
   const update = React.useCallback(<K extends keyof LauncherSettings>(
     section: K,
@@ -389,13 +418,16 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
     }));
   }, []);
 
-  const reset = React.useCallback(() => setSettings({
-    ...DEFAULT_SETTINGS,
-    general: {
-      ...DEFAULT_SETTINGS.general,
-      language: detectSystemLanguage(),
-    },
-  }), []);
+  const reset = React.useCallback(() => {
+    void deleteBackgroundImage();
+    setSettings({
+      ...DEFAULT_SETTINGS,
+      general: {
+        ...DEFAULT_SETTINGS.general,
+        language: detectSystemLanguage(),
+      },
+    });
+  }, []);
 
   const value = React.useMemo<SettingsContextValue>(
     () => ({ settings, update, reset }),

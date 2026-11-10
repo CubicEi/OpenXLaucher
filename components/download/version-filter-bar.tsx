@@ -23,6 +23,16 @@ const filterOptions: { labelKey: TranslationKey; value: VersionFilter }[] = [
   { labelKey: "download.versionType.oldVersion", value: "old_version" },
 ];
 
+/** 下载中心子类筛选按钮（Minecraft / Java / 全平台搜索共用） */
+export function downloadSubFilterButtonClass(isActive: boolean) {
+  return cn(
+    "text-xs transition-colors duration-200",
+    isActive
+      ? "bg-accent text-accent-foreground font-medium"
+      : "text-muted-foreground hover:text-foreground",
+  );
+}
+
 export function VersionFilterBar({
   filter,
   onFilterChange,
@@ -40,12 +50,7 @@ export function VersionFilterBar({
             variant="ghost"
             size="sm"
             onClick={() => onFilterChange(option.value)}
-            className={cn(
-              "text-xs transition-colors duration-200",
-              filter === option.value
-                ? "bg-accent text-accent-foreground font-medium"
-                : "text-muted-foreground hover:text-foreground"
-            )}
+            className={downloadSubFilterButtonClass(filter === option.value)}
           >
             {t(option.labelKey)}
           </Button>
