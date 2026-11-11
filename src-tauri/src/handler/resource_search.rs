@@ -25,6 +25,10 @@ pub struct EnglishSearchHit {
     pub schematic_uuid: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub schematic_file_type: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub modrinth_project_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub curseforge_project_id: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -76,6 +80,16 @@ fn result_project_type(category: &str) -> &str {
         "worlds" => "world",
         "schematic" => "schematic",
         _ => "mod",
+    }
+}
+
+fn modrinth_site_path_segment(project_type: &str) -> String {
+    match project_type.to_ascii_lowercase().as_str() {
+        "shaders" | "shaderpack" | "shader pack" => "shader".to_string(),
+        "worlds" => "world".to_string(),
+        "resource pack" => "resourcepack".to_string(),
+        "data pack" => "datapack".to_string(),
+        other => other.to_string(),
     }
 }
 
@@ -175,6 +189,11 @@ async fn search_modpack_index(query: &str, browse: bool, limit: u32) -> Result<V
                     .collect()
             })
             .unwrap_or_default();
+        let mr_project_id = item
+            .get("modrinth_info")
+            .and_then(|mr| mr.get("id").or_else(|| mr.get("project_id")))
+            .and_then(|v| v.as_str())
+            .map(str::to_string);
         out.push(EnglishSearchHit {
             title: name,
             slug: detail_slug,
@@ -190,6 +209,8 @@ async fn search_modpack_index(query: &str, browse: bool, limit: u32) -> Result<V
             external_url: external.or(page_url),
             schematic_uuid: None,
             schematic_file_type: None,
+            modrinth_project_id: mr_project_id,
+            curseforge_project_id: None,
         });
     }
     Ok(out)
@@ -287,6 +308,8 @@ async fn search_mcschematic(query: &str, browse: bool, limit: u32) -> Result<Vec
             external_url: Some(format!("https://www.mcschematic.top/schematic/{}", uuid)),
             schematic_uuid: Some(uuid),
             schematic_file_type: Some(file_type as u32),
+            modrinth_project_id: None,
+            curseforge_project_id: None,
         });
     }
     Ok(out)
@@ -356,6 +379,11 @@ pub async fn search_english_resources(
                                     .get("project_type")
                                     .and_then(|v| v.as_str())
                                     .unwrap_or(result_project_type(&category));
+                                let mr_project_id = hit
+                                    .get("project_id")
+                                    .and_then(|v| v.as_str())
+                                    .map(str::to_string)
+                                    .unwrap_or_else(|| slug.clone());
                                 results.push(EnglishSearchHit {
                                     title: hit
                                         .get("title")
@@ -404,10 +432,13 @@ pub async fn search_english_resources(
                                         .map(str::to_string),
                                     external_url: Some(format!(
                                         "https://modrinth.com/{}/{}",
-                                        pt, slug
+                                        modrinth_site_path_segment(pt),
+                                        slug
                                     )),
                                     schematic_uuid: None,
                                     schematic_file_type: None,
+                                    modrinth_project_id: Some(mr_project_id),
+                                    curseforge_project_id: None,
                                 });
                             }
                         }
@@ -444,6 +475,8 @@ pub async fn search_english_resources(
                                     results.iter_mut().find(|r| r.slug == slug && r.source == "modrinth")
                                 {
                                     existing.source = "both".to_string();
+                                    existing.curseforge_project_id =
+                                        item.get("id").and_then(|v| v.as_i64());
                                 }
                                 continue;
                             }
@@ -451,6 +484,7 @@ pub async fn search_english_resources(
                                 continue;
                             }
                             let class_id = item.get("classId").and_then(|v| v.as_i64());
+                            let cf_project_id = item.get("id").and_then(|v| v.as_i64());
                             let slug_for_url = slug.clone();
                             results.push(EnglishSearchHit {
                                 title: item
@@ -508,6 +542,8 @@ pub async fn search_english_resources(
                                 },
                                 schematic_uuid: None,
                                 schematic_file_type: None,
+                                modrinth_project_id: None,
+                                curseforge_project_id: cf_project_id,
                             });
                         }
                     }

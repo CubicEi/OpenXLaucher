@@ -259,6 +259,7 @@ pub fn launch_macos_replace(download_path: &Path) -> Result<(), String> {
             .arg(&script_path)
             .spawn()
             .map_err(|e| format!("启动替换脚本失败: {}", e))?;
+        crate::launcher_restart_focus::mark_focus_after_restart();
         std::process::exit(0);
     }
 

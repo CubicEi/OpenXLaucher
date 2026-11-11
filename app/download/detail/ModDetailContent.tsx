@@ -12,6 +12,7 @@ import { useI18n, type TranslationKey } from "@/components/i18n/use-i18n";
 import { useModFavorites } from "@/hooks/use-mod-favorites";
 import type { ModFavorite } from "@/lib/mod-favorites";
 import { resolveResourceKindForDownload } from "@/lib/resource-kind";
+import { modrinthProjectPageUrl } from "@/lib/modrinth-url";
 import { isTauriRuntime } from "@/lib/tauri-runtime";
 
 const openExternalUrl = async (url: string) => {
@@ -374,7 +375,31 @@ function compareMinecraftVersionDescending(a: string, b: string): number {
   return b.localeCompare(a, undefined, { numeric: true });
 }
 
-export default function ModDetailContent({ modId }: { modId: string }) {
+function detailSourceFlags(
+  source: string | null | undefined,
+  mrProjectId: string | null | undefined,
+  cfProjectId: string | null | undefined,
+): { loadMr: boolean; loadCf: boolean } {
+  const mr = Boolean(mrProjectId?.trim());
+  const cf = Boolean(cfProjectId?.trim());
+  const s = (source || "").toLowerCase();
+  if (s === "curseforge") return { loadMr: false, loadCf: cf };
+  if (s === "modrinth" || s === "modpackindex") return { loadMr: mr, loadCf: false };
+  if (s === "both") return { loadMr: mr, loadCf: cf };
+  return { loadMr: mr, loadCf: cf };
+}
+
+export default function ModDetailContent({
+  modId,
+  source = null,
+  mrProjectId = null,
+  cfProjectId = null,
+}: {
+  modId: string;
+  source?: string | null;
+  mrProjectId?: string | null;
+  cfProjectId?: string | null;
+}) {
   const router = useRouter();
   const { t } = useI18n();
   const [liveInfo, setLiveInfo] = useState<LiveModDetail | null>(null);
@@ -477,30 +502,40 @@ export default function ModDetailContent({ modId }: { modId: string }) {
   useEffect(() => {
     loadModData();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [modId]);
+  }, [modId, source, mrProjectId, cfProjectId]);
 
   const loadLiveInfo = async () => {
     try {
       setLiveError(null);
 
-      // Query Modrinth and CurseForge in parallel to get complete project information
-      const mrPromise = invoke<string>('get_modrinth_project', { slug: modId })
-        .then((result) => JSON.parse(result))
-        .catch((error) => {
-          console.warn('Modrinth project lookup failed:', error);
-          return null;
-        });
+      const { loadMr, loadCf } = detailSourceFlags(source, mrProjectId, cfProjectId);
+      if (!loadMr && !loadCf) {
+        throw new Error("缺少平台项目 ID，请从搜索或已安装资源入口打开详情页");
+      }
 
-      const cfUrl = `https://api.curseforge.com/v1/mods/search?slug=${encodeURIComponent(modId)}&gameId=432`;
-      const cfPromise = fetch(cfUrl, {
-        headers: {
-          'x-api-key': '$2a$10$VTAFCxje5a1Jkqv0aGWjQ.fULedAEPctDqppOkNMRVv.edVnG7KQ6',
-          Accept: 'application/json',
-          'User-Agent': 'OpenXLauncher',
-        },
-      })
-        .then((r) => (r.ok ? r.json() : null))
-        .catch(() => null);
+      const mrPromise =
+        loadMr && mrProjectId?.trim()
+          ? invoke<string>("get_modrinth_project", { projectId: mrProjectId.trim() })
+              .then((result) => JSON.parse(result))
+              .catch((error) => {
+                console.warn("Modrinth project lookup failed:", error);
+                return null;
+              })
+          : Promise.resolve(null);
+
+      const cfNumericId = cfProjectId ? Number.parseInt(cfProjectId, 10) : NaN;
+      const cfPromise =
+        loadCf && Number.isFinite(cfNumericId) && cfNumericId > 0
+          ? invoke<string>("get_curseforge_mod_by_project_id", { projectId: cfNumericId })
+              .then((result) => {
+                const envelope = JSON.parse(result) as { data?: Record<string, unknown> };
+                return envelope?.data ?? null;
+              })
+              .catch((error) => {
+                console.warn("CurseForge project lookup failed:", error);
+                return null;
+              })
+          : Promise.resolve(null);
 
       const [mrData, cfData] = await Promise.all([mrPromise, cfPromise]);
 
@@ -568,25 +603,23 @@ export default function ModDetailContent({ modId }: { modId: string }) {
       let cfId: number | undefined;
       let cfClassId: number | undefined;
 
-      if (
-        cfData &&
-        typeof cfData === 'object' &&
-        Array.isArray(cfData.data) &&
-        cfData.data.length > 0
-      ) {
+      if (cfData && typeof cfData === "object") {
         cfOk = true;
-        const exact =
-          cfData.data.find(
-            (d: any) => (d.slug || '').toLowerCase() === modId.toLowerCase()
-          ) || cfData.data[0];
-        cfTitle = exact.name || '';
-        cfDescription = exact.summary || '';
-        cfDownloads = typeof exact.downloadCount === 'number' ? exact.downloadCount : undefined;
-        cfIconUrl = exact.logo?.thumbnailUrl || exact.logo?.url || undefined;
-        cfAuthor = exact.authors?.[0]?.name || undefined;
-        cfUpdated = exact.dateModified || exact.dateReleased || undefined;
-        cfId = typeof exact.id === 'number' ? exact.id : undefined;
-        cfClassId = typeof exact.classId === 'number' ? exact.classId : undefined;
+        const exact = cfData as Record<string, unknown>;
+        cfTitle = (exact.name as string) || "";
+        cfDescription = (exact.summary as string) || "";
+        cfDownloads =
+          typeof exact.downloadCount === "number" ? exact.downloadCount : undefined;
+        const logo = exact.logo as { thumbnailUrl?: string; url?: string } | undefined;
+        cfIconUrl = logo?.thumbnailUrl || logo?.url || undefined;
+        const authors = exact.authors as Array<{ name?: string }> | undefined;
+        cfAuthor = authors?.[0]?.name || undefined;
+        cfUpdated =
+          (exact.dateModified as string) ||
+          (exact.dateReleased as string) ||
+          undefined;
+        cfId = typeof exact.id === "number" ? exact.id : undefined;
+        cfClassId = typeof exact.classId === "number" ? exact.classId : undefined;
       }
 
       const title = mrTitle || cfTitle || modId;
@@ -618,10 +651,25 @@ export default function ModDetailContent({ modId }: { modId: string }) {
         }
       }
 
-      const source: 'modrinth' | 'curseforge' | 'both' =
+      const resolvedSource: 'modrinth' | 'curseforge' | 'both' =
         mrOk && cfOk ? 'both' : mrOk ? 'modrinth' : cfOk ? 'curseforge' : 'both';
 
-      const modrinthUrl = mrOk ? `https://modrinth.com/${projectType}/${modId}` : undefined;
+      const displaySlug =
+        mrData && typeof mrData === "object"
+          ? String(
+              (mrData as { slug?: string; id?: string }).slug ||
+                (mrData as { id?: string }).id ||
+                modId,
+            )
+          : modId;
+      const cfSlug =
+        cfData && typeof cfData === "object"
+          ? String((cfData as { slug?: string }).slug || modId)
+          : modId;
+
+      const modrinthUrl = mrOk
+        ? modrinthProjectPageUrl(displaySlug, mrProjectType ?? projectType)
+        : undefined;
       // Infer correct CurseForge URL path based on projectType
       const cfPath = (() => {
         const pt = projectType.toLowerCase();
@@ -633,11 +681,11 @@ export default function ModDetailContent({ modId }: { modId: string }) {
         return "mc-mods";
       })();
       const curseforgeUrl = cfOk
-        ? `https://www.curseforge.com/minecraft/${cfPath}/${modId}`
+        ? `https://www.curseforge.com/minecraft/${cfPath}/${cfSlug}`
         : undefined;
 
       setLiveInfo({
-        slug: modId,
+        slug: displaySlug,
         title,
         description,
         iconUrl,
@@ -646,14 +694,14 @@ export default function ModDetailContent({ modId }: { modId: string }) {
         categories,
         updated,
         author,
-        source,
+        source: resolvedSource,
         sources: {
           modrinth: { ok: mrOk, url: modrinthUrl },
           curseforge: { ok: cfOk, url: curseforgeUrl },
         },
         modrinthUrl,
         curseforgeUrl,
-        classId: cfId,
+        classId: cfClassId,
       });
     } catch (err) {
       console.error('Failed to get project online information:', err);
@@ -675,10 +723,13 @@ export default function ModDetailContent({ modId }: { modId: string }) {
         projectType: fallbackType,
         source: 'both',
         sources: {
-          modrinth: { ok: true, url: `https://modrinth.com/${fallbackType}/${modId}` },
+          modrinth: {
+            ok: true,
+            url: modrinthProjectPageUrl(modId, fallbackType),
+          },
           curseforge: { ok: true, url: `https://www.curseforge.com/minecraft/${cfPathFallback}/${modId}` },
         },
-        modrinthUrl: `https://modrinth.com/${fallbackType}/${modId}`,
+        modrinthUrl: modrinthProjectPageUrl(modId, fallbackType),
         curseforgeUrl: `https://www.curseforge.com/minecraft/${cfPathFallback}/${modId}`,
       });
     }
@@ -694,12 +745,35 @@ export default function ModDetailContent({ modId }: { modId: string }) {
         setLoadingFiles(true);
         setFilesError(null);
 
-        const cfPromise = invoke<string>("get_mod_files_by_slug", { slug: modId })
-          .then((r) => ({ ok: true as const, source: "CurseForge", data: r }))
-          .catch((e) => ({ ok: false as const, source: "CurseForge", error: String(e) }));
-        const mrPromise = invoke<string>("get_modrinth_mod_files", { slug: modId })
-          .then((r) => ({ ok: true as const, source: "Modrinth", data: r }))
-          .catch((e) => ({ ok: false as const, source: "Modrinth", error: String(e) }));
+        const { loadMr, loadCf } = detailSourceFlags(source, mrProjectId, cfProjectId);
+        if (!loadMr && !loadCf) {
+          throw new Error("缺少平台项目 ID，无法加载版本列表");
+        }
+
+        const cfNumericId = cfProjectId ? Number.parseInt(cfProjectId, 10) : NaN;
+        const cfPromise =
+          loadCf && Number.isFinite(cfNumericId) && cfNumericId > 0
+            ? invoke<string>("get_curseforge_mod_files_by_project_id", { projectId: cfNumericId })
+                .then((r) => ({ ok: true as const, source: "CurseForge", data: r }))
+                .catch((e) => ({ ok: false as const, source: "CurseForge", error: String(e) }))
+            : Promise.resolve({
+                ok: false as const,
+                source: "CurseForge" as const,
+                error: "skipped",
+              });
+
+        const mrPromise =
+          loadMr && mrProjectId?.trim()
+            ? invoke<string>("get_modrinth_mod_files_by_project_id", {
+                projectId: mrProjectId.trim(),
+              })
+                .then((r) => ({ ok: true as const, source: "Modrinth", data: r }))
+                .catch((e) => ({ ok: false as const, source: "Modrinth", error: String(e) }))
+            : Promise.resolve({
+                ok: false as const,
+                source: "Modrinth" as const,
+                error: "skipped",
+              });
 
         const [cfResult, mrResult] = await Promise.all([cfPromise, mrPromise]);
 
@@ -824,6 +898,9 @@ export default function ModDetailContent({ modId }: { modId: string }) {
     modLoader: getModLoader(file),
     downloadUrl: file.url,
     addedAt: 0,
+    source: liveInfo?.source,
+    mrProjectId: mrProjectId?.trim() || undefined,
+    cfProjectId: cfProjectId?.trim() || undefined,
   });
 
   const resolveFilePlatform = (
@@ -914,6 +991,7 @@ export default function ModDetailContent({ modId }: { modId: string }) {
         projectId,
         browseCategoryParam,
         liveInfo?.projectType ?? null,
+        resourceKind === "modpack",
       );
 
       // Update to real taskId

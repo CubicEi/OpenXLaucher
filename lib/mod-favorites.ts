@@ -9,6 +9,9 @@ export interface ModFavorite {
   modLoader: string;
   downloadUrl: string;
   addedAt: number;
+  source?: "modrinth" | "curseforge" | "both";
+  mrProjectId?: string;
+  cfProjectId?: string;
 }
 
 const STORAGE_KEY = "openxlauncher.mod-favorites.v1";

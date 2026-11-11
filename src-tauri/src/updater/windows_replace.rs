@@ -236,5 +236,6 @@ pub fn launch_windows_replace(download_path: &Path) -> Result<(), String> {
         return Err("Windows replace script can only run on Windows".to_string());
     }
 
+    crate::launcher_restart_focus::mark_focus_after_restart();
     std::process::exit(0);
 }

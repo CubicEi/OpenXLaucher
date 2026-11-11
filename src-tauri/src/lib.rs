@@ -5,6 +5,7 @@ extern crate log;
 mod app_version;
 #[allow(dead_code)]
 mod app_paths;
+mod launcher_restart_focus;
 mod auth;
 mod downloader;
 mod handler;
@@ -69,8 +70,9 @@ use handler::liteloader_handler::{
     cancel_liteloader_download, download_and_install_liteloader, get_liteloader_versions,
 };
 use handler::mod_links::{
-    cancel_mod_download, download_mod_file, download_resource_file, get_curseforge_mod_files,
-    get_mod_files_by_slug, get_mod_links, get_modrinth_mod_files, search_curseforge_projects,
+    cancel_mod_download, download_mod_file, download_resource_file, get_curseforge_mod_by_project_id,
+    get_curseforge_mod_files, get_curseforge_mod_files_by_project_id, get_mod_links,
+    get_modrinth_mod_files_by_project_id, get_modrinth_project, search_curseforge_projects,
     search_modrinth_projects,
 };
 use handler::resource_search::{download_mcschematic_file, search_english_resources};
@@ -283,8 +285,10 @@ pub fn run() {
             get_running_game_state,
             get_mod_links,
             get_curseforge_mod_files,
-            get_mod_files_by_slug,
-            get_modrinth_mod_files,
+            get_curseforge_mod_by_project_id,
+            get_curseforge_mod_files_by_project_id,
+            get_modrinth_mod_files_by_project_id,
+            get_modrinth_project,
             download_mod_file,
             download_resource_file,
             cancel_mod_download,
@@ -485,6 +489,7 @@ pub fn run() {
             let _ = &window;
 
             let _ = window.show();
+            launcher_restart_focus::schedule_raise_main_window_after_restart(window.clone());
 
             #[cfg(target_os = "macos")]
             unsafe {

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useEffect, useCallback } from "react";
+import { useState, useMemo, useEffect, useCallback, useRef } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import {
   Download,
@@ -27,6 +27,7 @@ import {
   VersionFilterBar,
   downloadSubFilterButtonClass,
 } from "@/components/download/version-filter-bar";
+import { buildModDetailSearchParams } from "@/lib/mod-detail-query";
 import { cn } from "@/lib/utils";
 import { useMinecraftVersions } from "@/hooks/use-minecraft-versions";
 import { slideInFromRight, slideInFromLeft, fadeIn } from "@/lib/motion";
@@ -100,6 +101,8 @@ interface SearchResultItem {
   externalUrl?: string;
   schematicUuid?: string;
   schematicFileType?: number;
+  modrinthProjectId?: string;
+  curseforgeProjectId?: number;
 }
 
 function sourceBadgeLabel(source: SearchSource, t: (key: TranslationKey) => string): string {
@@ -144,14 +147,22 @@ function formatDate(iso: string | undefined, t: (key: TranslationKey, values?: R
   }
 }
 
-function categoryPath(category: string, slug: string, returnQuery?: string, returnCategory?: EnglishCategory): string {
-  // Route to the detail page and keep enough state to restore English search.
-  const params = new URLSearchParams({ mod: slug });
-  if (returnQuery !== undefined && returnCategory !== undefined) {
-    params.set("returnTo", "english");
-    params.set("query", returnQuery);
-    params.set("category", returnCategory);
-  }
+function categoryPath(
+  category: string,
+  result: SearchResultItem,
+  returnQuery?: string,
+  returnCategory?: EnglishCategory,
+): string {
+  const params = buildModDetailSearchParams(result.slug, {
+    source: result.source,
+    modrinthProjectId: result.modrinthProjectId,
+    curseforgeProjectId: result.curseforgeProjectId,
+    returnTo:
+      returnQuery !== undefined && returnCategory !== undefined ? "english" : undefined,
+    query: returnQuery,
+    category: returnCategory ?? category,
+    forceType: category,
+  });
   return `/download/detail?${params.toString()}`;
 }
 
@@ -228,6 +239,7 @@ export default function DownloadPage() {
   const [englishLoading, setEnglishLoading] = useState(false);
   const [englishError, setEnglishError] = useState<string | null>(null);
   const [schematicMessage, setSchematicMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
+  const englishSearchSeq = useRef(0);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -292,14 +304,16 @@ export default function DownloadPage() {
         return;
       }
       const detailCategory = categoryForSource(result.projectType || englishCategory);
-      const path = categoryPath(detailCategory, result.slug, englishQuery, englishCategory);
+      const path = categoryPath(detailCategory, result, englishQuery, englishCategory);
       router.push(path);
     },
     [englishCategory, englishQuery, handleDownloadSchematic, router],
   );
 
   const handleEnglishSearch = useCallback(async () => {
+    const seq = ++englishSearchSeq.current;
     const query = englishQuery.trim();
+    const category = englishCategory;
     const browseByCategory = !query;
     setEnglishLoading(true);
     setEnglishResults(null);
@@ -308,15 +322,17 @@ export default function DownloadPage() {
     try {
       const raw = await invoke<string>("search_english_resources", {
         query: browseByCategory ? "" : query,
-        category: englishCategory,
+        category,
         limit: 25,
       });
+      if (englishSearchSeq.current !== seq) return;
+
       const parsed = JSON.parse(raw) as { results: SearchResultItem[] };
       setEnglishResults(parsed.results ?? []);
 
       if (!parsed.results?.length) {
-        const categoryLabel = ENGLISH_CATEGORIES.find((c) => c.id === englishCategory)?.labelKey;
-        const categoryName = categoryLabel ? t(categoryLabel) : englishCategory;
+        const categoryLabel = ENGLISH_CATEGORIES.find((c) => c.id === category)?.labelKey;
+        const categoryName = categoryLabel ? t(categoryLabel) : category;
         setEnglishError(
           browseByCategory
             ? t("download.noResultsInCategory", { category: categoryName })
@@ -324,10 +340,13 @@ export default function DownloadPage() {
         );
       }
     } catch (err) {
+      if (englishSearchSeq.current !== seq) return;
       console.error("English search failed:", err);
       setEnglishError(t("download.searchFailed", { error: String(err) }));
     } finally {
-      setEnglishLoading(false);
+      if (englishSearchSeq.current === seq) {
+        setEnglishLoading(false);
+      }
     }
   }, [englishQuery, englishCategory, t]);
 
@@ -335,6 +354,9 @@ export default function DownloadPage() {
   useEffect(() => {
     if (tab !== "english") return;
     void handleEnglishSearch();
+    return () => {
+      englishSearchSeq.current += 1;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab, englishCategory]);
 
@@ -733,7 +755,15 @@ onClick={() => setTab("favorites")}
                         type="button"
                         variant="ghost"
                         size="sm"
-                        onClick={() => setEnglishCategory(cat.id)}
+                        onClick={() => {
+                          if (cat.id === englishCategory) return;
+                          englishSearchSeq.current += 1;
+                          setEnglishResults(null);
+                          setEnglishError(null);
+                          setSchematicMessage(null);
+                          setEnglishLoading(true);
+                          setEnglishCategory(cat.id);
+                        }}
                         className={cn(
                           "gap-1.5",
                           downloadSubFilterButtonClass(isActive),
