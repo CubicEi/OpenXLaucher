@@ -290,12 +290,18 @@ pub fn mp_install_openp2p(src_path: String) -> Result<String, String> {
 }
 #[command]
 pub fn mp_start_openp2p_host(room_name: String) -> Result<String, String> {
-    let args = codec::host_arguments(&room_name);
+    let room = codec::sanitize_openp2p_node(&room_name)?;
+    let args = codec::host_arguments(&room);
     start_openp2p_with_args(&args)
 }
 #[command]
-pub fn mp_encode_room_info(room_name: String, port_count: String) -> String {
-    codec::encode_room_info(&room_name, &port_count)
+pub fn mp_encode_room_info(room_name: String, port_count: String) -> Result<String, String> {
+    let room = codec::sanitize_openp2p_node(&room_name)?;
+    let port = port_count.trim();
+    if port.is_empty() || !port.chars().all(|c| c.is_ascii_digit()) {
+        return Err("端口号必须为数字".to_string());
+    }
+    Ok(codec::encode_room_info(&room, port))
 }
 #[command]
 pub fn mp_start_openp2p_join(encoded_value: String, player_name: String) -> Result<String, String> {

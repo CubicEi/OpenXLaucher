@@ -324,6 +324,13 @@ body[data-app-bg="active"] [data-settings-page] [data-slot="card"] {
   -webkit-user-select: none;
 }
 
+/* 避免侧栏/设置等「按钮式链接」被 WebView 当成可拖动的超链接 */
+button,
+a[href],
+[role="button"] {
+  -webkit-user-drag: none;
+}
+
 /* ============================================================
    自定义滚动条：默认隐藏拇指但预留宽度，靠近槽位时再显示
    （显示由 components/global/scrollbar-proximity.tsx 设置 data-scrollbar-near）

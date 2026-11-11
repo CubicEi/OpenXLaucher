@@ -8,6 +8,7 @@ import { DownloadProvider } from "@/components/download/download-provider";
 import { RetargetInstallListener } from "@/components/download/retarget-install-listener";
 import { FlyToProcessListOverlay } from "@/components/process-list/fly-to-process-list";
 import { LaunchProvider } from "@/components/launch/launch-provider";
+import { MultiplayerProvider } from "@/components/multiplayer/multiplayer-provider";
 import { DeferredGlobalFeatures } from "@/components/global/deferred-global-features";
 import { StartupRuntimeDependencyNotifier } from "@/components/settings/startup-runtime-dependency-notifier";
 import { UIConfigProvider } from "@/components/ui-config/ui-config-provider";
@@ -58,6 +59,7 @@ export default function RootLayout({
               <SettingsProvider>
                 <AccountProvider>
                   <LaunchProvider>
+                    <MultiplayerProvider>
                       <DownloadProvider>
                         <RetargetInstallListener />
                         <TooltipProvider>
@@ -75,6 +77,7 @@ export default function RootLayout({
                           </ThemeRuntimeProvider>
                         </TooltipProvider>
                       </DownloadProvider>
+                    </MultiplayerProvider>
                   </LaunchProvider>
                 </AccountProvider>
               </SettingsProvider>

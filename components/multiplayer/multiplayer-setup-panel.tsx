@@ -85,7 +85,7 @@ export function MultiplayerSetupPanel({
                 type="text"
                 value={roomName}
                 onChange={(event) => setRoomName(event.target.value)}
-                placeholder="例如：my_room"
+                placeholder="至少 8 个字符，如 my_room_1"
                 className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground outline-none focus:border-primary focus:ring-2 focus:ring-primary/50"
               />
             </div>
@@ -102,9 +102,12 @@ export function MultiplayerSetupPanel({
                 placeholder="例如：25565"
                 className="w-full rounded-lg border border-border bg-background px-3 py-2 font-mono text-sm text-foreground outline-none focus:border-primary focus:ring-2 focus:ring-primary/50"
               />
-              <p className="flex items-start gap-1.5 text-sm font-semibold leading-relaxed text-red-600 dark:text-red-400">
-                <AlertCircle className="mt-0.5 size-4 shrink-0" />
-                <span>重要：请填写 Minecraft“对局域网开放”后显示的局域网联机端口号！</span>
+              <p className="flex items-start gap-1.5 text-xs leading-relaxed text-muted-foreground">
+                <AlertCircle className="mt-0.5 size-4 shrink-0 text-amber-600" />
+                <span>
+                  房间名须为 8–31 个英文字母/数字/下划线（OpenP2P 要求，过短会导致加入方日志出现 peer
+                  offline）。端口号填游戏「对局域网开放」后提示的端口，不是默认 25565。
+                </span>
               </p>
             </div>
 

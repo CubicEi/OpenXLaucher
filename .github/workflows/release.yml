@@ -236,7 +236,7 @@ jobs:
   publish:
     name: Publish GitHub Release
     needs: merge-release
-    if: github.event_name == 'workflow_dispatch' && inputs.publish_release
+    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.publish_release)
     runs-on: ubuntu-latest
     environment: release
     steps:
@@ -253,11 +253,11 @@ jobs:
       - name: Publish release assets
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PRERELEASE: ${{ github.event_name == 'workflow_dispatch' && inputs.prerelease || false }}
         shell: bash
         run: |
           set -euo pipefail
           TAG="v${APP_VERSION}"
-          PRERELEASE="${{ inputs.prerelease }}"
           if [ ! -d release-bundle ] || [ -z "$(ls -A release-bundle 2>/dev/null)" ]; then
             echo "Release bundle missing."
             exit 1

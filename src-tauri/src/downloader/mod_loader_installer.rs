@@ -532,33 +532,7 @@ async fn download_url_async(url: &str, target: &Path) -> Result<()> {
         .map(|_| ())
 }
 async fn fetch_minecraft_version_package(mc_version: &str) -> Result<serde_json::Value> {
-    let client = crate::http_client::shared_client().await;
-    let manifest_url = "https://launchermeta.mojang.com/mc/game/version_manifest.json";
-    let manifest: serde_json::Value = client
-        .get(manifest_url)
-        .send()
-        .await
-        .with_context(|| format!("请求 {} 失败", manifest_url))?
-        .json()
-        .await
-        .context("解析 version_manifest.json 失败")?;
-    let versions = manifest["versions"]
-        .as_array()
-        .ok_or_else(|| anyhow!("缺少 versions 数组"))?;
-    let package_url = versions
-        .iter()
-        .find(|v| v["id"].as_str() == Some(mc_version))
-        .and_then(|v| v["url"].as_str().map(|s| s.to_string()))
-        .ok_or_else(|| anyhow!("未在 Mojang 版本清单中找到 Minecraft {}", mc_version))?;
-    let package: serde_json::Value = client
-        .get(&package_url)
-        .send()
-        .await
-        .with_context(|| format!("请求 {} 失败", package_url))?
-        .json()
-        .await
-        .context("解析 Minecraft package.json 失败")?;
-    Ok(package)
+    crate::downloader::shared_utils::fetch_minecraft_version_package(mc_version).await
 }
 pub async fn ensure_minecraft_client_jar_async(
     mc_version: &str,
@@ -575,8 +549,11 @@ pub async fn ensure_minecraft_client_jar_async(
     let package = fetch_minecraft_version_package(mc_version).await?;
     let client_url = package["downloads"]["client"]["url"]
         .as_str()
-        .ok_or_else(|| anyhow!("package.json 缺少 downloads.client.url"))?
-        .to_string();
+        .ok_or_else(|| anyhow!("package.json 缺少 downloads.client.url"))?;
+    let client_urls = crate::downloader::shared_utils::version_client_download_urls(
+        mc_version,
+        client_url,
+    );
     println!(
         "  下载原版 Minecraft {} client jar → {}",
         mc_version,
@@ -591,7 +568,7 @@ pub async fn ensure_minecraft_client_jar_async(
             .parent()
             .map(|p| p.to_path_buf())
             .unwrap_or_else(|| libraries_dir.to_path_buf()),
-        urls: vec![client_url],
+        urls: client_urls,
         sha1: package["downloads"]["client"]["sha1"]
             .as_str()
             .map(|s| s.to_string()),
@@ -616,8 +593,8 @@ pub async fn ensure_minecraft_client_mappings_async(
     let mapping_url = package["downloads"]["client_mappings"]["url"]
         .as_str()
         .or_else(|| package["downloads"]["server_mappings"]["url"].as_str())
-        .ok_or_else(|| anyhow!("package.json 缺少 client_mappings"))?
-        .to_string();
+        .ok_or_else(|| anyhow!("package.json 缺少 client_mappings"))?;
+    let mapping_urls = crate::downloader::shared_utils::mirror_urls_for_official(mapping_url);
     println!(
         "  下载原版 Minecraft {} client mappings → {}",
         mc_version,
@@ -632,7 +609,7 @@ pub async fn ensure_minecraft_client_mappings_async(
             .parent()
             .map(|p| p.to_path_buf())
             .unwrap_or_else(|| libraries_dir.to_path_buf()),
-        urls: vec![mapping_url],
+        urls: mapping_urls,
         sha1: None,
     };
     crate::downloader::concurrent_download::download_one(task)

@@ -7,6 +7,7 @@ import {
   Wrench,
   Settings,
   Gamepad2,
+  Globe,
 } from "lucide-react"
 import Link from "next/link"
 import { usePathname, useRouter } from "next/navigation"
@@ -47,6 +48,7 @@ const NAV_ITEM_BASE: Omit<NavItem, "label">[] = [
   { id: "game-settings", icon: <Gamepad2 className="size-4" />, href: "/game-settings" },
   { id: "launch", icon: <Rocket className="size-4" />, href: "/launch" },
   { id: "download", icon: <Download className="size-4" />, href: "/download" },
+  { id: "multiplayer", icon: <Globe className="size-4" />, href: "/multiplayer" },
   { id: "tools", icon: <Wrench className="size-4" />, href: "/tools" },
   {
     id: "settings",
@@ -62,6 +64,7 @@ const NAV_LABELS: Record<string, TranslationKey> = {
   "game-settings": "sidebar.gameSettings",
   launch: "sidebar.launch",
   download: "sidebar.downloads",
+  multiplayer: "sidebar.multiplayer",
   tools: "sidebar.tools",
   settings: "sidebar.settings",
 }
@@ -95,6 +98,8 @@ function NavButton({ item, isActive, isExactActive }: { item: NavItem; isActive:
       <TooltipTrigger asChild>
         <Link
           href={item.href}
+          draggable={false}
+          onDragStart={(event) => event.preventDefault()}
           onClick={handleNavigation}
           suppressHydrationWarning
           aria-label={item.label}

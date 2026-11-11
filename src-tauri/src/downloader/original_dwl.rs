@@ -1,4 +1,8 @@
 use super::decompression::extract_library_paths;
+use crate::downloader::shared_utils::{
+    self, asset_object_download_urls, fetch_text_from_urls, library_download_urls,
+    minecraft_version_json_urls, minecraft_version_manifest_urls,     version_client_download_urls,
+};
 use crate::http_client::shared_client;
 use futures::stream::{self, StreamExt};
 use serde::{Deserialize, Serialize};
@@ -15,9 +19,6 @@ use std::time::Duration;
 use tokio::fs::File;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::{mpsc, Semaphore};
-const MOJANG_MANIFEST: &str = "https://launchermeta.mojang.com/mc/game/version_manifest.json";
-const MIRROR_URL: &str = "https://bmclapi2.bangbang93.com";
-
 // 过高的文件级并发会争用 Tokio 线程、文件描述符和磁盘，拖慢整个启动器。
 const MAX_CONCURRENT_DOWNLOADS: usize = 16;
 
@@ -368,11 +369,13 @@ pub async fn process_version(
             format!("正在获取 {} 的版本信息", version),
         ))
         .await;
-    let json_url = fetch_version_url(version).await?;
+    let json_urls = resolve_version_json_urls(version).await?;
     if cancel.load(Ordering::SeqCst) {
         return Err("已取消".into());
     }
-    let json_content = reqwest::get(&json_url).await?.text().await?;
+    let json_content = fetch_text_from_urls(&json_urls)
+        .await
+        .map_err(|e| -> Box<dyn Error + Send + Sync> { e.into() })?;
     fs::write(version_dir.join(format!("{}.json", version)), &json_content)?;
     let version_data: VersionJson = serde_json::from_str(&json_content)?;
     let _ = progress_tx
@@ -381,10 +384,10 @@ pub async fn process_version(
     if cancel.load(Ordering::SeqCst) {
         return Err("已取消".into());
     }
-    let assets_content = reqwest::get(&version_data.asset_index.url)
-        .await?
-        .text()
-        .await?;
+    let asset_index_urls = shared_utils::mirror_urls_for_official(&version_data.asset_index.url);
+    let assets_content = fetch_text_from_urls(&asset_index_urls)
+        .await
+        .map_err(|e| -> Box<dyn Error + Send + Sync> { e.into() })?;
     let indexes_dir = minecraft_path.join("assets").join("indexes");
     fs::create_dir_all(&indexes_dir)?;
     let index_path = indexes_dir.join(format!("{}.json", version_data.asset_index.id));
@@ -393,17 +396,14 @@ pub async fn process_version(
     let mut tasks: Vec<DownloadTask> = Vec::new();
     let client_download = &version_data.downloads.client;
     tasks.push(DownloadTask {
-        urls: vec![
-            client_download.url.clone(),
-            format!("{}/version/{}/client", MIRROR_URL, version),
-        ],
+        urls: version_client_download_urls(version, &client_download.url),
         target_path: version_dir.join(format!("{}.jar", version)),
         sha1: client_download.sha1.clone(),
         size: client_download.size,
     });
     if let Some(logging) = &version_data.logging {
         tasks.push(DownloadTask {
-            urls: vec![logging.client.file.url.clone()],
+            urls: shared_utils::mirror_urls_for_official(&logging.client.file.url),
             target_path: version_dir.join(
                 &logging
                     .client
@@ -428,10 +428,8 @@ pub async fn process_version(
     for lib in version_data.libraries {
         if check_rules(&lib.rules, os_type) {
             if let Some(artifact) = lib.downloads.artifact {
-                let official_url = format!("https://libraries.minecraft.net/{}", artifact.path);
-                let mirror_url = format!("{}/maven/{}", MIRROR_URL, artifact.path);
                 tasks.push(DownloadTask {
-                    urls: vec![official_url, mirror_url],
+                    urls: library_download_urls(&artifact.path),
                     target_path: minecraft_path.join("libraries").join(&artifact.path),
                     sha1: artifact.sha1,
                     size: artifact.size,
@@ -440,10 +438,8 @@ pub async fn process_version(
         }
         for native in lib.downloads.classifiers.values() {
             if should_download_native(&native.path) {
-                let official_url = format!("https://libraries.minecraft.net/{}", native.path);
-                let mirror_url = format!("{}/maven/{}", MIRROR_URL, native.path);
                 tasks.push(DownloadTask {
-                    urls: vec![official_url, mirror_url],
+                    urls: library_download_urls(&native.path),
                     target_path: minecraft_path.join("libraries").join(&native.path),
                     sha1: native.sha1.clone(),
                     size: native.size,
@@ -453,13 +449,8 @@ pub async fn process_version(
     }
     for (_, obj) in assets_data.objects {
         let prefix = &obj.hash[0..2];
-        let official_url = format!(
-            "https://resources.download.minecraft.net/{}/{}",
-            prefix, obj.hash
-        );
-        let mirror_url = format!("{}/assets/{}/{}", MIRROR_URL, prefix, obj.hash);
         tasks.push(DownloadTask {
-            urls: vec![official_url, mirror_url],
+            urls: asset_object_download_urls(prefix, &obj.hash),
             target_path: minecraft_path
                 .join("assets")
                 .join("objects")
@@ -747,30 +738,24 @@ fn should_download_native(path: &str) -> bool {
             _ => false,
         }
 }
-async fn fetch_version_url(version: &str) -> Result<String, Box<dyn Error + Send + Sync>> {
-    let client = shared_client().await;
-    let response = match client.get(MOJANG_MANIFEST).send().await {
-        Ok(res) if res.status().is_success() => res,
-        _ => {
-            return Ok(format!("{}/mc/game/version_manifest.json", MIRROR_URL));
-        }
-    };
-    let manifest = response
-        .json::<VersionManifest>()
+async fn resolve_version_json_urls(
+    version: &str,
+) -> Result<Vec<String>, Box<dyn Error + Send + Sync>> {
+    let manifest_text = fetch_text_from_urls(&minecraft_version_manifest_urls())
         .await
-        .map_err(|_| "Failed to parse version manifest")?;
-    manifest
+        .map_err(|e| -> Box<dyn Error + Send + Sync> { e.into() })?;
+    let manifest: VersionManifest = serde_json::from_str(&manifest_text)
+        .map_err(|e| -> Box<dyn Error + Send + Sync> { e.into() })?;
+    let official = manifest
         .versions
         .iter()
         .find(|v| v.id == version)
-        .map(|e| e.url.clone())
         .or_else(|| {
             manifest
                 .versions
                 .iter()
-                .find(|v| v.id.replace(".", "") == version.replace(".", ""))
-                .map(|e| e.url.clone())
+                .find(|v| v.id.replace('.', "") == version.replace('.', ""))
         })
-        .map(Ok)
-        .unwrap_or_else(|| Ok(format!("{}/version/{}/json", MIRROR_URL, version)))
+        .map(|e| e.url.clone());
+    Ok(minecraft_version_json_urls(version, official.as_deref()))
 }

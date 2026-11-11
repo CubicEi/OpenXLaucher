@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { isAprilFoolsVersion } from "@/lib/minecraft-april-fools";
 import type {
   ClassifiedVersions,
   MinecraftVersion,
@@ -9,6 +10,33 @@ import type {
 /** 会话级缓存：重复进入下载页/整合包页时直接使用上次结果，
     避免每次导航都先渲染加载圈再闪现内容 */
 let cachedVersions: MinecraftVersion[] | null = null;
+
+const MINECRAFT_VERSION_MANIFEST_URLS = [
+  "https://launchermeta.mojang.com/mc/game/version_manifest.json",
+  "https://piston-meta.mojang.com/mc/game/version_manifest.json",
+  "https://bmclapi2.bangbang93.com/mc/game/version_manifest.json",
+] as const;
+
+async function fetchVersionManifestForBrowserPreview() {
+  let lastError: unknown;
+  for (const url of MINECRAFT_VERSION_MANIFEST_URLS) {
+    try {
+      const response = await fetch(url, { cache: "no-store" });
+      if (!response.ok) {
+        lastError = new Error(`Minecraft 版本清单请求失败 (${response.status}): ${url}`);
+        continue;
+      }
+      return (await response.json()) as {
+        versions?: Array<{ id: string; type: string; time: string }>;
+      };
+    } catch (err) {
+      lastError = err;
+    }
+  }
+  throw lastError instanceof Error
+    ? lastError
+    : new Error(String(lastError ?? "无法获取 Minecraft 版本清单"));
+}
 
 /**
  * 判断版本ID是否可能是快照版本
@@ -41,37 +69,23 @@ export function useMinecraftVersions() {
       } catch (invokeError) {
         // 浏览器预览中没有 Tauri IPC，直接读取与后端相同的 Mojang 清单。
         // 这样开发界面和桌面软件都能正常选择 Minecraft 版本。
-        const response = await fetch(
-          "https://launchermeta.mojang.com/mc/game/version_manifest.json",
-          { cache: "no-store" },
-        );
-        if (!response.ok) {
+        let manifest;
+        try {
+          manifest = await fetchVersionManifestForBrowserPreview();
+        } catch (fetchError) {
           throw new Error(
-            `Minecraft 版本清单请求失败 (${response.status})：${String(invokeError)}`,
+            `Minecraft 版本清单请求失败：${String(fetchError)}（Tauri: ${String(invokeError)}）`,
           );
         }
-        const manifest = (await response.json()) as {
-          versions?: Array<{ id: string; type: string; time: string }>;
-        };
         const releases: ClassifiedVersions[0] = [];
         const snapshots: ClassifiedVersions[1] = [];
         const aprilFools: ClassifiedVersions[2] = [];
         const oldVersions: ClassifiedVersions[3] = [];
 
-        // 愚人节版本的特征标识符
-        const aprilFoolsIndicators = [
-          "20w14infinite", "15w14a", "2.0", "1.RV-Pre1", "3D Shareware v1.34"
-        ];
-        
         for (const entry of manifest.versions || []) {
           const item = { id: entry.id, releaseTime: entry.time };
           
-          // 首先检查是否为愚人节版本（通过版本ID或时间戳）
-          const isAprilFools = aprilFoolsIndicators.some(indicator => 
-            entry.id.toLowerCase().includes(indicator.toLowerCase())
-          ) || entry.time.includes("-04-01");
-          
-          if (isAprilFools) {
+          if (isAprilFoolsVersion(entry.id, entry.time, entry.type)) {
             aprilFools.push(item);
             continue;
           }

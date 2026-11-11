@@ -542,7 +542,7 @@ export function ModpackInstallerDialog({ open, onClose }: Props) {
                 </div>
               </div>
               <p className="text-[11px] text-muted-foreground leading-relaxed pt-1 border-t border-border/60">
-                安装完成后，你可以在「启动版本」中选择该整合包实例进行启动。
+                安装完成后，你可以在「启动实例」列表中选择该整合包进行启动。
               </p>
             </div>
           )}

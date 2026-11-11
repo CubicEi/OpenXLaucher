@@ -138,7 +138,7 @@ export function OpenP2PInstaller() {
         <div className="space-y-1 pr-8">
           <h3 className="text-base font-semibold">安装 OpenP2P</h3>
           <p className="text-xs leading-relaxed text-muted-foreground">
-            多人联机功能需要 openp2p 作为联机工具。请将 openp2p 可执行文件拖入此窗口完成安装。
+            多人联机功能需要 OpenP2P 作为联机工具。请将 OpenP2P 可执行文件拖入此窗口完成安装。
           </p>
         </div>
 

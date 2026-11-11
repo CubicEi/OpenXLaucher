@@ -1192,6 +1192,16 @@ pub fn redownload_littleskin_skin(uuid: String) -> Result<(), String> {
     download_littleskin_skin(&uuid)
 }
 
+/// 从第三方 Yggdrasil sessionserver 重新下载皮肤到本地缓存
+#[tauri::command(rename_all = "camelCase")]
+pub fn redownload_yggdrasil_skin(uuid: String, sessionserverBase: String) -> Result<(), String> {
+    let base = sessionserverBase.trim();
+    if base.is_empty() {
+        return Err("认证服务器地址不能为空".to_string());
+    }
+    download_skin_blocking(&uuid, base, None)
+}
+
 /// Tauri 命令：读取本地皮肤 PNG 文件，返回 base64（供前端 3D 展示）
 ///
 /// 兼容多种 UUID 格式：优先按传入的 UUID 查找，然后尝试带/不带连字符的格式

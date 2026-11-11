@@ -250,19 +250,25 @@ export function TitleBar({ className }: TitleBarProps) {
           </div>
         </>
       ) : (
-        <div className='flex h-full items-center' data-tauri-drag-region>
+        <div className='flex h-full items-center'>
           <ThemeSlot {...themeSlot} slotId='app.titlebar.leading'>
-            <div className='flex h-full items-center gap-2 px-3' data-tauri-drag-region>
+            <div
+              className='flex h-full items-center gap-2 px-3'
+              data-tauri-drag-region
+            >
               <AppLogo />
               <span className='text-sm font-medium text-foreground/80'>OpenXLauncher</span>
             </div>
           </ThemeSlot>
 
-          <div className='flex h-full flex-1 items-center justify-center' data-tauri-drag-region>
+          <div
+            className='flex h-full flex-1 items-center justify-center'
+            data-tauri-drag-region
+          >
             <ThemeSlot {...themeSlot} slotId='app.titlebar.center' />
           </div>
 
-          <div className='no-drag flex h-full items-center gap-1'>
+          <div className='no-drag flex h-full shrink-0 items-center gap-1 pr-3'>
             <ThemeSlot {...themeSlot} slotId='app.titlebar.actions'>
               <div className='flex items-center gap-1'>
                 <ProcessListButton />
@@ -270,7 +276,7 @@ export function TitleBar({ className }: TitleBarProps) {
               </div>
             </ThemeSlot>
 
-            <div className='flex items-center gap-1 pr-3'>
+            <div className='flex items-center gap-1'>
               <WindowButton onClick={handleMinimize} title='最小化'>
                 <Minus className='size-4' />
               </WindowButton>

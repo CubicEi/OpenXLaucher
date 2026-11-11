@@ -26,7 +26,7 @@ export function ProfileCard({
 
   const versionDisplay = config.loadType === "1" && config.loadName
     ? config.loadName
-    : config.versionName || "未选择游戏版本";
+    : config.versionName || "未选择游戏实例";
 
   const handleLaunch = () => {
     if (isLaunching || isRunning) {
@@ -86,7 +86,7 @@ export function ProfileCard({
           {/* 版本选择 + 启动按钮 */}
           <div className="rounded-lg border border-border bg-card p-3 space-y-2">
             <div className="text-xs text-muted-foreground">
-              当前版本：<span className="font-medium text-foreground">{versionDisplay}</span>
+              当前实例：<span className="font-medium text-foreground">{versionDisplay}</span>
             </div>
             <Button
               size="lg"
