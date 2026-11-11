@@ -56,6 +56,9 @@ export function MultiplayerRunningPanel({
   const runningModeLabel =
     runMode === "host" ? "房主模式" : runMode === "join" ? "加入模式" : "后台进程";
 
+  const peerOfflineHint =
+    /peer offline/i.test(logText) || /offline, it will auto reconnect/i.test(logText);
+
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-border bg-card">
       <div className="flex shrink-0 items-center justify-between gap-2 border-b border-border bg-muted/30 px-4 py-3">
@@ -68,6 +71,18 @@ export function MultiplayerRunningPanel({
           <span>停止联机</span>
         </Button>
       </div>
+
+      {peerOfflineHint ? (
+        <div className="mx-4 shrink-0 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-900 dark:text-amber-200">
+          <p className="font-medium">检测到 peer offline（对端节点未在线）</p>
+          <ul className="mt-1 list-inside list-disc space-y-0.5 text-[11px] opacity-90">
+            <li>房主须先在本页「创建房间」并保持 OpenP2P 运行，再加入</li>
+            <li>房间名至少 8 个字符；分享的房间编码须来自最新一次创建</li>
+            <li>双方网络需能访问 OpenP2P 服务；房主开防火墙放行 openp2p</li>
+            <li>日志出现 online 后可再在游戏里连接 127.0.0.1:端口</li>
+          </ul>
+        </div>
+      ) : null}
 
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden lg:flex-row">
         <div className="flex flex-col items-center justify-center gap-5 overflow-auto border-border p-6 lg:w-[45%] lg:border-r">

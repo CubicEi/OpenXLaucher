@@ -5,6 +5,10 @@ import type { AppRouterInstance } from "next/dist/shared/lib/app-router-context.
 
 import { appLog } from "@/lib/runtime-log";
 import {
+  GAME_SETTINGS_CORE_PATH,
+  isNavigatingToGameSettingsCore,
+} from "@/lib/game-settings-navigation";
+import {
   clearSkipSectionChrome,
   markSkipSectionChrome,
 } from "@/lib/section-chrome-enter";
@@ -393,15 +397,27 @@ export function navigateWithMainTransition(
   }
 
   const preserveShell = navigationMustPreserveAppShell(currentPathname, targetPathname);
+  /** 启动准备 / 正版登录弹窗进行中：禁止 location.assign，否则 async 准备与 Promise gate 被整页刷新清掉。 */
+  const avoidHardReload = getLaunchInFlight();
+  const hardNavToGameSettingsCore = isNavigatingToGameSettingsCore(
+    currentPathname,
+    targetPathname,
+  );
+
   const softPush = () =>
     pushAppRoute(router, href, {
       allowAssignFallback: !preserveShell && !avoidHardReload,
     });
 
-  /** 启动准备 / 正版登录弹窗进行中：禁止 location.assign，否则 async 准备与 Promise gate 被整页刷新清掉。 */
-  const avoidHardReload = getLaunchInFlight();
+  if (hardNavToGameSettingsCore) {
+    markSkipSectionChrome(getPageTransitionKey(GAME_SETTINGS_CORE_PATH));
+  }
 
   if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+    if (hardNavToGameSettingsCore && !avoidHardReload) {
+      window.location.assign(pushHref);
+      return;
+    }
     softPush();
     return;
   }
@@ -421,18 +437,27 @@ export function navigateWithMainTransition(
   const hardAssign =
     isTauriRuntime() && !sameSection && !preserveShell && !avoidHardReload;
 
-  // Chrome float is section-enter only. Mark skip only when same-section will
-  // remount (Tauri assign); clear when leaving so a later enter can animate.
-  if (sameSection && isTauriRuntime() && isSharedLayoutRoute(currentPathname)) {
+  // Chrome float is section-enter only. Mark skip when same-section will
+  // remount (Tauri assign); core tab uses dedicated mark above.
+  if (
+    !hardNavToGameSettingsCore &&
+    sameSection &&
+    isTauriRuntime() &&
+    isSharedLayoutRoute(currentPathname)
+  ) {
     markSkipSectionChrome(getPageTransitionKey(currentPathname));
-  } else if (!sameSection) {
+  } else if (!sameSection && !hardNavToGameSettingsCore) {
     clearSkipSectionChrome();
   }
+
+  const assignAfterFade =
+    !avoidHardReload &&
+    (hardNavToGameSettingsCore || (sameSection && isTauriRuntime()));
 
   runStaticFadeThenNavigate(
     root,
     () => {
-      if (sameSection && isTauriRuntime() && !avoidHardReload) {
+      if (assignAfterFade) {
         window.location.assign(pushHref);
         return;
       }

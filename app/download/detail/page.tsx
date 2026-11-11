@@ -3,27 +3,42 @@
 import ModDetailContent from "./ModDetailContent";
 import { Suspense, useEffect, useState } from "react";
 import { useI18n } from "@/components/i18n/use-i18n";
+import { parseModDetailProjectQuery } from "@/lib/mod-detail-query";
 
 function ModDetailInner() {
   const { t } = useI18n();
-  const [modId, setModId] = useState<string>("");
+  const [query, setQuery] = useState<ReturnType<typeof parseModDetailProjectQuery> | null>(null);
 
   useEffect(() => {
     if (typeof window !== "undefined") {
-      const params = new URLSearchParams(window.location.search);
-      const mod = params.get("mod") || "";
-      if (mod) setModId(mod);
+      setQuery(parseModDetailProjectQuery(window.location.search));
     }
   }, []);
 
-  if (!modId) {
+  if (!query) {
+    return (
+      <div className="flex flex-1 items-center justify-center text-muted-foreground">
+        <p>{t("download.detail.loadingPage")}</p>
+      </div>
+    );
+  }
+
+  if (!query.mod) {
     return (
       <div className="flex flex-1 items-center justify-center text-muted-foreground">
         <p>{t("download.detail.selectModFirst")}</p>
       </div>
     );
   }
-  return <ModDetailContent modId={modId} />;
+
+  return (
+    <ModDetailContent
+      modId={query.mod}
+      source={query.source}
+      mrProjectId={query.mrProjectId}
+      cfProjectId={query.cfProjectId}
+    />
+  );
 }
 
 export default function ModDetailPage() {

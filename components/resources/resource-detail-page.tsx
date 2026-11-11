@@ -22,6 +22,7 @@ type ResolvedDownloadTarget = {
   slug: string;
   title: string;
   source: string;
+  projectId?: string | null;
 };
 
 export function ResourceDetailPage({
@@ -82,8 +83,13 @@ export function ResourceDetailPage({
           setRemoteDescription(null);
           return;
         }
+        const projectId = target.projectId?.trim() || target.slug;
+        if (!projectId) {
+          if (!cancelled) setRemoteDescription(null);
+          return;
+        }
         try {
-          const raw = await invoke<string>("get_modrinth_project", { slug: target.slug });
+          const raw = await invoke<string>("get_modrinth_project", { projectId });
           const data = JSON.parse(raw) as { description?: string };
           if (!cancelled) {
             setRemoteDescription(data.description?.trim() || null);

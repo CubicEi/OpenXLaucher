@@ -1,5 +1,8 @@
-use serde::{Deserialize, Serialize};
+use crate::downloader::shared_utils::{
+    fetch_json_from_urls, minecraft_version_manifest_urls,
+};
 use regex::Regex;
+use serde::{Deserialize, Serialize};
 use std::sync::OnceLock;
 
 #[derive(Debug, Deserialize)]
@@ -22,21 +25,13 @@ pub struct VersionInfo {
 }
 #[tauri::command]
 pub async fn classify_minecraft_versions() -> Result<[Vec<VersionInfo>; 4], String> {
-    let response = reqwest::get("https://launchermeta.mojang.com/mc/game/version_manifest.json")
+    let manifest: VersionManifest = fetch_json_from_urls(&minecraft_version_manifest_urls())
         .await
-        .map_err(|e| e.to_string())?
-        .error_for_status()
         .map_err(|e| e.to_string())?;
-    let manifest: VersionManifest = response.json().await.map_err(|e| e.to_string())?;
     let mut releases = Vec::new();     
     let mut snapshots = Vec::new();    
     let mut april_fools = Vec::new();  
     let mut old_versions = Vec::new(); 
-    
-    // 愚人节版本的特征标识符
-    let april_fools_indicators = [
-        "20w14infinite", "15w14a", "2.0", "1.RV-Pre1", "3D Shareware v1.34"
-    ];
     
     for entry in manifest.versions {
         let info = VersionInfo {
@@ -44,12 +39,7 @@ pub async fn classify_minecraft_versions() -> Result<[Vec<VersionInfo>; 4], Stri
             release_time: entry.time.clone(),
         };
         
-        // 首先检查是否为愚人节版本（通过版本ID或时间戳）
-        let is_april_fools = april_fools_indicators.iter().any(|&indicator| {
-            entry.id.to_lowercase().contains(&indicator.to_lowercase())
-        }) || entry.time.contains("-04-01");
-        
-        if is_april_fools {
+        if is_april_fools_version(&entry.id, &entry.time, &entry.version_type) {
             april_fools.push(info);
             continue;
         }
@@ -75,6 +65,34 @@ pub async fn classify_minecraft_versions() -> Result<[Vec<VersionInfo>; 4], Stri
         }
     }
     Ok([releases, snapshots, april_fools, old_versions])
+}
+
+const APRIL_FOOLS_ID_INDICATORS: &[&str] = &[
+    "20w14infinite",
+    "15w14a",
+    "2.0",
+    "1.RV-Pre1",
+    "3D Shareware v1.34",
+];
+
+/// 愚人节判定：已知玩笑 ID；4 月 1 日仅对非正式版号 / 非 release 类型生效（避免 26.1.1 等误伤）。
+fn is_april_fools_version(id: &str, release_time: &str, manifest_type: &str) -> bool {
+    let id_lower = id.to_lowercase();
+    if APRIL_FOOLS_ID_INDICATORS.iter().any(|ind| {
+        id_lower.contains(&ind.to_lowercase())
+    }) {
+        return true;
+    }
+    if manifest_type == "release" || is_plain_release_version_id(id) {
+        return false;
+    }
+    release_time.contains("-04-01")
+}
+
+fn is_plain_release_version_id(version_id: &str) -> bool {
+    static PLAIN_RELEASE: OnceLock<Regex> = OnceLock::new();
+    let re = PLAIN_RELEASE.get_or_init(|| Regex::new(r"^\d+\.\d+(\.\d+)?$").unwrap());
+    re.is_match(version_id)
 }
 
 /// 判断版本ID是否可能是快照版本

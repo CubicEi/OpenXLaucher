@@ -362,51 +362,55 @@ export function LaunchConsole() {
 
   const isRunning = status === "running" || status === "launching" || status === "preparing" || runningInstances.length > 0;
 
+  const logActionButtons = (compact: boolean) => (
+    <AnimatePresence>
+      {logs.length > 0 && (
+        <motion.div
+          initial={{ opacity: 0, scale: 0.8 }}
+          animate={{ opacity: 1, scale: 1 }}
+          exit={{ opacity: 0, scale: 0.8 }}
+          transition={{ duration: 0.15 }}
+          className="flex items-center gap-1"
+        >
+          <Button
+            variant="ghost"
+            size="sm"
+            className={compact ? "h-6 w-6 p-0" : "h-7 text-xs"}
+            onClick={handleCopyAll}
+            title={t("launch.log.copyAll")}
+          >
+            <Copy className={cn("size-3", !compact && "mr-1")} />
+            {!compact && t("launch.log.copyAll")}
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            className={compact ? "h-6 w-6 p-0" : "h-7 text-xs"}
+            onClick={handleExport}
+            title={t("launch.log.export")}
+          >
+            <Download className={cn("size-3", !compact && "mr-1")} />
+            {!compact && t("launch.log.export")}
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            className={compact ? "h-6 w-6 p-0" : "h-7 text-xs"}
+            onClick={handleClear}
+            title={t("common.clear")}
+          >
+            <Trash2 className={cn("size-3", !compact && "mr-1")} />
+            {!compact && t("common.clear")}
+          </Button>
+        </motion.div>
+      )}
+    </AnimatePresence>
+  );
+
   const toolbar = (compact: boolean) => (
     <div className="flex items-center gap-1">
-      <InstanceLogSelect className="mr-1" />
-      <AnimatePresence>
-        {logs.length > 0 && (
-          <motion.div
-            initial={{ opacity: 0, scale: 0.8 }}
-            animate={{ opacity: 1, scale: 1 }}
-            exit={{ opacity: 0, scale: 0.8 }}
-            transition={{ duration: 0.15 }}
-            className="flex items-center gap-1"
-          >
-            <Button
-              variant="ghost"
-              size="sm"
-              className={compact ? "h-6 w-6 p-0" : "h-7 text-xs"}
-              onClick={handleCopyAll}
-              title={t("launch.log.copyAll")}
-            >
-              <Copy className={cn("size-3", !compact && "mr-1")} />
-              {!compact && t("launch.log.copyAll")}
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              className={compact ? "h-6 w-6 p-0" : "h-7 text-xs"}
-              onClick={handleExport}
-              title={t("launch.log.export")}
-            >
-              <Download className={cn("size-3", !compact && "mr-1")} />
-              {!compact && t("launch.log.export")}
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              className={compact ? "h-6 w-6 p-0" : "h-7 text-xs"}
-              onClick={handleClear}
-              title={t("common.clear")}
-            >
-              <Trash2 className={cn("size-3", !compact && "mr-1")} />
-              {!compact && t("common.clear")}
-            </Button>
-          </motion.div>
-        )}
-      </AnimatePresence>
+      {compact && <InstanceLogSelect className="mr-1" />}
+      {logActionButtons(compact)}
       {compact && (
         <Button
           variant="ghost"
@@ -554,7 +558,7 @@ export function LaunchConsole() {
 
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="flex flex-col h-[85vh] max-w-4xl">
-          <DialogHeader className="flex-row items-center justify-between">
+          <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-sm">
               <Terminal className="size-4 text-primary" />
               {t("launch.log.title")}
@@ -564,21 +568,26 @@ export function LaunchConsole() {
                 </span>
               )}
             </DialogTitle>
-            {toolbar(false)}
           </DialogHeader>
 
           <div className="shrink-0 border-t border-border px-4 py-2 space-y-2">
-            <div className="flex items-center gap-1 flex-wrap">
-              {LOG_LEVELS.map((level) => (
-                <LogLevelButton
-                  key={level}
-                  level={level}
-                  count={levelCounts[level]}
-                  visible={visibleLevels[level]}
-                  onToggle={() => toggleLevel(level)}
-                  label={t(`launch.log.level.${level}` as "launch.log.level.info")}
-                />
-              ))}
+            <div className="flex items-center gap-2 gap-y-2 flex-wrap justify-between">
+              <div className="flex items-center gap-1 flex-wrap min-w-0">
+                {LOG_LEVELS.map((level) => (
+                  <LogLevelButton
+                    key={level}
+                    level={level}
+                    count={levelCounts[level]}
+                    visible={visibleLevels[level]}
+                    onToggle={() => toggleLevel(level)}
+                    label={t(`launch.log.level.${level}` as "launch.log.level.info")}
+                  />
+                ))}
+              </div>
+              <div className="flex min-w-0 flex-wrap items-center justify-end gap-1 ml-auto shrink-0">
+                <InstanceLogSelect />
+                {logActionButtons(false)}
+              </div>
             </div>
             <div className="flex items-center gap-3 text-xs text-muted-foreground">
               <label className="flex items-center gap-1.5 cursor-pointer select-none">

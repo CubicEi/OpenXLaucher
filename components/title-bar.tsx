@@ -3,9 +3,6 @@
 import { useCallback, useEffect, useState, useSyncExternalStore } from 'react'
 import { Copy, Cpu, Maximize2, Minus, X } from 'lucide-react'
 import { usePathname, useRouter } from 'next/navigation'
-
-import { useTheme } from 'next-themes'
-
 import { ModeToggle } from '@/components/mode-toggle'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
@@ -40,28 +37,31 @@ interface WindowButtonProps {
 const TITLEBAR_ICON_LIGHT = '/icon/icon_black.svg'
 const TITLEBAR_ICON_DARK = '/icon/icon_white.svg'
 
+// Light/dark is chosen by the `.dark` class on <html> (set by the head bootstrap),
+// not by next-themes, which can disagree with the launcher's own theme mode.
 function AppLogo({ className }: { className?: string }) {
-  const { resolvedTheme } = useTheme()
-  const mounted = useSyncExternalStore(
-    subscribeToNothing,
-    () => true,
-    () => false
-  )
-  const src =
-    mounted && resolvedTheme === 'dark'
-      ? TITLEBAR_ICON_DARK
-      : TITLEBAR_ICON_LIGHT
-
+  const imgClass = cn('h-5 w-5 shrink-0 object-contain', className)
   return (
-    // eslint-disable-next-line @next/next/no-img-element -- theme-specific SVG assets
-    <img
-      src={src}
-      alt=''
-      width={20}
-      height={20}
-      className={cn('h-5 w-5 shrink-0 object-contain', className)}
-      draggable={false}
-    />
+    <>
+      {/* eslint-disable-next-line @next/next/no-img-element -- theme-specific SVG assets */}
+      <img
+        src={TITLEBAR_ICON_LIGHT}
+        alt=''
+        width={20}
+        height={20}
+        className={cn(imgClass, 'dark:hidden')}
+        draggable={false}
+      />
+      {/* eslint-disable-next-line @next/next/no-img-element -- theme-specific SVG assets */}
+      <img
+        src={TITLEBAR_ICON_DARK}
+        alt=''
+        width={20}
+        height={20}
+        className={cn(imgClass, 'hidden dark:block')}
+        draggable={false}
+      />
+    </>
   )
 }
 
@@ -250,19 +250,25 @@ export function TitleBar({ className }: TitleBarProps) {
           </div>
         </>
       ) : (
-        <div className='flex h-full items-center' data-tauri-drag-region>
+        <div className='flex h-full items-center'>
           <ThemeSlot {...themeSlot} slotId='app.titlebar.leading'>
-            <div className='flex h-full items-center gap-2 px-3' data-tauri-drag-region>
+            <div
+              className='flex h-full items-center gap-2 px-3'
+              data-tauri-drag-region
+            >
               <AppLogo />
               <span className='text-sm font-medium text-foreground/80'>OpenXLauncher</span>
             </div>
           </ThemeSlot>
 
-          <div className='flex h-full flex-1 items-center justify-center' data-tauri-drag-region>
+          <div
+            className='flex h-full flex-1 items-center justify-center'
+            data-tauri-drag-region
+          >
             <ThemeSlot {...themeSlot} slotId='app.titlebar.center' />
           </div>
 
-          <div className='no-drag flex h-full items-center gap-1'>
+          <div className='no-drag flex h-full shrink-0 items-center gap-1 pr-3'>
             <ThemeSlot {...themeSlot} slotId='app.titlebar.actions'>
               <div className='flex items-center gap-1'>
                 <ProcessListButton />
@@ -270,7 +276,7 @@ export function TitleBar({ className }: TitleBarProps) {
               </div>
             </ThemeSlot>
 
-            <div className='flex items-center gap-1 pr-3'>
+            <div className='flex items-center gap-1'>
               <WindowButton onClick={handleMinimize} title='最小化'>
                 <Minus className='size-4' />
               </WindowButton>

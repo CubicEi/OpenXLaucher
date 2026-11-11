@@ -188,8 +188,8 @@ body {
   /* 基准字号由 JS 动态写入 style.fontSize */
 }
 
-/* 主题就绪后再开背景过渡，避免启动调色闪一下 */
-html[data-theme-ready] body {
+/* 主题就绪后再开 body 底色过渡；有自定义背景时保持透明，避免与底图叠闪 */
+html[data-theme-ready]:not([data-app-bg="active"]) body:not([data-app-bg="active"]) {
   transition: background-color 0.3s ease;
 }
 
@@ -252,13 +252,28 @@ body::before {
   filter: blur(var(--app-bg-blur));
   opacity: var(--app-bg-opacity);
   pointer-events: none;
-  transition: opacity 0.25s ease, filter 0.25s ease, background-image 0.25s ease;
+  transition: none;
 }
 
-/* 有背景图片时 —— body 变透明让图片透出，卡片、侧栏使用半透明 */
+/* 有背景图片时 —— body 变透明让图片透出，卡片、侧栏使用半透明
+   html[data-app-bg]：head 同步脚本在 body 尚未存在时也能生效 */
+html[data-app-bg="active"] body,
 body[data-app-bg="active"] {
-  background-color: transparent;
+  background-color: transparent !important;
 }
+
+/* 页面壳层若铺满不透明底色，会挡住 body::before 背景图 */
+html[data-app-bg="active"] main,
+html[data-app-bg="active"] [data-page-transition-root],
+body[data-app-bg="active"] main,
+body[data-app-bg="active"] [data-page-transition-root] {
+  background-color: transparent !important;
+}
+html[data-app-bg="active"] [data-page-transition-root] :is(.flex.h-full.bg-background, .flex.flex-col.h-full.bg-background),
+body[data-app-bg="active"] [data-page-transition-root] :is(.flex.h-full.bg-background, .flex.flex-col.h-full.bg-background) {
+  background-color: transparent !important;
+}
+html[data-app-bg="active"] [data-slot="card"],
 body[data-app-bg="active"] [data-slot="card"] {
   background-color: color-mix(in oklch, var(--card) 78%, transparent);
   backdrop-filter: blur(8px) saturate(140%);
@@ -267,11 +282,13 @@ body[data-app-bg="active"] [data-slot="card"] {
   clip-path: inset(0 round var(--radius-2xl));
   -webkit-clip-path: inset(0 round var(--radius-2xl));
 }
+html[data-app-bg="active"] aside[data-app-sidebar],
 body[data-app-bg="active"] aside[data-app-sidebar] {
   background-color: color-mix(in oklch, var(--sidebar) 75%, transparent);
   backdrop-filter: blur(8px) saturate(140%);
   -webkit-backdrop-filter: blur(8px) saturate(140%);
 }
+html[data-app-bg="active"] [data-settings-page] [data-slot="card"],
 body[data-app-bg="active"] [data-settings-page] [data-slot="card"] {
   backdrop-filter: blur(8px) saturate(140%);
   -webkit-backdrop-filter: blur(8px) saturate(140%);
@@ -305,6 +322,13 @@ body[data-app-bg="active"] [data-settings-page] [data-slot="card"] {
 *[data-tauri-drag-region] {
   user-select: none;
   -webkit-user-select: none;
+}
+
+/* 避免侧栏/设置等「按钮式链接」被 WebView 当成可拖动的超链接 */
+button,
+a[href],
+[role="button"] {
+  -webkit-user-drag: none;
 }
 
 /* ============================================================

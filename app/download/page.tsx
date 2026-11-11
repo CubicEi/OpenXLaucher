@@ -1,8 +1,22 @@
 "use client";
 
-import { useState, useMemo, useEffect, useCallback } from "react";
+import { useState, useMemo, useEffect, useCallback, useRef } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { Download, Loader2, AlertCircle, RefreshCw, Coffee, Search, ArrowRight, ExternalLink, Box, Palette, Sparkles, Database, Boxes, Map, Package } from "lucide-react";
+import {
+  Download,
+  Loader2,
+  AlertCircle,
+  RefreshCw,
+  Coffee,
+  Search,
+  ArrowRight,
+  ExternalLink,
+  type LucideIcon,
+} from "lucide-react";
+import {
+  DOWNLOAD_CENTER_CATEGORY_ICONS,
+  type DownloadEnglishCategoryId,
+} from "@/constants";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -11,7 +25,10 @@ import { VersionDetail } from "@/components/download/version-detail";
 import { FavoriteModList } from "@/components/download/favorite-mod-list";
 import {
   VersionFilterBar,
+  downloadSubFilterButtonClass,
 } from "@/components/download/version-filter-bar";
+import { buildModDetailSearchParams } from "@/lib/mod-detail-query";
+import { cn } from "@/lib/utils";
 import { useMinecraftVersions } from "@/hooks/use-minecraft-versions";
 import { slideInFromRight, slideInFromLeft, fadeIn } from "@/lib/motion";
 import { useDownloadManager } from "@/components/download/download-provider";
@@ -21,23 +38,59 @@ import { useRouter } from "next/navigation";
 import type { MinecraftVersion, MinecraftVersionType } from "@/types";
 
 // -------- English search --------
-type EnglishCategory = "mod" | "modpack" | "resourcepack" | "shaders" | "datapack" | "worlds";
+type EnglishCategory = DownloadEnglishCategoryId;
 
-const ENGLISH_CATEGORIES: { id: EnglishCategory; labelKey: TranslationKey; icon: typeof Box }[] = [
-  { id: "mod", labelKey: "download.category.mods", icon: Box },
-  { id: "modpack", labelKey: "download.category.modpacks", icon: Boxes },
-  { id: "resourcepack", labelKey: "download.category.resourcePacks", icon: Palette },
-  { id: "shaders", labelKey: "download.category.shaders", icon: Sparkles },
-  { id: "datapack", labelKey: "download.category.dataPacks", icon: Database },
-  { id: "worlds", labelKey: "download.category.worlds", icon: Map },
+const ENGLISH_CATEGORIES: {
+  id: EnglishCategory;
+  labelKey: TranslationKey;
+  icon: LucideIcon;
+}[] = [
+  { id: "mod", labelKey: "download.category.mods", icon: DOWNLOAD_CENTER_CATEGORY_ICONS.mod },
+  {
+    id: "modpack",
+    labelKey: "download.category.modpacks",
+    icon: DOWNLOAD_CENTER_CATEGORY_ICONS.modpack,
+  },
+  {
+    id: "resourcepack",
+    labelKey: "download.category.resourcePacks",
+    icon: DOWNLOAD_CENTER_CATEGORY_ICONS.resourcepack,
+  },
+  {
+    id: "shaders",
+    labelKey: "download.category.shaders",
+    icon: DOWNLOAD_CENTER_CATEGORY_ICONS.shaders,
+  },
+  {
+    id: "datapack",
+    labelKey: "download.category.dataPacks",
+    icon: DOWNLOAD_CENTER_CATEGORY_ICONS.datapack,
+  },
+  {
+    id: "worlds",
+    labelKey: "download.category.worlds",
+    icon: DOWNLOAD_CENTER_CATEGORY_ICONS.worlds,
+  },
+  {
+    id: "schematic",
+    labelKey: "download.category.schematics",
+    icon: DOWNLOAD_CENTER_CATEGORY_ICONS.schematic,
+  },
 ];
+
+type SearchSource =
+  | "modrinth"
+  | "curseforge"
+  | "both"
+  | "modpackindex"
+  | "mcschematic";
 
 interface SearchResultItem {
   title: string;
   slug: string;
   description?: string;
   iconUrl?: string;
-  source: "modrinth" | "curseforge" | "both";
+  source: SearchSource;
   projectType: string;
   downloads?: number;
   categories?: string[];
@@ -46,6 +99,27 @@ interface SearchResultItem {
   updated?: string;
   author?: string;
   externalUrl?: string;
+  schematicUuid?: string;
+  schematicFileType?: number;
+  modrinthProjectId?: string;
+  curseforgeProjectId?: number;
+}
+
+function sourceBadgeLabel(source: SearchSource, t: (key: TranslationKey) => string): string {
+  switch (source) {
+    case "both":
+      return "Modrinth + CurseForge";
+    case "modrinth":
+      return "Modrinth";
+    case "curseforge":
+      return "CurseForge";
+    case "modpackindex":
+      return t("download.source.modpackindex");
+    case "mcschematic":
+      return t("download.source.mcschematic");
+    default:
+      return source;
+  }
 }
 
 function formatNumber(n?: number): string {
@@ -73,14 +147,22 @@ function formatDate(iso: string | undefined, t: (key: TranslationKey, values?: R
   }
 }
 
-function categoryPath(category: string, slug: string, returnQuery?: string, returnCategory?: EnglishCategory): string {
-  // Route to the detail page and keep enough state to restore English search.
-  const params = new URLSearchParams({ mod: slug });
-  if (returnQuery !== undefined && returnCategory !== undefined) {
-    params.set("returnTo", "english");
-    params.set("query", returnQuery);
-    params.set("category", returnCategory);
-  }
+function categoryPath(
+  category: string,
+  result: SearchResultItem,
+  returnQuery?: string,
+  returnCategory?: EnglishCategory,
+): string {
+  const params = buildModDetailSearchParams(result.slug, {
+    source: result.source,
+    modrinthProjectId: result.modrinthProjectId,
+    curseforgeProjectId: result.curseforgeProjectId,
+    returnTo:
+      returnQuery !== undefined && returnCategory !== undefined ? "english" : undefined,
+    query: returnQuery,
+    category: returnCategory ?? category,
+    forceType: category,
+  });
   return `/download/detail?${params.toString()}`;
 }
 
@@ -97,6 +179,7 @@ function categoryForSource(projectType: string): string {
     "data pack": "datapack",
     worlds: "worlds",
     world: "worlds",
+    schematic: "schematic",
   };
   return map[projectType.toLowerCase()] ?? projectType;
 }
@@ -155,9 +238,8 @@ export default function DownloadPage() {
   const [englishResults, setEnglishResults] = useState<SearchResultItem[] | null>(null);
   const [englishLoading, setEnglishLoading] = useState(false);
   const [englishError, setEnglishError] = useState<string | null>(null);
-  const [englishSourceInfo, setEnglishSourceInfo] = useState<
-    { modrinth: { ok: boolean; count: number; error?: string }; curseforge: { ok: boolean; count: number; error?: string } } | null
-  >(null);
+  const [schematicMessage, setSchematicMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
+  const englishSearchSeq = useRef(0);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -184,195 +266,97 @@ export default function DownloadPage() {
     }
   }, []);
 
-  // English search handling
+  const handleDownloadSchematic = useCallback(
+    async (result: SearchResultItem) => {
+      setSchematicMessage(null);
+      const uuid = result.schematicUuid ?? result.slug;
+      const fileType = result.schematicFileType ?? 1;
+      try {
+        const paths = await invoke<{ selected_minecraft_path: string }>("get_launcher_paths_config");
+        const gameDir = paths.selected_minecraft_path?.trim();
+        if (!gameDir) {
+          setSchematicMessage({ type: "error", text: t("download.downloadPathNotReady") });
+          return;
+        }
+        const savedPath = await invoke<string>("download_mcschematic_file", {
+          uuid,
+          schematicFileType: fileType,
+          gameDir,
+        });
+        setSchematicMessage({
+          type: "success",
+          text: t("download.schematicDownloaded", { path: savedPath }),
+        });
+      } catch (err) {
+        setSchematicMessage({
+          type: "error",
+          text: t("download.schematicDownloadFailed", { error: String(err) }),
+        });
+      }
+    },
+    [t],
+  );
+
+  const handleEnglishResultClick = useCallback(
+    (result: SearchResultItem) => {
+      if (englishCategory === "schematic" && result.source === "mcschematic") {
+        void handleDownloadSchematic(result);
+        return;
+      }
+      const detailCategory = categoryForSource(result.projectType || englishCategory);
+      const path = categoryPath(detailCategory, result, englishQuery, englishCategory);
+      router.push(path);
+    },
+    [englishCategory, englishQuery, handleDownloadSchematic, router],
+  );
+
   const handleEnglishSearch = useCallback(async () => {
+    const seq = ++englishSearchSeq.current;
     const query = englishQuery.trim();
-    if (!query) {
-      setEnglishError(t("download.pleaseEnterKeywords"));
-      return;
-    }
+    const category = englishCategory;
+    const browseByCategory = !query;
     setEnglishLoading(true);
     setEnglishResults(null);
     setEnglishError(null);
-    setEnglishSourceInfo(null);
+    setSchematicMessage(null);
     try {
-      // Map englishCategory to Modrinth project_type / CurseForge classId
-      const modrinthProjectType = englishCategory === "shaders" ? "shader" : englishCategory === "worlds" ? "world" : englishCategory === "modpack" ? "modpack" : englishCategory;
-      // Infer CurseForge classId based on englishCategory
-      const targetClassIds: number[] = (() => {
-        switch (englishCategory) {
-          case "modpack": return [4471, 4473];
-          case "resourcepack": return [12];
-          case "shaders": return [6552];
-          case "datapack": return [6945, 6949];
-          case "worlds": return [17];
-          default: return [6];
-        }
-      })();
-      const isModCategory = englishCategory === "mod";
-      // Project type to mark in search results (for detail page to distinguish mod/modpack/resourcepack etc.)
-      const resultProjectType = (() => {
-        switch (englishCategory) {
-          case "modpack": return "modpack";
-          case "resourcepack": return "resourcepack";
-          case "shaders": return "shaderpack";
-          case "datapack": return "datapack";
-          case "worlds": return "world";
-          default: return "mod";
-        }
-      })();
-      // Infer correct URL path part from CurseForge project classId
-      const classIdToCfPath = (classId: number | undefined, slug: string): string => {
-        switch (classId) {
-          case 6: return `https://www.curseforge.com/minecraft/mc-mods/${slug}`;
-          case 4471: return `https://www.curseforge.com/minecraft/modpacks/${slug}`;
-          case 4473: return `https://www.curseforge.com/minecraft/modpacks/${slug}`;
-          case 12: return `https://www.curseforge.com/minecraft/texture-packs/${slug}`;
-          case 6552: return `https://www.curseforge.com/minecraft/shaders/${slug}`;
-          case 6945: return `https://www.curseforge.com/minecraft/data-packs/${slug}`;
-          case 6949: return `https://www.curseforge.com/minecraft/data-packs/${slug}`;
-          case 17: return `https://www.curseforge.com/minecraft/worlds/${slug}`;
-          default: return `https://www.curseforge.com/minecraft/mc-mods/${slug}`;
-        }
-      };
-      // Use the native client: direct WebView requests can be blocked by CORS
-      // or local proxy policy even while Modrinth itself is reachable.
-      const modrinthPromise = invoke<string>('search_modrinth_projects', {
-        query,
-        projectType: modrinthProjectType,
+      const raw = await invoke<string>("search_english_resources", {
+        query: browseByCategory ? "" : query,
+        category,
         limit: 25,
-      }).then(result => {
-        try {
-          return JSON.parse(result);
-        } catch {
-          return null;
-        }
-      }).catch((err) => {
-        console.warn('Modrinth search failed:', err);
-        return null;
       });
+      if (englishSearchSeq.current !== seq) return;
 
-      // CurseForge searches through backend proxy (avoid CORS issues, improve classId search strategy)
-      const cfPromise = invoke('search_curseforge_projects', {
-        query: query,
-        category: englishCategory,
-        pageSize: 50
-      }).then(result => {
-        if (typeof result === 'string') {
-          try {
-            return JSON.parse(result);
-          } catch {
-            return null;
-          }
-        }
-        return result;
-      }).catch((err) => {
-        console.warn('CurseForge search failed:', err);
-        return null;
-      });
+      const parsed = JSON.parse(raw) as { results: SearchResultItem[] };
+      setEnglishResults(parsed.results ?? []);
 
-      const [modrinthData, cfData] = await Promise.all([modrinthPromise, cfPromise]);
-
-      // Get filtered CurseForge projects directly from backend proxy results
-      const cfAllItems: any[] = Array.isArray(cfData?.data) ? cfData.data : [];
-      const seenCfIds = new Set<string>();
-      // Deduplicate results (backend proxy has done main filtering, but ensure frontend also deduplicates)
-      const finalCfItems = cfAllItems.filter((mod: any) => {
-        const cfId = String(mod.id);
-        if (seenCfIds.has(cfId)) return false;
-        seenCfIds.add(cfId);
-        return true;
-      });
-
-      const mergedResults: SearchResultItem[] = [];
-      const seenSlugs = new Set<string>();
-
-      if (modrinthData?.hits) {
-        for (const hit of modrinthData.hits) {
-          const slug = hit.slug || hit.project_id || hit.id;
-          if (seenSlugs.has(slug)) continue;
-          seenSlugs.add(slug);
-          mergedResults.push({
-            slug,
-            title: hit.title,
-            description: hit.description,
-            iconUrl: hit.icon_url,
-            projectType: hit.project_type,
-            downloads: hit.downloads,
-            categories: hit.categories,
-            latestVersions: hit.versions,
-            mcVersions: hit.game_versions,
-            updated: hit.date_modified || hit.date_updated,
-            author: hit.author,
-            externalUrl: `https://modrinth.com/${hit.project_type || "mod"}/${slug}`,
-            source: "modrinth",
-          });
-        }
-      }
-
-      if (finalCfItems.length > 0) {
-        for (const mod of finalCfItems) {
-          const slug = mod.slug || String(mod.id);
-          if (seenSlugs.has(slug)) {
-            // Already from Modrinth, mark as dual source
-            const existing = mergedResults.find((r) => r.slug === slug);
-            if (existing) existing.source = "both";
-            continue;
-          }
-          seenSlugs.add(slug);
-          const logoUrl = mod.logo?.thumbnailUrl || mod.logo?.url;
-          const authors = mod.authors?.map((a: any) => a.name).join(", ");
-          const updated = mod.dateModified || mod.dateReleased;
-          const links: string[] = [];
-          if (mod.links?.websiteUrl) links.push(mod.links.websiteUrl);
-          const fileIdx = mod.latestFilesIndexes || [];
-          const gameVersions = fileIdx.map((f: any) => f.gameVersion).filter(Boolean);
-          mergedResults.push({
-            slug,
-            title: mod.name,
-            description: mod.summary,
-            iconUrl: logoUrl,
-            projectType: resultProjectType,
-            downloads: mod.downloadCount,
-            categories: [],
-            latestVersions: [],
-            mcVersions: gameVersions,
-            updated,
-            author: authors,
-            externalUrl: links[0] || classIdToCfPath(mod.classId, slug),
-            source: "curseforge",
-          });
-        }
-      }
-
-      // Sort by download count descending (ensure popular projects come first)
-      mergedResults.sort((a, b) => (b.downloads || 0) - (a.downloads || 0));
-
-      setEnglishResults(mergedResults);
-      // CurseForge statistics: check if backend proxy returned valid data
-      const cfHasSuccess = cfData?.data && Array.isArray(cfData.data);
-      setEnglishSourceInfo({
-        modrinth: modrinthData ? { ok: true, count: modrinthData.hits?.length || 0 } : { ok: false, count: 0, error: "No data returned" },
-        curseforge: cfHasSuccess ? { ok: true, count: finalCfItems.length } : { ok: false, count: 0, error: "No data returned" },
-      });
-
-      if (mergedResults.length === 0) {
-        const categoryLabel = ENGLISH_CATEGORIES.find((c) => c.id === englishCategory)?.labelKey;
-        setEnglishError(t("download.noResultsForQueryInCategory", { query, category: categoryLabel ? t(categoryLabel) : englishCategory }));
+      if (!parsed.results?.length) {
+        const categoryLabel = ENGLISH_CATEGORIES.find((c) => c.id === category)?.labelKey;
+        const categoryName = categoryLabel ? t(categoryLabel) : category;
+        setEnglishError(
+          browseByCategory
+            ? t("download.noResultsInCategory", { category: categoryName })
+            : t("download.noResultsForQueryInCategory", { query, category: categoryName }),
+        );
       }
     } catch (err) {
+      if (englishSearchSeq.current !== seq) return;
       console.error("English search failed:", err);
       setEnglishError(t("download.searchFailed", { error: String(err) }));
     } finally {
-      setEnglishLoading(false);
+      if (englishSearchSeq.current === seq) {
+        setEnglishLoading(false);
+      }
     }
   }, [englishQuery, englishCategory, t]);
 
-  // When switching to english tab or changing category, re-run search if there is an active query
+  // Auto-load when opening English search tab or changing category (browse if query empty)
   useEffect(() => {
-    if (tab === "english" && englishQuery.trim()) {
-      handleEnglishSearch();
-    }
+    if (tab !== "english") return;
+    void handleEnglishSearch();
+    return () => {
+      englishSearchSeq.current += 1;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab, englishCategory]);
 
@@ -609,10 +593,10 @@ onClick={() => setTab("favorites")}
                     ).map(([id, label]) => (
                       <Button
                         key={id}
-                        variant={javaVendorFilter === id ? "default" : "ghost"}
+                        variant="ghost"
                         size="sm"
                         onClick={() => setJavaVendorFilter(id)}
-                        className="text-xs"
+                        className={downloadSubFilterButtonClass(javaVendorFilter === id)}
                       >
                         {label}
                       </Button>
@@ -753,7 +737,7 @@ onClick={() => setTab("favorites")}
                   <Button
                     size="sm"
                     onClick={handleEnglishSearch}
-                    disabled={englishLoading || !englishQuery.trim()}
+                    disabled={englishLoading}
                     className="h-9"
                   >
                     {englishLoading ? <Loader2 className="size-4 animate-spin" /> : <Search className="size-4" />}
@@ -761,23 +745,33 @@ onClick={() => setTab("favorites")}
                   </Button>
                 </div>
                 {/* Six category selection buttons */}
-                <div className="flex flex-wrap items-center gap-2">
+                <div className="flex flex-wrap items-center gap-1">
                   {ENGLISH_CATEGORIES.map((cat) => {
                     const Icon = cat.icon;
                     const isActive = englishCategory === cat.id;
                     return (
-                      <button
+                      <Button
                         key={cat.id}
-                        onClick={() => setEnglishCategory(cat.id)}
-                        className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium transition-all border ${
-                          isActive
-                            ? "bg-primary text-primary-foreground border-primary shadow-sm"
-                            : "bg-background text-foreground hover:bg-accent border-border"
-                        }`}
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => {
+                          if (cat.id === englishCategory) return;
+                          englishSearchSeq.current += 1;
+                          setEnglishResults(null);
+                          setEnglishError(null);
+                          setSchematicMessage(null);
+                          setEnglishLoading(true);
+                          setEnglishCategory(cat.id);
+                        }}
+                        className={cn(
+                          "gap-1.5",
+                          downloadSubFilterButtonClass(isActive),
+                        )}
                       >
-                        <Icon className="size-3.5" />
+                        <Icon className="size-3.5 shrink-0" />
                         <span>{t(cat.labelKey)}</span>
-                      </button>
+                      </Button>
                     );
                   })}
                 </div>
@@ -792,16 +786,11 @@ onClick={() => setTab("favorites")}
                     {t("download.englishSearchHint")}
                   </p>
                 )}
-                {englishSourceInfo && (
-                  <div className="flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
-                    <span className={`inline-flex items-center gap-1 ${englishSourceInfo.modrinth.ok ? "" : "text-destructive"}`}>
-                      <span className="size-1.5 rounded-full bg-emerald-500" />
-                      Modrinth {englishSourceInfo.modrinth.ok ? `(${englishSourceInfo.modrinth.count})` : t("download.unreachable")}
-                    </span>
-                    <span className={`inline-flex items-center gap-1 ${englishSourceInfo.curseforge.ok ? "" : "text-destructive"}`}>
-                      <span className="size-1.5 rounded-full bg-orange-500" />
-                      CurseForge {englishSourceInfo.curseforge.ok ? `(${englishSourceInfo.curseforge.count})` : t("download.unreachable")}
-                    </span>
+                {schematicMessage && (
+                  <div
+                    className={`text-xs ${schematicMessage.type === "success" ? "text-emerald-600 dark:text-emerald-400" : "text-destructive"}`}
+                  >
+                    {schematicMessage.text}
                   </div>
                 )}
               </div>
@@ -817,7 +806,15 @@ onClick={() => setTab("favorites")}
                     exit="exit"
                   >
                     <Loader2 className="size-8 animate-spin" />
-                    <p className="text-sm">{t("download.searchingBoth")}</p>
+                    <p className="text-sm">
+                      {englishCategory === "schematic"
+                        ? t("download.searchingSchematic")
+                        : englishCategory === "worlds" && !englishQuery.trim()
+                          ? t("download.searchingCurseforgePopular")
+                          : englishQuery.trim()
+                            ? t("download.searchingBoth")
+                            : t("download.searchingModrinthPopular")}
+                    </p>
                   </motion.div>
                 ) : englishResults && englishResults.length > 0 ? (
                   <motion.div
@@ -830,19 +827,13 @@ onClick={() => setTab("favorites")}
                   >
                     <div className="divide-y divide-border">
                       {englishResults.map((result) => {
-                        const path = categoryPath(
-                          categoryForSource(result.projectType || englishCategory),
-                          result.slug,
-                          englishQuery,
-                          englishCategory,
-                        );
                         const Icon =
                           ENGLISH_CATEGORIES.find((c) => c.id === (categoryForSource(result.projectType || englishCategory) as EnglishCategory))
-                            ?.icon ?? Box;
+                            ?.icon ?? DOWNLOAD_CENTER_CATEGORY_ICONS.mod;
                         return (
                           <button
                             key={`${result.source}-${result.slug}`}
-                            onClick={() => router.push(path)}
+                            onClick={() => handleEnglishResultClick(result)}
                             className="group w-full text-left px-4 py-3 hover:bg-accent/50 transition-colors flex items-start gap-3"
                           >
                             {/* Icon */}
@@ -873,19 +864,22 @@ onClick={() => setTab("favorites")}
                                 <Badge
                                   variant="secondary"
                                   className={`text-[10px] h-4 ${
-                                    result.source === "both"
+                                    result.source === "both" || result.source === "modrinth"
                                       ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border-emerald-500/30"
-                                      : result.source === "modrinth"
-                                      ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border-emerald-500/30"
-                                      : "bg-orange-500/10 text-orange-700 dark:text-orange-300 border-orange-500/30"
+                                      : result.source === "curseforge"
+                                        ? "bg-orange-500/10 text-orange-700 dark:text-orange-300 border-orange-500/30"
+                                        : result.source === "modpackindex"
+                                          ? "bg-sky-500/10 text-sky-700 dark:text-sky-300 border-sky-500/30"
+                                          : "bg-violet-500/10 text-violet-700 dark:text-violet-300 border-violet-500/30"
                                   }`}
                                 >
-                                  {result.source === "both"
-                                    ? "Modrinth + CurseForge"
-                                    : result.source === "modrinth"
-                                    ? "Modrinth"
-                                    : "CurseForge"}
+                                  {sourceBadgeLabel(result.source, t)}
                                 </Badge>
+                                {result.categories?.slice(0, 5).map((c) => (
+                                  <Badge key={c} variant="secondary" className="text-[10px] h-4">
+                                    {c}
+                                  </Badge>
+                                ))}
                               </div>
                               {result.description && (
                                 <p className="text-xs text-muted-foreground line-clamp-2 leading-relaxed">
@@ -910,15 +904,6 @@ onClick={() => setTab("favorites")}
                                   </span>
                                 )}
                               </div>
-                              {result.categories && result.categories.length > 0 && (
-                                <div className="flex flex-wrap items-center gap-1 pt-1">
-                                  {result.categories.slice(0, 5).map((c) => (
-                                    <Badge key={c} variant="secondary" className="text-[10px] h-4">
-                                      {c}
-                                    </Badge>
-                                  ))}
-                                </div>
-                              )}
                             </div>
 
                             <div className="shrink-0 flex flex-col items-end gap-1">

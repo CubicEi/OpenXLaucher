@@ -464,8 +464,14 @@ pub fn run_command(
 
 #[cfg(windows)]
 fn terminate_process(pid: u32) -> Result<(), String> {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
     let output = Command::new("taskkill")
-        .args(["/F", "/PID", &pid.to_string()])
+        .args(["/F", "/T", "/PID", &pid.to_string()])
+        .creation_flags(CREATE_NO_WINDOW)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
         .output()
         .map_err(|e| format!("无法运行 taskkill: {}", e))?;
     if output.status.success() {
@@ -482,6 +488,9 @@ fn terminate_process(pid: u32) -> Result<(), String> {
 fn terminate_process(pid: u32) -> Result<(), String> {
     let output = Command::new("kill")
         .args(["-9", &pid.to_string()])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
         .output()
         .map_err(|e| format!("无法运行 kill: {}", e))?;
     if output.status.success() {

@@ -16,8 +16,9 @@ const DEFAULT_SIDEBAR_TABS: SidebarTabConfig[] = [
   { id: "game-settings", name: "游戏设置", visible: true, canHide: true, order: 1 },
   { id: "launch", name: "启动", visible: true, canHide: false, order: 2 },
   { id: "download", name: "下载", visible: true, canHide: true, order: 3 },
-  { id: "tools", name: "工具", visible: true, canHide: true, order: 4 },
-  { id: "settings", name: "启动器设置", visible: true, canHide: false, order: 5 },
+  { id: "multiplayer", name: "联机", visible: true, canHide: true, order: 4 },
+  { id: "tools", name: "工具", visible: true, canHide: true, order: 5 },
+  { id: "settings", name: "启动器设置", visible: true, canHide: false, order: 6 },
 ];
 
 /** 默认UI配置 */
@@ -71,7 +72,7 @@ export function UIConfigProvider({ children }: { children: React.ReactNode }) {
                 return { ...defaultTab, visible: true };
               }
               return savedTab ? { ...defaultTab, ...savedTab } : defaultTab;
-            }).filter((tab) => tab.id !== "multiplayer");
+            });
             parsed.sidebarTabs = mergedTabs;
           }
           if (!cancelled) {

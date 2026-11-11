@@ -27,6 +27,7 @@ import {
   fetchTextureImageBase64,
   msGetSkinsAndCapes,
   redownloadLittleSkinSkin,
+  redownloadYggdrasilSkin,
   getSkinBase64,
 } from "@/lib/auth";
 import { useI18n } from "@/components/i18n/use-i18n";
@@ -70,6 +71,15 @@ function canManageSkinsAndCapes(profile: Account): boolean {
   return profile.authType === "microsoft" && Boolean(profile.accessToken);
 }
 
+function canRedownloadSkin(profile: Account): boolean {
+  if (!profile.uuid) return false;
+  if (profile.authType === "littleskin") return true;
+  if (profile.authType === "third_party") {
+    return Boolean(profile.yggdrasilUrl?.trim());
+  }
+  return false;
+}
+
 /** 选中态底色 / 勾选色（按登录类型，低透明度以保证易读） */
 function selectedAuthTone(authType: Account["authType"]): {
   bg: string;
@@ -91,9 +101,11 @@ function selectedAuthTone(authType: Account["authType"]): {
 
 function ProfileDetailPanel({ profile }: { profile: Account }) {
   const { t } = useI18n();
+  const { updateProfile } = useAccountContext();
   const [capeSrc, setCapeSrc] = useState<string | null>(null);
   const [capeEpoch, setCapeEpoch] = useState(0);
   const [skinManagerOpen, setSkinManagerOpen] = useState(false);
+  const [refreshingSkin, setRefreshingSkin] = useState(false);
   const preview = useElementSize<HTMLDivElement>();
 
   useEffect(() => {
@@ -127,6 +139,31 @@ function ProfileDetailPanel({ profile }: { profile: Account }) {
   const hasSkin = Boolean(profile.skinUrl);
   const modelType = profile.variant === "slim" ? "slim" : "classic";
   const showSkinCapeButton = canManageSkinsAndCapes(profile);
+  const showSkinRefreshButton = canRedownloadSkin(profile);
+
+  const handleRefreshSkin = () => {
+    if (!profile.uuid || refreshingSkin) return;
+    const pid = profile.id;
+    const puuid = profile.uuid;
+    setRefreshingSkin(true);
+    void (async () => {
+      try {
+        if (profile.authType === "littleskin") {
+          await redownloadLittleSkinSkin(puuid);
+        } else if (profile.authType === "third_party" && profile.yggdrasilUrl) {
+          await redownloadYggdrasilSkin(puuid, profile.yggdrasilUrl);
+        } else {
+          return;
+        }
+        const skinSrc = await getSkinBase64(puuid);
+        updateProfile(pid, { skinUrl: skinSrc });
+      } catch (err) {
+        console.warn("刷新皮肤失败:", err);
+      } finally {
+        setRefreshingSkin(false);
+      }
+    })();
+  };
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-4 p-4">
@@ -162,18 +199,38 @@ function ProfileDetailPanel({ profile }: { profile: Account }) {
         ref={preview.ref}
         className="relative flex min-h-0 flex-1 items-center justify-center overflow-hidden"
       >
-        {showSkinCapeButton && (
-          <Button
-            type="button"
-            variant="secondary"
-            size="icon-sm"
-            className="absolute right-1 top-1 z-10 touch-manipulation shadow-sm"
-            title={t("home.skinsAndCapes")}
-            aria-label={t("home.skinsAndCapes")}
-            onClick={() => setSkinManagerOpen(true)}
-          >
-            <Shirt className="size-3.5" />
-          </Button>
+        {(showSkinCapeButton || showSkinRefreshButton) && (
+          <div className="absolute right-1 top-1 z-10 flex flex-col gap-1.5">
+            {showSkinCapeButton && (
+              <Button
+                type="button"
+                variant="secondary"
+                size="icon-sm"
+                className="touch-manipulation shadow-sm"
+                title={t("home.skinsAndCapes")}
+                aria-label={t("home.skinsAndCapes")}
+                onClick={() => setSkinManagerOpen(true)}
+              >
+                <Shirt className="size-3.5" />
+              </Button>
+            )}
+            {showSkinRefreshButton && (
+              <Button
+                type="button"
+                variant="secondary"
+                size="icon-sm"
+                disabled={refreshingSkin}
+                className="touch-manipulation shadow-sm"
+                title={t("common.refresh")}
+                aria-label={t("common.refresh")}
+                onClick={handleRefreshSkin}
+              >
+                <RefreshCw
+                  className={cn("size-3.5", refreshingSkin && "animate-spin")}
+                />
+              </Button>
+            )}
+          </div>
         )}
         {hasSkin && preview.size.width > 40 && preview.size.height > 40 ? (
           <SkinViewer3D
@@ -216,11 +273,9 @@ export function ProfileManager() {
     selectedProfile,
     selectProfile,
     removeProfile,
-    updateProfile,
     setManualLoginOpen,
   } = useAccountContext();
   const [deleteTarget, setDeleteTarget] = useState<Account | null>(null);
-  const [refreshingSkinId, setRefreshingSkinId] = useState<string | null>(null);
 
   return (
     <>
@@ -328,43 +383,6 @@ export function ProfileManager() {
                           <Check className={cn("size-4 shrink-0", tone.check)} />
                         )}
                       </button>
-
-                      {profile.authType === "littleskin" && (
-                        <Button
-                          variant="ghost"
-                          size="icon-sm"
-                          disabled={refreshingSkinId === profile.id}
-                          className="relative z-[1] opacity-0 transition-opacity touch-manipulation group-hover:opacity-100 disabled:opacity-100"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            if (!profile.uuid || refreshingSkinId) return;
-                            const pid = profile.id;
-                            const puuid = profile.uuid;
-                            setRefreshingSkinId(pid);
-                            void (async () => {
-                              try {
-                                await redownloadLittleSkinSkin(puuid);
-                                const skinSrc = await getSkinBase64(puuid);
-                                updateProfile(pid, { skinUrl: skinSrc });
-                              } catch (err) {
-                                console.warn("刷新皮肤失败:", err);
-                              } finally {
-                                setRefreshingSkinId((curr) =>
-                                  curr === pid ? null : curr,
-                                );
-                              }
-                            })();
-                          }}
-                          title={t("common.refresh")}
-                        >
-                          <RefreshCw
-                            className={cn(
-                              "size-4",
-                              refreshingSkinId === profile.id && "animate-spin",
-                            )}
-                          />
-                        </Button>
-                      )}
 
                       <Button
                         variant="ghost"

@@ -70,6 +70,22 @@ export const APPEARANCE_BOOTSTRAP_SCRIPT = `(function(){
       root.style.setProperty("--app-font-size", fs + "px");
       root.style.setProperty("--app-font-scale", (fs / 14).toFixed(3));
     }
+    var pageBg = appearance.background;
+    var syncBg =
+      (pageBg && pageBg.bootstrapDataUrl && String(pageBg.bootstrapDataUrl)) ||
+      (pageBg && pageBg.imageDataUrl && String(pageBg.imageDataUrl)) ||
+      "";
+    if (syncBg && syncBg.length > 0 && syncBg.length < 400000) {
+      root.style.setProperty("--app-bg", "url(" + JSON.stringify(syncBg) + ")");
+      var bgOp = typeof pageBg.opacity === "number" ? pageBg.opacity : 0.55;
+      var bgBlur = typeof pageBg.blur === "number" ? pageBg.blur : 6;
+      root.style.setProperty("--app-bg-opacity", Number(bgOp).toFixed(2));
+      root.style.setProperty("--app-bg-blur", Math.round(bgBlur) + "px");
+      // head 内执行时 body 可能尚未存在：标记挂在 html 上，保证侧栏首帧半透明
+      root.setAttribute("data-app-bg", "active");
+      root.setAttribute("data-session-background", "active");
+      if (document.body) document.body.setAttribute("data-app-bg", "active");
+    }
     root.setAttribute("data-session-theme-color", themeColor === "default" ? "default" : themeColor);
     root.setAttribute("data-theme-ready", "");
   } catch (err) {}

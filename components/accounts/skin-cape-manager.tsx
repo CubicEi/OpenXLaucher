@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, useRef } from "react";
+import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -44,6 +45,7 @@ export function SkinCapeManager({ account: initialAccount, onClose }: SkinCapeMa
   const [tab, setTab] = useState<TabType>("skins");
   const [loading, setLoading] = useState(true);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [portalReady, setPortalReady] = useState(false);
   const [skins, setSkins] = useState<MCSkinInfo[]>([]);
   const [capes, setCapes] = useState<MCCapeInfo[]>([]);
   const [failedSkinIds, setFailedSkinIds] = useState<Record<string, boolean>>({});
@@ -148,6 +150,10 @@ export function SkinCapeManager({ account: initialAccount, onClose }: SkinCapeMa
       setLoading(false);
     }
   };
+
+  useEffect(() => {
+    setPortalReady(true);
+  }, []);
 
   useEffect(() => {
     loadProfile();
@@ -312,9 +318,13 @@ export function SkinCapeManager({ account: initialAccount, onClose }: SkinCapeMa
   const activeSkinId = skins.find((s) => s.state === "ACTIVE")?.id;
   const activeCapeId = capes.find((c) => c.state === "ACTIVE")?.id;
 
-  return (
+  if (!portalReady || typeof document === "undefined") {
+    return null;
+  }
+
+  return createPortal(
     <AnimatePresence>
-      <div className="fixed inset-0 z-[70] flex items-center justify-center">
+      <div className="fixed inset-0 z-[200] flex items-center justify-center">
         <motion.div
           variants={overlayFade}
           initial="initial"
@@ -652,6 +662,7 @@ export function SkinCapeManager({ account: initialAccount, onClose }: SkinCapeMa
           </Card>
         </motion.div>
       </div>
-    </AnimatePresence>
+    </AnimatePresence>,
+    document.body,
   );
 }

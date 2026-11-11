@@ -28,6 +28,8 @@ export type AccountInfo = {
   skin_url: string | null;
   /** 皮肤模型 classic | slim（来自 profile） */
   variant?: SkinVariant | string | null;
+  /** Minecraft access_token 有效秒数（微软链路）；缺省未知 */
+  expires_in?: number | null;
 };
 
 /** LittleSkin 账号密码登录结果（一个账号可能多个玩家） */
@@ -171,6 +173,24 @@ export async function redownloadLittleSkinSkin(uuid: string): Promise<void> {
     throw new Error("无效的 UUID 格式");
   }
   return safeInvoke<void>("redownload_littleskin_skin", { uuid });
+}
+
+/** 第三方 Yggdrasil：按 sessionserver 基址重新下载皮肤 */
+export async function redownloadYggdrasilSkin(
+  uuid: string,
+  sessionserverBase: string,
+): Promise<void> {
+  if (!isValidUuid(uuid)) {
+    throw new Error("无效的 UUID 格式");
+  }
+  const base = sessionserverBase.trim();
+  if (!base) {
+    throw new Error("认证服务器地址不能为空");
+  }
+  return safeInvoke<void>("redownload_yggdrasil_skin", {
+    uuid,
+    sessionserverBase: base,
+  });
 }
 
 // ======================== 微软正版登录 ========================

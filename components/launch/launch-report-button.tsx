@@ -8,7 +8,6 @@ import {
   DialogHeader,
   DialogTitle,
   DialogTrigger,
-  DialogClose,
 } from "@/components/ui/dialog";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -26,11 +25,12 @@ import {
   List,
   Loader2,
   Play,
+  Terminal,
   XCircle,
-  X,
 } from "lucide-react";
 import { formatDuration } from "@/components/launch/launch-analyzer";
-import type { LaunchAnalysisReport, Log4jLogEntry } from "@/types";
+import { cn } from "@/lib/utils";
+import type { LaunchAnalysisReport, LaunchLogEntry, Log4jLogEntry } from "@/types";
 
 type ReportFinalStatus = LaunchAnalysisReport["finalStatus"];
 const FINAL_STATUS_KEYS: Record<ReportFinalStatus, string> = {
@@ -159,7 +159,7 @@ export function LaunchReportButton() {
           )}
         </Button>
       </DialogTrigger>
-      <DialogContent className="max-w-2xl max-h-[85vh] flex flex-col p-0 overflow-hidden gap-0">
+      <DialogContent className="flex h-[min(90vh,56rem)] w-[min(100vw-2rem,64rem)] max-w-none flex-col gap-0 overflow-hidden p-0">
         <DialogHeader className="px-6 pt-6 pb-4 shrink-0">
           <div className="flex items-center justify-between gap-3">
             <DialogTitle className="flex items-center gap-2 text-base">
@@ -209,11 +209,6 @@ export function LaunchReportButton() {
                 )}
                 {exporting ? t("launch.report.exporting") : t("launch.report.exportZip")}
               </Button>
-              <DialogClose asChild>
-                <Button size="sm" variant="ghost" className="h-8 w-8 p-0">
-                  <X className="size-4" />
-                </Button>
-              </DialogClose>
             </div>
           </div>
         </DialogHeader>
@@ -348,6 +343,8 @@ export function LaunchReportButton() {
             <Log4jLogsSection logs={report.log4jLogs} t={t} />
           )}
 
+          {logs.length > 0 && <FullLaunchLogsSection logs={logs} t={t} />}
+
           {/* Launch parameters */}
           {report.launchParameters && (
             <Card size="sm">
@@ -367,6 +364,47 @@ export function LaunchReportButton() {
         </div>
       </DialogContent>
     </Dialog>
+  );
+}
+
+const launchLogLevelClass: Record<LaunchLogEntry["level"], string> = {
+  info: "text-muted-foreground",
+  warn: "text-amber-500",
+  error: "text-destructive",
+};
+
+function FullLaunchLogsSection({
+  logs,
+  t,
+}: {
+  logs: LaunchLogEntry[];
+  t: (key: TranslationKey, values?: Record<string, string | number>) => string;
+}) {
+  return (
+    <Card size="sm">
+      <CardHeader className="pb-2">
+        <CardTitle className="text-sm flex items-center gap-2">
+          <Terminal className="size-4 text-primary" />
+          {t("launch.report.fullLaunchLog")}
+          <span className="text-xs font-normal text-muted-foreground">({logs.length})</span>
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        <div className="max-h-[min(50vh,28rem)] overflow-y-auto rounded-lg border border-border/50 bg-muted/40 p-3 font-mono text-[11px] leading-relaxed">
+          {logs.map((log) => (
+            <div key={log.id} className="flex gap-2 py-0.5">
+              <span className="shrink-0 text-muted-foreground/70 select-none">[{log.timestamp}]</span>
+              <span className={cn("shrink-0 uppercase select-none", launchLogLevelClass[log.level])}>
+                [{log.level}]
+              </span>
+              <span className={cn("min-w-0 flex-1 break-all whitespace-pre-wrap", launchLogLevelClass[log.level])}>
+                {log.message}
+              </span>
+            </div>
+          ))}
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 

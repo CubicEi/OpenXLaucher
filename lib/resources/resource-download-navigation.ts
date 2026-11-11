@@ -1,5 +1,6 @@
 import type { AppRouterInstance } from "next/dist/shared/lib/app-router-context.shared-runtime";
 import { invoke } from "@tauri-apps/api/core";
+import { appendResolvedModDetailIds } from "@/lib/mod-detail-query";
 import { navigateWithMainTransition } from "@/lib/main-navigation-transition";
 import type { TranslationKey } from "@/components/i18n/use-i18n";
 import type { ResourceKindWire } from "@/lib/resource-kind";
@@ -39,7 +40,11 @@ export async function openResourceDownloadDetail(params: {
   const { router, resourcePath, fileName, resourceKind, t } = params;
   if (!resourcePath) return false;
 
-  const target = await invoke<{ slug: string } | null>("resolve_mod_for_download", {
+  const target = await invoke<{
+    slug: string;
+    source?: string;
+    projectId?: string | null;
+  } | null>("resolve_mod_for_download", {
     modPath: resourcePath,
   });
   if (!target?.slug) {
@@ -50,12 +55,12 @@ export async function openResourceDownloadDetail(params: {
   }
 
   const query = new URLSearchParams({
-    mod: target.slug,
     returnTo: "resourceDetail",
     resourceFile: fileName,
     resourceKind,
     modPath: resourcePath,
   });
+  appendResolvedModDetailIds(query, target);
   navigateWithMainTransition(router, `/download/detail?${query.toString()}`);
   return true;
 }

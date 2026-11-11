@@ -96,6 +96,53 @@ export function isLoaderFamilyChange(
   return currentFamily !== next;
 }
 
+export function resolveInstanceFolderName(
+  rawInput: string,
+  defaultName: string,
+): string {
+  const trimmed = rawInput.trim();
+  return trimmed.length > 0 ? trimmed : defaultName;
+}
+
+/** 版本文件夹名以小数点结尾（Windows 等系统可能无法正确创建） */
+export function instanceNameEndsWithDot(name: string): boolean {
+  const trimmed = name.trim();
+  return trimmed.length > 0 && trimmed.endsWith(".");
+}
+
+export function instanceNameConflictsExisting(
+  name: string,
+  existingFolderNames: readonly string[],
+  excludeFolderName?: string,
+): boolean {
+  const target = name.trim().toLowerCase();
+  if (!target) return false;
+  const exclude = excludeFolderName?.trim().toLowerCase();
+  if (exclude && target === exclude) return false;
+  return existingFolderNames.some(
+    (folder) => folder.trim().toLowerCase() === target,
+  );
+}
+
+export type InstanceFolderNameWarning = "trailingDot" | "duplicate";
+
+export function getInstanceFolderNameWarnings(
+  rawInput: string,
+  defaultName: string,
+  existingFolderNames: readonly string[],
+  excludeFolderName?: string,
+): InstanceFolderNameWarning[] {
+  const resolved = resolveInstanceFolderName(rawInput, defaultName);
+  const warnings: InstanceFolderNameWarning[] = [];
+  if (instanceNameEndsWithDot(resolved)) {
+    warnings.push("trailingDot");
+  }
+  if (instanceNameConflictsExisting(resolved, existingFolderNames, excludeFolderName)) {
+    warnings.push("duplicate");
+  }
+  return warnings;
+}
+
 /** 目标文件夹已存在且不是当前源实例时阻止安装 */
 export async function assertTargetInstanceFolderAvailable(
   instancesPath: string,

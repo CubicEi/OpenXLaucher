@@ -1,13 +1,14 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Camera, Copy, Check, X, Plus } from "lucide-react";
+import { createPortal } from "react-dom";
+import { Camera, Copy, Check, X, Trash2 } from "lucide-react";
 import { motion } from "framer-motion";
 import { useLaunchContext } from "@/components/launch/launch-provider";
 import { Button } from "@/components/ui/button";
 import { invoke } from "@tauri-apps/api/core";
-import { blobToBase64 } from "@/lib/file-utils";
 import { fadeSlideUp } from "@/lib/motion";
+import { useCornerNotice } from "@/components/global/corner-notice";
 
 interface ScreenshotFile {
   name: string;
@@ -17,12 +18,18 @@ interface ScreenshotFile {
 
 export default function GameSettingsScreenshots() {
   const { config, configLoaded } = useLaunchContext();
+  const { pushNotice } = useCornerNotice();
   const [screenshots, setScreenshots] = useState<ScreenshotFile[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selectedImage, setSelectedImage] = useState<{ path: string; base64: string; name: string } | null>(null);
   const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
   const [imageCache, setImageCache] = useState<Record<string, string>>({});
+  const [portalReady, setPortalReady] = useState(false);
+
+  useEffect(() => {
+    setPortalReady(true);
+  }, []);
 
   const effectiveVersionDirName = config.loadName || config.versionName;
   const screenshotsDir = config.minecraftPath && effectiveVersionDirName
@@ -68,6 +75,28 @@ export default function GameSettingsScreenshots() {
     return base64;
   };
 
+  const handleDeleteScreenshot = async (fileName: string, path: string) => {
+    if (!screenshotsDir) return;
+    try {
+      await invoke("vm_delete_file", { dirPath: screenshotsDir, fileName });
+      setScreenshots((prev) => prev.filter((s) => s.path !== path));
+      setImageCache((prev) => {
+        const next = { ...prev };
+        delete next[path];
+        return next;
+      });
+      if (selectedImage?.path === path) {
+        setSelectedImage(null);
+      }
+      pushNotice({
+        variant: "success",
+        message: `已删除：${fileName}`,
+      });
+    } catch (err) {
+      pushNotice({ variant: "error", message: String(err) });
+    }
+  };
+
   const handleCopyToClipboard = async (path: string, index: number) => {
     try {
       const base64 = await getImageBase64(path);
@@ -78,52 +107,6 @@ export default function GameSettingsScreenshots() {
     } catch (err) {
       console.error("Failed to copy:", err);
     }
-  };
-
-  const handleUploadFiles = async () => {
-    if (!screenshotsDir) return;
-    
-    const input = document.createElement('input');
-    input.type = 'file';
-    input.multiple = true;
-    input.accept = ".png,.jpg,.jpeg,.gif,.bmp";
-    input.style.display = 'none';
-    
-    document.body.appendChild(input);
-    
-    input.addEventListener('change', async (e) => {
-      const files = (e.target as HTMLInputElement).files;
-      if (!files || files.length === 0) {
-        document.body.removeChild(input);
-        return;
-      }
-
-      for (const file of Array.from(files)) {
-        const base64 = await blobToBase64(file);
-        await invoke("vm_write_file_base64", {
-          dirPath: screenshotsDir,
-          fileName: file.name,
-          contentBase64: base64,
-        });
-      }
-      
-      // 刷新截图列表
-      const refreshedFiles = await invoke<Array<{ name: string; path: string; size: number; is_dir: boolean }>>(
-        "vm_list_dir", 
-        { dirPath: screenshotsDir, extensionsFilter: ["png", "jpg", "jpeg", "gif", "bmp"] }
-      );
-      
-      const imageFiles = refreshedFiles
-        .filter(f => !f.is_dir)
-        .sort((a, b) => b.name.localeCompare(a.name));
-      
-      setScreenshots(imageFiles);
-      setImageCache({});
-      
-      document.body.removeChild(input);
-    });
-    
-    input.click();
   };
 
   const formatSize = (bytes: number) => {
@@ -156,7 +139,7 @@ export default function GameSettingsScreenshots() {
         variants={fadeSlideUp}
         initial="initial"
         animate="animate"
-        className="flex items-center justify-between px-4 py-3 border-b border-border"
+        className="flex items-center px-4 py-3 border-b border-border"
       >
         <div className="flex items-center gap-3">
           <div className="flex size-9 items-center justify-center rounded-xl bg-pink-500/10">
@@ -167,9 +150,6 @@ export default function GameSettingsScreenshots() {
             <p className="text-xs text-muted-foreground">{screenshots.length} 张截图</p>
           </div>
         </div>
-        <Button variant="default" size="icon" className="size-8" onClick={handleUploadFiles} title="上传截图">
-          <Plus className="size-3.5" />
-        </Button>
       </motion.div>
 
       <motion.div
@@ -203,6 +183,7 @@ export default function GameSettingsScreenshots() {
                 index={index}
                 copiedIndex={copiedIndex}
                 onCopy={handleCopyToClipboard}
+                onDelete={handleDeleteScreenshot}
                 onPreview={async () => {
                   const base64 = await getImageBase64(screenshot.path);
                   setSelectedImage({ path: screenshot.path, base64, name: screenshot.name });
@@ -214,28 +195,44 @@ export default function GameSettingsScreenshots() {
         )}
       </motion.div>
 
-      {selectedImage && (
-        <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4" onClick={() => setSelectedImage(null)}>
-          <div className="relative max-w-full max-h-full" onClick={(e) => e.stopPropagation()}>
-            <img
-              src={`data:image/png;base64,${selectedImage.base64}`}
-              alt={selectedImage.name}
-              className="max-w-full max-h-[85vh] object-contain rounded-lg"
-            />
-            <div className="absolute top-2 right-2 flex gap-2">
-              <Button variant="secondary" size="icon" className="bg-white/20 hover:bg-white/30" onClick={() => handleCopyToClipboard(selectedImage.path, -1)}>
-                <Copy className="size-4" />
-              </Button>
-              <Button variant="secondary" size="icon" className="bg-white/20 hover:bg-white/30" onClick={() => setSelectedImage(null)}>
-                <X className="size-4" />
-              </Button>
+      {portalReady &&
+        selectedImage &&
+        createPortal(
+          <div
+            className="fixed inset-0 z-[200] flex items-center justify-center bg-black/80 p-4"
+            onClick={() => setSelectedImage(null)}
+          >
+            <div className="relative max-h-full max-w-full" onClick={(e) => e.stopPropagation()}>
+              <img
+                src={`data:image/png;base64,${selectedImage.base64}`}
+                alt={selectedImage.name}
+                className="max-h-[85vh] max-w-full rounded-lg object-contain"
+              />
+              <div className="absolute top-2 right-2 flex gap-2">
+                <Button
+                  variant="secondary"
+                  size="icon"
+                  className="bg-white/20 hover:bg-white/30"
+                  onClick={() => handleCopyToClipboard(selectedImage.path, -1)}
+                >
+                  <Copy className="size-4" />
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="icon"
+                  className="bg-white/20 hover:bg-white/30"
+                  onClick={() => setSelectedImage(null)}
+                >
+                  <X className="size-4" />
+                </Button>
+              </div>
+              <div className="absolute bottom-2 left-2 right-2 rounded-lg bg-black/60 px-3 py-2">
+                <p className="truncate text-sm text-white">{selectedImage.name}</p>
+              </div>
             </div>
-            <div className="absolute bottom-2 left-2 right-2 bg-black/60 rounded-lg px-3 py-2">
-              <p className="text-sm text-white truncate">{selectedImage.name}</p>
-            </div>
-          </div>
-        </div>
-      )}
+          </div>,
+          document.body,
+        )}
     </div>
   );
 }
@@ -245,11 +242,20 @@ interface ScreenshotCardProps {
   index: number;
   copiedIndex: number | null;
   onCopy: (path: string, index: number) => void;
+  onDelete: (fileName: string, path: string) => void;
   onPreview: () => void;
   formatSize: (bytes: number) => string;
 }
 
-function ScreenshotCard({ screenshot, index, copiedIndex, onCopy, onPreview, formatSize }: ScreenshotCardProps) {
+function ScreenshotCard({
+  screenshot,
+  index,
+  copiedIndex,
+  onCopy,
+  onDelete,
+  onPreview,
+  formatSize,
+}: ScreenshotCardProps) {
   const [base64, setBase64] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
@@ -284,14 +290,32 @@ function ScreenshotCard({ screenshot, index, copiedIndex, onCopy, onPreview, for
         </div>
       )}
 
-      <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+      <div
+        className="pointer-events-none absolute inset-0 bg-black/45 opacity-0 transition-opacity group-hover:opacity-100"
+        aria-hidden
+      />
+      <div className="absolute top-1.5 right-1.5 z-10 flex gap-1 opacity-0 transition-opacity group-hover:opacity-100">
         <Button
           variant="secondary"
           size="icon"
-          className="size-8 rounded-full"
-          onClick={(e) => { e.stopPropagation(); onCopy(screenshot.path, index); }}
+          className="size-7 rounded-full bg-black/50 text-white hover:bg-black/70"
+          onClick={(e) => {
+            e.stopPropagation();
+            onCopy(screenshot.path, index);
+          }}
         >
           {copiedIndex === index ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
+        </Button>
+        <Button
+          variant="secondary"
+          size="icon"
+          className="size-7 rounded-full bg-black/50 text-white hover:bg-destructive hover:text-destructive-foreground"
+          onClick={(e) => {
+            e.stopPropagation();
+            void onDelete(screenshot.name, screenshot.path);
+          }}
+        >
+          <Trash2 className="size-3.5" />
         </Button>
       </div>
 

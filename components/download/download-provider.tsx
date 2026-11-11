@@ -140,7 +140,8 @@ interface DownloadContextValue {
     platform?: "modrinth" | "curseforge",
     projectId?: string,
     browseCategory?: string | null,
-    apiProjectType?: string | null
+    apiProjectType?: string | null,
+    autoInstallAfterDownload?: boolean
   ) => Promise<number>;
   /** 整合包安装（异步） */
   startModpackDownload: (modpackName: string, path: string) => Promise<number>;
@@ -920,7 +921,8 @@ function DownloadProviderInner({ children }: { children: React.ReactNode }) {
       platform?: "modrinth" | "curseforge",
       projectId?: string,
       browseCategory?: string | null,
-      apiProjectType?: string | null
+      apiProjectType?: string | null,
+      autoInstallAfterDownload?: boolean
     ) => {
       const label = `${resourceName} (${mcVersion})`;
       return startModLoaderDownload({
@@ -938,6 +940,7 @@ function DownloadProviderInner({ children }: { children: React.ReactNode }) {
           projectId: resourceKind === "mod" ? (projectId ?? null) : null,
           browseCategory: browseCategory ?? null,
           apiProjectType: apiProjectType ?? null,
+          autoInstallAfterDownload: autoInstallAfterDownload ?? null,
         },
       });
     },

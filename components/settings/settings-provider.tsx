@@ -8,6 +8,20 @@ import {
   resolveIsDark,
   type ThemeColor as PaletteThemeColor,
 } from "@/lib/appearance-palette";
+import {
+  deleteBackgroundImage,
+  hydrateBackgroundConfig,
+  revokeBackgroundObjectUrl,
+} from "@/lib/appearance-background-idb";
+import {
+  applySessionBackgroundToDomIfNeeded,
+  backgroundHasImageFlag,
+  captureSessionBackgroundFromDom,
+  lockSessionBackground,
+} from "@/lib/appearance-background-session";
+import { settingsForLocalStorage } from "@/lib/appearance-background-persist";
+
+export { persistLauncherBackground } from "@/lib/appearance-background-persist";
 
 // ============================================================
 // 类型定义
@@ -17,7 +31,19 @@ export type HomeMode = "simple" | "full";
 export type AppLanguage = "zh-CN" | "en-US";
 
 export interface BackgroundConfig {
+  /** 用于 CSS / 预览的 blob: URL（运行时，不持久化） */
+  imageObjectUrl?: string;
+  /** 内存中的图片数据，持久化写入 IndexedDB */
+  imageBlob?: Blob;
+  /** @deprecated 旧版 localStorage 内联数据，加载后会迁移 */
   imageDataUrl?: string;
+  /**
+   * 压缩 JPEG data URL，仅写入 localStorage，供硬刷新首帧同步绘制。
+   * 完整原图仍在 IndexedDB。
+   */
+  bootstrapDataUrl?: string;
+  /** 图片本体在 IndexedDB；localStorage 只存 opacity/blur 与此标记 */
+  hasStoredImage?: boolean;
   opacity: number; // 0 ~ 1（精确到 0.01）
   blur: number; // 0 ~ 20（整数 px）
 }
@@ -31,7 +57,7 @@ export interface AppearanceSettings {
   themeColor: ThemeColor; // "default" 或 oklch 字符串
   fontSize: number; // 12 ~ 18（整数 px，仅影响文字）
   background: BackgroundConfig;
-  homeMode: HomeMode; // 主页模式：simple 或 full
+  homeMode: HomeMode; // 主页模式：simple（简约）或 full（经典）
 }
 
 export interface GeneralSettings {
@@ -65,26 +91,6 @@ export const DOWNLOAD_MAX_TOTAL_WORKERS_MAX = 256;
 export const DOWNLOAD_TOTAL_WORKERS_SLIDER_UNLIMITED = 257;
 
 // ============================================================
-// 预设自定义主题色（调色盘快选按钮）
-//   颜色使用 oklch(l c h) 格式 —— 通过改变 l/c 自动派生整站
-// ============================================================
-export interface ColorPreset {
-  name: string;
-  oklch: string; // 主色的 oklch 值
-}
-
-export const COLOR_PRESETS: ColorPreset[] = [
-  { name: "深色", oklch: "oklch(0.216 0.006 56.043)" }, // shadcn 默认深色 primary
-  { name: "翡翠", oklch: "oklch(0.6 0.16 155)" },
-  { name: "天蓝", oklch: "oklch(0.58 0.18 240)" },
-  { name: "玫瑰", oklch: "oklch(0.58 0.22 10)" },
-  { name: "琥珀", oklch: "oklch(0.65 0.18 75)" },
-  { name: "紫罗兰", oklch: "oklch(0.58 0.2 300)" },
-  { name: "青绿", oklch: "oklch(0.55 0.15 185)" },
-  { name: "赤红", oklch: "oklch(0.55 0.22 25)" },
-];
-
-// ============================================================
 // 默认值
 // ============================================================
 export const DEFAULT_SETTINGS: LauncherSettings = {
@@ -106,7 +112,7 @@ export const DEFAULT_SETTINGS: LauncherSettings = {
       opacity: 0.55,
       blur: 6,
     },
-    homeMode: "full", // 默认完整模式
+    homeMode: "simple", // 默认简约模式
   },
 };
 
@@ -203,25 +209,6 @@ const SettingsContext = React.createContext<SettingsContextValue | null>(null);
 // DOM 应用函数（主题色见 lib/appearance-palette — 仅启动锁定）
 // ============================================================
 
-// 应用背景图
-function applyBackgroundToDom(bg: BackgroundConfig, effectiveIsDark: boolean) {
-  const root = document.documentElement;
-  const body = document.body;
-
-  const hasImage = !!bg.imageDataUrl && bg.imageDataUrl.length > 0;
-
-  if (hasImage) {
-    root.style.setProperty("--app-bg", `url("${bg.imageDataUrl}")`);
-    root.style.setProperty("--app-bg-opacity", bg.opacity.toFixed(2));
-    root.style.setProperty("--app-bg-blur", `${Math.round(bg.blur)}px`);
-    body.setAttribute("data-app-bg", "active");
-  } else {
-    root.style.setProperty("--app-bg", "none");
-    body.removeAttribute("data-app-bg");
-  }
-  void effectiveIsDark;
-}
-
 // 应用字体大小 —— 核心是让 body 的 font-size 动态变化，
 // 同时设置 --app-font-scale 让 text-* / h1-h4 也同步缩放
 function applyFontSizeToDom(fontSize: number) {
@@ -250,72 +237,85 @@ function applyThemeModeToDom(mode: ThemeMode) {
 export function SettingsProvider({ children }: { children: React.ReactNode }) {
   const [settings, setSettings] = React.useState<LauncherSettings>(DEFAULT_SETTINGS);
   const [ready, setReady] = React.useState(false);
-
-  // 初始化：读取本地存储
+  // 初始化：读取本地存储 + IndexedDB 背景图
   React.useEffect(() => {
     let cancelled = false;
-    let merged: LauncherSettings = {
-      ...DEFAULT_SETTINGS,
-      general: {
-        ...DEFAULT_SETTINGS.general,
-        language: detectSystemLanguage(),
-      },
-      download: { ...DEFAULT_SETTINGS.download },
-      appearance: {
-        ...DEFAULT_SETTINGS.appearance,
-        background: { ...DEFAULT_SETTINGS.appearance.background },
-      },
-    };
 
-    try {
-      const current = localStorage.getItem(SETTINGS_STORAGE_KEY);
-      let legacyRaw: string | null = null;
-      let legacyKey: string | null = null;
-      if (!current) {
-        for (const key of LEGACY_STORAGE_KEYS) {
-          const value = localStorage.getItem(key);
-          if (value != null) {
-            legacyRaw = value;
-            legacyKey = key;
-            break;
+    void (async () => {
+      let merged: LauncherSettings = {
+        ...DEFAULT_SETTINGS,
+        general: {
+          ...DEFAULT_SETTINGS.general,
+          language: detectSystemLanguage(),
+        },
+        download: { ...DEFAULT_SETTINGS.download },
+        appearance: {
+          ...DEFAULT_SETTINGS.appearance,
+          background: { ...DEFAULT_SETTINGS.appearance.background },
+        },
+      };
+
+      try {
+        const current = localStorage.getItem(SETTINGS_STORAGE_KEY);
+        let legacyRaw: string | null = null;
+        let legacyKey: string | null = null;
+        if (!current) {
+          for (const key of LEGACY_STORAGE_KEYS) {
+            const value = localStorage.getItem(key);
+            if (value != null) {
+              legacyRaw = value;
+              legacyKey = key;
+              break;
+            }
           }
         }
+        const raw = current ?? legacyRaw;
+        if (raw) {
+          const stored = JSON.parse(raw) as Partial<LauncherSettings>;
+          const parsed = legacyKey?.endsWith(":v3")
+            ? migrateSettingsV3(stored as LegacySettings)
+            : stored;
+          merged = {
+            general: {
+              ...DEFAULT_SETTINGS.general,
+              ...(parsed.general ?? {}),
+              language: isAppLanguage(parsed.general?.language)
+                ? parsed.general.language
+                : detectSystemLanguage(),
+              useSystemProxy:
+                typeof parsed.general?.useSystemProxy === "boolean"
+                  ? parsed.general.useSystemProxy
+                  : DEFAULT_SETTINGS.general.useSystemProxy,
+            },
+            download: clampDownloadSettings(parsed.download),
+            appearance: {
+              ...DEFAULT_SETTINGS.appearance,
+              ...parsed.appearance,
+              background: {
+                ...DEFAULT_SETTINGS.appearance.background,
+                ...(parsed.appearance?.background ?? {}),
+              },
+            },
+          };
+        }
+      } catch (e) {
+        console.warn("[settings] 读取失败，使用默认值", e);
       }
-      const raw = current ?? legacyRaw;
-      if (raw) {
-        const stored = JSON.parse(raw) as Partial<LauncherSettings>;
-        const parsed = legacyKey?.endsWith(":v3")
-          ? migrateSettingsV3(stored as LegacySettings)
-          : stored;
-        merged = {
-          general: {
-            ...DEFAULT_SETTINGS.general,
-            ...(parsed.general ?? {}),
-            language: isAppLanguage(parsed.general?.language)
-              ? parsed.general.language
-              : detectSystemLanguage(),
-            useSystemProxy:
-              typeof parsed.general?.useSystemProxy === "boolean"
-                ? parsed.general.useSystemProxy
-                : DEFAULT_SETTINGS.general.useSystemProxy,
-          },
-          download: clampDownloadSettings(parsed.download),
-          appearance: {
-            ...DEFAULT_SETTINGS.appearance,
-            ...parsed.appearance,
-            background: { ...DEFAULT_SETTINGS.appearance.background, ...(parsed.appearance?.background ?? {}) },
-          },
-        };
-      }
-    } catch (e) {
-      console.warn("[settings] 读取失败，使用默认值", e);
-    }
 
-    queueMicrotask(() => {
+      try {
+        const hydratedBg = await hydrateBackgroundConfig(merged.appearance.background);
+        merged = {
+          ...merged,
+          appearance: { ...merged.appearance, background: hydratedBg },
+        };
+      } catch (e) {
+        console.warn("[settings] 背景图加载失败", e);
+      }
+
       if (cancelled) return;
       setSettings(merged);
       setReady(true);
-    });
+    })();
 
     return () => {
       cancelled = true;
@@ -336,7 +336,104 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready]);
 
-  // Persist + apply non-theme-color appearance (mode / font / background)
+  // 页面背景：bootstrap 可能已绘制，锁定会话 URL/不透明度/模糊，本会话内不再变更
+  React.useEffect(() => {
+    if (!ready) return;
+    const hydrated = settings.appearance.background;
+    const hydratedUrl = hydrated.imageObjectUrl;
+    let captured = captureSessionBackgroundFromDom(hydrated);
+    if (!captured.imageObjectUrl && backgroundHasImageFlag(hydrated) && hydratedUrl) {
+      captured = {
+        ...captured,
+        imageObjectUrl: hydratedUrl,
+      };
+    }
+    // 同步首帧可能是压缩 data URL：锁定前升级为 IndexedDB 原图 blob，减轻色差
+    if (
+      hydratedUrl?.startsWith("blob:") &&
+      captured.imageObjectUrl &&
+      (captured.imageObjectUrl.startsWith("data:") ||
+        captured.imageObjectUrl !== hydratedUrl)
+    ) {
+      captured = {
+        ...captured,
+        imageObjectUrl: hydratedUrl,
+      };
+    }
+    lockSessionBackground(captured);
+    applySessionBackgroundToDomIfNeeded(captured);
+
+    const previewUrl = captured.imageObjectUrl;
+    const bg = settings.appearance.background;
+    const needsPreviewSync =
+      bg.imageObjectUrl !== previewUrl ||
+      Math.abs(bg.opacity - captured.opacity) > 0.005 ||
+      Math.round(bg.blur) !== Math.round(captured.blur);
+    if (needsPreviewSync) {
+      setSettings((prev) => ({
+        ...prev,
+        appearance: {
+          ...prev.appearance,
+          background: {
+            ...prev.appearance.background,
+            imageObjectUrl: previewUrl,
+            opacity: captured.opacity,
+            blur: captured.blur,
+            hasStoredImage: backgroundHasImageFlag({
+              ...prev.appearance.background,
+              imageObjectUrl: previewUrl,
+            }),
+          },
+        },
+      }));
+    }
+    // 仅撤销未被会话采用的多余 blob；会话 URL 本身勿 revoke
+    if (
+      hydratedUrl &&
+      previewUrl &&
+      hydratedUrl !== previewUrl &&
+      hydratedUrl.startsWith("blob:") &&
+      previewUrl.startsWith("blob:")
+    ) {
+      queueMicrotask(() => revokeBackgroundObjectUrl(hydratedUrl));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ready]);
+
+  // 旧背景缺少同步首帧预览时补写，减轻之后硬刷新闪成无背景
+  React.useEffect(() => {
+    if (!ready) return;
+    const bg = settings.appearance.background;
+    if (!backgroundHasImageFlag(bg) || bg.bootstrapDataUrl || !bg.imageBlob) return;
+    let cancelled = false;
+    void import("@/lib/appearance-background-bootstrap-preview")
+      .then(({ createBootstrapBackgroundDataUrl }) =>
+        createBootstrapBackgroundDataUrl(bg.imageBlob!),
+      )
+      .then((bootstrapDataUrl) => {
+        if (cancelled || !bootstrapDataUrl) return;
+        setSettings((prev) => {
+          if (prev.appearance.background.bootstrapDataUrl) return prev;
+          return {
+            ...prev,
+            appearance: {
+              ...prev.appearance,
+              background: {
+                ...prev.appearance.background,
+                bootstrapDataUrl,
+              },
+            },
+          };
+        });
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ready]);
+
+  // Persist + apply non-theme-color appearance (mode / font)；背景仅「应用+重启」时持久化
   React.useEffect(() => {
     if (!ready) return;
 
@@ -351,10 +448,9 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
     // Theme color CSS vars: session-locked — never apply settings.appearance.themeColor here
     reapplySessionThemeColorToDom(effectiveIsDark);
     applyFontSizeToDom(settings.appearance.fontSize);
-    applyBackgroundToDom(settings.appearance.background, effectiveIsDark);
 
     try {
-      localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(settings));
+      localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(settingsForLocalStorage(settings)));
     } catch (e) {
       console.warn("[settings] 写入失败", e);
     }
@@ -392,12 +488,11 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
     const observer = new MutationObserver(() => {
       const externalIsDark = root.classList.contains("dark");
       reapplySessionThemeColorToDom(externalIsDark);
-      applyBackgroundToDom(settings.appearance.background, externalIsDark);
     });
 
     observer.observe(root, { attributes: true, attributeFilter: ["class"] });
     return () => observer.disconnect();
-  }, [settings.appearance.background, ready]);
+  }, [ready]);
 
   const update = React.useCallback(<K extends keyof LauncherSettings>(
     section: K,
@@ -409,13 +504,16 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
     }));
   }, []);
 
-  const reset = React.useCallback(() => setSettings({
-    ...DEFAULT_SETTINGS,
-    general: {
-      ...DEFAULT_SETTINGS.general,
-      language: detectSystemLanguage(),
-    },
-  }), []);
+  const reset = React.useCallback(() => {
+    void deleteBackgroundImage();
+    setSettings({
+      ...DEFAULT_SETTINGS,
+      general: {
+        ...DEFAULT_SETTINGS.general,
+        language: detectSystemLanguage(),
+      },
+    });
+  }, []);
 
   const value = React.useMemo<SettingsContextValue>(
     () => ({ settings, update, reset }),

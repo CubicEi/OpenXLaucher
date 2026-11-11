@@ -1,4 +1,5 @@
 //! Modrinth / CurseForge project resolution and version listing for local mods.
+//! Local file hash / fingerprint upgrade matching is intentionally limited to these two platforms only.
 
 use crate::handler::diagnostics::ModSearchResult;
 use crate::handler::mod_platform_probe::ModPlatformKind;

@@ -129,7 +129,10 @@ pub async fn get_curseforge_mod_files(modId: String) -> Result<String, String> {
                 if final_url.contains("curseforge") {
                     let parts: Vec<&str> = final_url.split('/').collect();
                     if let Some(mod_id) = parts.last() {
-                        match get_mod_files(mod_id).await {
+                        let Ok(numeric_id) = mod_id.parse::<i64>() else {
+                            continue;
+                        };
+                        match curseforge_version_map_for_mod_id(numeric_id).await {
                             Ok(mod_files) => match serde_json::to_string(&mod_files) {
                                 Ok(json) => return Ok(json),
                                 Err(e) => return Err(format!("Failed to serialize result: {}", e)),
@@ -149,25 +152,12 @@ pub async fn get_curseforge_mod_files(modId: String) -> Result<String, String> {
     }
     Err("No curseforge link found or failed to get mod files".to_string())
 }
-#[tauri::command]
-pub async fn get_mod_files_by_slug(slug: String) -> Result<String, String> {
-    let trimmed = slug.trim();
+async fn modrinth_version_map_for_project(
+    project_id: &str,
+) -> Result<HashMap<String, Vec<(Vec<String>, String)>>, String> {
+    let trimmed = project_id.trim();
     if trimmed.is_empty() {
-        return Err("slug cannot be empty".to_string());
-    }
-    match get_mod_files(trimmed).await {
-        Ok(mod_files) => match serde_json::to_string(&mod_files) {
-            Ok(json) => Ok(json),
-            Err(e) => Err(format!("Failed to serialize result: {}", e)),
-        },
-        Err(e) => Err(format!("Failed to get mod files: {}", e)),
-    }
-}
-#[tauri::command]
-pub async fn get_modrinth_mod_files(slug: String) -> Result<String, String> {
-    let trimmed = slug.trim();
-    if trimmed.is_empty() {
-        return Err("slug cannot be empty".to_string());
+        return Err("project id cannot be empty".to_string());
     }
     let client = modrinth_client().await;
     let versions_url = format!("https://api.modrinth.com/v2/project/{}/version", trimmed);
@@ -297,10 +287,14 @@ pub async fn get_modrinth_mod_files(slug: String) -> Result<String, String> {
     if version_map.is_empty() {
         return Err("No valid mod files found (mod may not have releases on Modrinth)".to_string());
     }
-    match serde_json::to_string(&version_map) {
-        Ok(json) => Ok(json),
-        Err(e) => Err(format!("Failed to serialize result: {}", e)),
-    }
+    Ok(version_map)
+}
+
+/// Modrinth project id（搜索命中后传入，亦兼容 slug）。
+#[tauri::command(rename_all = "camelCase")]
+pub async fn get_modrinth_mod_files_by_project_id(projectId: String) -> Result<String, String> {
+    let map = modrinth_version_map_for_project(&projectId).await?;
+    serde_json::to_string(&map).map_err(|e| format!("Failed to serialize result: {}", e))
 }
 
 /// Search Modrinth through the native HTTP client instead of the WebView.
@@ -313,12 +307,25 @@ pub async fn search_modrinth_projects(
     limit: Option<u32>,
 ) -> Result<String, String> {
     let query = query.trim();
-    if query.is_empty() {
-        return Err("query cannot be empty".to_string());
-    }
-
     let limit = limit.unwrap_or(25).clamp(1, 100);
-    let url = if let Some(project_type) = project_type {
+    let url = if query.is_empty() {
+        let Some(project_type) = project_type else {
+            return Err("query cannot be empty without project_type".to_string());
+        };
+        let project_type = project_type.trim().to_ascii_lowercase();
+        if !matches!(
+            project_type.as_str(),
+            "mod" | "modpack" | "resourcepack" | "shader" | "datapack" | "world"
+        ) {
+            return Err(format!("unsupported Modrinth project type: {}", project_type));
+        }
+        let facets = format!(r#"[["project_type:{}"]]"#, project_type);
+        format!(
+            "https://api.modrinth.com/v2/search?query=&limit={}&index=downloads&facets={}",
+            limit,
+            urlencoding(&facets),
+        )
+    } else if let Some(project_type) = project_type {
         let project_type = project_type.trim().to_ascii_lowercase();
         if !matches!(
             project_type.as_str(),
@@ -362,14 +369,15 @@ pub async fn search_modrinth_projects(
         .map_err(|error| format!("Failed to read Modrinth search response: {}", error))
 }
 
-#[tauri::command]
-pub async fn get_modrinth_project(slug: String) -> Result<String, String> {
-    let slug = slug.trim();
-    if slug.is_empty() {
-        return Err("slug cannot be empty".to_string());
+/// Modrinth project id（搜索命中后传入，亦兼容 slug）。
+#[tauri::command(rename_all = "camelCase")]
+pub async fn get_modrinth_project(projectId: String) -> Result<String, String> {
+    let project_id = projectId.trim();
+    if project_id.is_empty() {
+        return Err("project id cannot be empty".to_string());
     }
 
-    let url = format!("https://api.modrinth.com/v2/project/{}", urlencoding(slug));
+    let url = format!("https://api.modrinth.com/v2/project/{}", urlencoding(project_id));
     let client = modrinth_client().await;
     let response = get_with_retry(&client, &url, None)
         .await
@@ -835,123 +843,7 @@ pub async fn get_curseforge_required_dependencies(
     Ok(resolved)
 }
 
-async fn get_mod_files(mod_id: &str) -> Result<HashMap<String, Vec<(Vec<String>, String)>>, Box<dyn std::error::Error>> {
-    let client = curseforge_client().await;
-    let class_ids = curseforge_class_ids::all();
-    let mut search_urls: Vec<String> = Vec::with_capacity(class_ids.len() + 2);
-    search_urls.push(format!(
-        "https://api.curseforge.com/v1/mods/search?gameId=432&searchFilter={}",
-        mod_id
-    ));
-    for cid in &class_ids {
-        search_urls.push(format!(
-            "https://api.curseforge.com/v1/mods/search?gameId=432&classId={}&searchFilter={}",
-            cid, mod_id
-        ));
-    }
-    search_urls.push(format!(
-        "https://api.curseforge.com/v1/mods/search?gameId=432&classId=6&searchFilter={}",
-        mod_id
-    ));
-    let mod_id_owned = mod_id.to_string();
-    let retry_cfg = RetryConfig {
-        max_retries: 3,
-        initial_delay_ms: 600,
-        max_delay_ms: 3000,
-    };
-    let semaphore = global_semaphore().await;
-    let search_futures = search_urls.into_iter().map(|url| {
-        let client = Arc::clone(&client);
-        let mod_id = mod_id_owned.clone();
-        let sem = Arc::clone(&semaphore);
-        async move {
-            let _permit = sem
-                .acquire()
-                .await
-                .map_err(|e| format!("信号量获取失败: {}", e))?;
-            match get_with_retry(&client, &url, Some(retry_cfg)).await {
-                Ok(response) => {
-                    if !response.status().is_success() {
-                        return Err(format!(
-                            "CurseForge API 返回错误状态: {}",
-                            response.status()
-                        ));
-                    }
-                    let text = response
-                        .text()
-                        .await
-                        .map_err(|e| format!("读取响应失败: {}", e))?;
-                    let json: serde_json::Value = serde_json::from_str(&text)
-                        .map_err(|e| format!("解析 JSON 失败: {}", e))?;
-                    Ok::<Option<(i64, bool)>, String>(
-                        json.get("data")
-                            .and_then(|d| d.as_array())
-                            .and_then(|data| {
-                                let exact = data.iter().find(|item| {
-                                    item.get("slug")
-                                        .and_then(|s| s.as_str())
-                                        .map(|s| s.eq_ignore_ascii_case(&mod_id))
-                                        .unwrap_or(false)
-                                });
-                                let chosen = exact.or_else(|| data.first());
-                                chosen
-                                    .and_then(|item| item.get("id").and_then(|i| i.as_i64()))
-                                    .map(|id| (id, exact.is_some()))
-                            }),
-                    )
-                }
-                Err(e) => Err(format!(
-                    "CurseForge API request failed (retried 3 times): {}",
-                    e
-                )),
-            }
-        }
-    });
-    let search_results: Vec<Result<Option<(i64, bool)>, String>> = join_all(search_futures).await;
-    let mut cur_mod_id: Option<i64> = None;
-    let mut last_error: Option<String> = None;
-    for result in search_results {
-        match result {
-            Ok(Some((id, is_exact))) => {
-                if is_exact {
-                    cur_mod_id = Some(id);
-                    break;
-                }
-                cur_mod_id = Some(id);
-            }
-            Ok(None) => {}
-            Err(e) => {
-                last_error = Some(e);
-            }
-        }
-    }
-    let cur_mod_id = match cur_mod_id {
-        Some(id) => id,
-        None => {
-            return Err(last_error
-                .unwrap_or_else(|| format!("CurseForge 上未找到项目: {}", mod_id))
-                .into());
-        }
-    };
-    let files_url = format!("https://api.curseforge.com/v1/mods/{}/files", cur_mod_id);
-    let files_response = get_with_retry(&client, &files_url, Some(retry_cfg))
-        .await
-        .map_err(|e| format!("Mod files request failed (retried 3 times): {}", e))?;
-    if !files_response.status().is_success() {
-        return Err(format!(
-            "Files API returned error status: {}",
-            files_response.status()
-        )
-        .into());
-    }
-    let files_text = files_response
-        .text()
-        .await
-        .map_err(|e| format!("Failed to read files response: {}", e))?;
-    let files_json: serde_json::Value = serde_json::from_str(&files_text)
-        .map_err(|e| format!("Failed to parse files JSON: {}", e))?;
-    let mut version_map: HashMap<String, Vec<(Vec<String>, String)>> = HashMap::new();
-    fn is_mc_version_like(s: &str) -> bool {
+fn is_curseforge_mc_version_like(s: &str) -> bool {
         if s.is_empty() {
             return false;
         }
@@ -968,7 +860,12 @@ async fn get_mod_files(mod_id: &str) -> Result<HashMap<String, Vec<(Vec<String>,
             }
         }
         dot_count >= 1 && dot_count <= 3
-    }
+}
+
+fn curseforge_version_map_from_files_json(
+    files_json: &serde_json::Value,
+) -> HashMap<String, Vec<(Vec<String>, String)>> {
+    let mut version_map: HashMap<String, Vec<(Vec<String>, String)>> = HashMap::new();
     if let Some(files_data) = files_json.get("data").and_then(|d| d.as_array()) {
         for file in files_data {
             let download_url_opt = file
@@ -1011,7 +908,7 @@ async fn get_mod_files(mod_id: &str) -> Result<HashMap<String, Vec<(Vec<String>,
                 let mut other_versions: Vec<String> = Vec::new();
                 for version in game_versions {
                     if let Some(v_str) = version.as_str() {
-                        if is_mc_version_like(v_str) {
+                        if is_curseforge_mc_version_like(v_str) {
                             mc_versions.push(v_str.to_string());
                         } else {
                             other_versions.push(v_str.to_string());
@@ -1041,11 +938,79 @@ async fn get_mod_files(mod_id: &str) -> Result<HashMap<String, Vec<(Vec<String>,
             }
         }
     }
+    version_map
+}
+
+async fn curseforge_version_map_for_mod_id(
+    mod_id: i64,
+) -> Result<HashMap<String, Vec<(Vec<String>, String)>>, String> {
+    if mod_id <= 0 {
+        return Err("invalid CurseForge project id".to_string());
+    }
+    let client = curseforge_client().await;
+    let retry_cfg = RetryConfig {
+        max_retries: 3,
+        initial_delay_ms: 600,
+        max_delay_ms: 3000,
+    };
+    let files_url = format!("https://api.curseforge.com/v1/mods/{}/files", mod_id);
+    let files_response = get_with_retry(&client, &files_url, Some(retry_cfg))
+        .await
+        .map_err(|e| format!("Mod files request failed (retried 3 times): {}", e))?;
+    if !files_response.status().is_success() {
+        return Err(format!(
+            "Files API returned error status: {}",
+            files_response.status()
+        ));
+    }
+    let files_text = files_response
+        .text()
+        .await
+        .map_err(|e| format!("Failed to read files response: {}", e))?;
+    let files_json: serde_json::Value = serde_json::from_str(&files_text)
+        .map_err(|e| format!("Failed to parse files JSON: {}", e))?;
+    let version_map = curseforge_version_map_from_files_json(&files_json);
     if version_map.is_empty() {
-        return Err(String::from("No valid files found matching Minecraft version").into());
+        return Err("No valid files found matching Minecraft version".to_string());
     }
     Ok(version_map)
 }
+
+/// CurseForge 数字 project id（仅搜索命中后使用）。
+#[tauri::command(rename_all = "camelCase")]
+pub async fn get_curseforge_mod_files_by_project_id(projectId: i64) -> Result<String, String> {
+    let map = curseforge_version_map_for_mod_id(projectId).await?;
+    serde_json::to_string(&map).map_err(|e| format!("Failed to serialize result: {}", e))
+}
+
+/// CurseForge 数字 project id（仅搜索命中后使用）。
+#[tauri::command(rename_all = "camelCase")]
+pub async fn get_curseforge_mod_by_project_id(projectId: i64) -> Result<String, String> {
+    if projectId <= 0 {
+        return Err("invalid CurseForge project id".to_string());
+    }
+    let client = curseforge_client().await;
+    let url = format!("https://api.curseforge.com/v1/mods/{}", projectId);
+    let response = get_with_retry(
+        &client,
+        &url,
+        Some(RetryConfig {
+            max_retries: 3,
+            initial_delay_ms: 600,
+            max_delay_ms: 3000,
+        }),
+    )
+    .await
+    .map_err(|e| format!("CurseForge project fetch failed: {}", e))?;
+    if !response.status().is_success() {
+        return Err(format!("CurseForge project fetch HTTP {}", response.status()));
+    }
+    response
+        .text()
+        .await
+        .map_err(|e| format!("Failed to read CurseForge project response: {}", e))
+}
+
 #[derive(Debug, Serialize, Clone)]
 struct ModDownloadProgressPayload {
     task_id: u64,
@@ -1256,6 +1221,7 @@ pub async fn download_resource_file(
     projectId: Option<String>,
     browseCategory: Option<String>,
     apiProjectType: Option<String>,
+    autoInstallAfterDownload: Option<bool>,
 ) -> Result<u64, String> {
     let task_id = MOD_TASK_COUNTER.fetch_add(1, Ordering::SeqCst);
     let file_name = extract_filename_from_url(&downloadUrl);
@@ -1280,6 +1246,7 @@ pub async fn download_resource_file(
     let platform_clone = platform.clone();
     let project_id_clone = projectId.clone();
     let resource_slug_clone = resourceSlug.clone();
+    let auto_install_after_download = autoInstallAfterDownload.unwrap_or(false);
     let cancel = Arc::new(std::sync::atomic::AtomicBool::new(false));
     {
         let mut tasks = mod_active_tasks().lock().unwrap();
@@ -1405,6 +1372,29 @@ pub async fn download_resource_file(
                         label: progress_label.clone(),
                     },
                 );
+                if resolved_kind_clone.eq_ignore_ascii_case("modpack")
+                    && auto_install_after_download
+                {
+                    let zip_path = save_dir_clone.join(&file_name_clone);
+                    if zip_path.is_file() {
+                        if let Err(e) = crate::downloader::version_install::start_modpack_legacy(
+                            app_clone.clone(),
+                            zip_path.to_string_lossy().into_owned(),
+                        )
+                        .await
+                        {
+                            eprintln!(
+                                "[modpack] auto install after download failed: {}",
+                                e
+                            );
+                        }
+                    } else {
+                        eprintln!(
+                            "[modpack] auto install skipped, file missing: {}",
+                            zip_path.display()
+                        );
+                    }
+                }
                 let _ = size;
             }
             crate::downloader::modular_download::SingleDownloadResult::Failed { error, .. } => {
@@ -1444,6 +1434,7 @@ pub async fn download_mod_file(
         downloadUrl,
         platform,
         projectId,
+        None,
         None,
         None,
     )

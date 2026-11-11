@@ -75,7 +75,7 @@ export function InstanceInfoCard({ instance }: { instance?: InstanceData | null 
 
       <CardContent className="relative flex-1 space-y-3">
         <InfoItem
-          label="游戏版本"
+          label="游戏实例"
           value={mcVersion}
           tooltip="Minecraft 版本号"
           icon={<MessageSquare className="size-4" />}

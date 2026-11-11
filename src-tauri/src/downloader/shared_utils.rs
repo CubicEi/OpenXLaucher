@@ -157,6 +157,134 @@ pub fn parse_meta_versions(meta: MetaResponse, mc_version: &str) -> Result<Vec<S
     Ok(loader_versions)
 }
 
+// ============= BMCLAPI / Mojang 镜像 =============
+
+pub const BMCL_API_ROOT: &str = "https://bmclapi2.bangbang93.com";
+pub const MOJANG_VERSION_MANIFEST: &str =
+    "https://launchermeta.mojang.com/mc/game/version_manifest.json";
+pub const PISTON_VERSION_MANIFEST: &str =
+    "https://piston-meta.mojang.com/mc/game/version_manifest.json";
+
+/// 版本清单 URL 列表（官方 + BMCL 镜像）。
+pub fn minecraft_version_manifest_urls() -> Vec<String> {
+    vec![
+        MOJANG_VERSION_MANIFEST.to_string(),
+        PISTON_VERSION_MANIFEST.to_string(),
+        format!("{}/mc/game/version_manifest.json", BMCL_API_ROOT),
+    ]
+}
+
+fn push_unique(urls: &mut Vec<String>, url: String) {
+    if !urls.iter().any(|u| u == &url) {
+        urls.push(url);
+    }
+}
+
+/// 为 Mojang / Minecraft CDN 的原始 URL 生成「官方 + BMCL」候选列表。
+pub fn mirror_urls_for_official(original: &str) -> Vec<String> {
+    let mut urls = vec![original.to_string()];
+    let Ok(parsed) = url::Url::parse(original) else {
+        return urls;
+    };
+    let host = parsed.host_str().unwrap_or_default();
+    if host.contains("libraries.minecraft.net") {
+        let path = parsed.path().trim_start_matches('/');
+        push_unique(
+            &mut urls,
+            format!("{}/maven/{}", BMCL_API_ROOT, path),
+        );
+    } else if host.contains("resources.download.minecraft.net") {
+        let path = parsed.path().trim_start_matches('/');
+        push_unique(
+            &mut urls,
+            format!("{}/assets/{}", BMCL_API_ROOT, path),
+        );
+    } else if host.contains("mojang.com") {
+        push_unique(
+            &mut urls,
+            format!("{}{}", BMCL_API_ROOT, parsed.path()),
+        );
+    }
+    urls
+}
+
+/// 版本 JSON：清单中的官方 URL + BMCL `/version/{id}/json` 兜底。
+pub fn minecraft_version_json_urls(version_id: &str, official_url: Option<&str>) -> Vec<String> {
+    let mut urls = Vec::new();
+    if let Some(u) = official_url {
+        for u in mirror_urls_for_official(u) {
+            push_unique(&mut urls, u);
+        }
+    }
+    push_unique(
+        &mut urls,
+        format!("{}/version/{}/json", BMCL_API_ROOT, version_id),
+    );
+    urls
+}
+
+pub fn library_download_urls(path: &str) -> Vec<String> {
+    mirror_urls_for_official(&format!("https://libraries.minecraft.net/{}", path))
+}
+
+pub fn asset_object_download_urls(prefix: &str, hash: &str) -> Vec<String> {
+    mirror_urls_for_official(&format!(
+        "https://resources.download.minecraft.net/{}/{}",
+        prefix, hash
+    ))
+}
+
+pub fn version_client_download_urls(version_id: &str, official_url: &str) -> Vec<String> {
+    let mut urls = mirror_urls_for_official(official_url);
+    push_unique(
+        &mut urls,
+        format!("{}/version/{}/client", BMCL_API_ROOT, version_id),
+    );
+    urls
+}
+
+/// 依次尝试 URL，返回第一个成功响应的正文。
+pub async fn fetch_text_from_urls(urls: &[String]) -> Result<String> {
+    let client = crate::http_client::shared_client().await;
+    let mut last_err: Option<anyhow::Error> = None;
+    for url in urls {
+        match client.get(url).send().await {
+            Ok(resp) if resp.status().is_success() => {
+                return resp.text().await.with_context(|| format!("读取 {} 响应失败", url));
+            }
+            Ok(resp) => {
+                last_err = Some(anyhow!("{} 返回 HTTP {}", url, resp.status()));
+            }
+            Err(e) => {
+                last_err = Some(anyhow!("请求 {} 失败: {}", url, e));
+            }
+        }
+    }
+    Err(last_err.unwrap_or_else(|| anyhow!("没有可用的下载地址")))
+}
+
+pub async fn fetch_json_from_urls<T: for<'de> Deserialize<'de>>(urls: &[String]) -> Result<T> {
+    let text = fetch_text_from_urls(urls).await?;
+    serde_json::from_str(&text).context("解析 JSON 失败")
+}
+
+/// 从 Mojang 版本清单解析指定 MC 版本的 package.json（带 BMCL 备选源）。
+pub async fn fetch_minecraft_version_package(mc_version: &str) -> Result<Value> {
+    let manifest: Value =
+        fetch_json_from_urls(&minecraft_version_manifest_urls()).await?;
+    let versions = manifest["versions"]
+        .as_array()
+        .ok_or_else(|| anyhow!("缺少 versions 数组"))?;
+    let package_url = versions
+        .iter()
+        .find(|v| v["id"].as_str() == Some(mc_version))
+        .and_then(|v| v["url"].as_str().map(|s| s.to_string()))
+        .ok_or_else(|| anyhow!("未在版本清单中找到 Minecraft {}", mc_version))?;
+    let package_urls = mirror_urls_for_official(&package_url);
+    fetch_json_from_urls(&package_urls).await
+        .with_context(|| format!("获取 {} 的 package.json 失败", mc_version))
+}
+
 // ============= XML 版本解析工具 =============
 
 /// 从 Maven metadata.xml 中提取版本列表（适用于 Fabric API、Quilt API 等）

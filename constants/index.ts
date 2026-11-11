@@ -116,6 +116,29 @@ export const GAME_SETTINGS_SECTION_ICON_CLASS = {
   screenshots: "bg-pink-500/10 text-pink-500",
 } as const;
 
+/** 下载中心英文搜索分类图标（与各 game-settings 资源子页一致） */
+export type DownloadEnglishCategoryId =
+  | "mod"
+  | "modpack"
+  | "resourcepack"
+  | "shaders"
+  | "datapack"
+  | "worlds"
+  | "schematic";
+
+export const DOWNLOAD_CENTER_CATEGORY_ICONS: Record<
+  DownloadEnglishCategoryId,
+  LucideIcon
+> = {
+  mod: Puzzle,
+  modpack: Package,
+  resourcepack: ImageIcon,
+  shaders: Sparkles,
+  datapack: Database,
+  worlds: Globe,
+  schematic: Map,
+};
+
 export const GAME_SETTINGS_EXPORT_ICON_BG = "bg-[#dbdb00]/10";
 export const GAME_SETTINGS_EXPORT_ICON_TEXT = "text-[#dbdb00]";
 export const GAME_SETTINGS_EXPORT_ICON_CLASS = `${GAME_SETTINGS_EXPORT_ICON_BG} ${GAME_SETTINGS_EXPORT_ICON_TEXT}`;

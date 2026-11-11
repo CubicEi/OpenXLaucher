@@ -556,6 +556,10 @@ export function RetargetCombinedInstall({
         titleKey="gameSettings.retargetInstanceNameTitle"
         hintKey="gameSettings.retargetInstanceNameHint"
         confirmKey="gameSettings.retargetStartInstall"
+        instancesPath={
+          config.minecraftPath ? `${config.minecraftPath}/versions` : undefined
+        }
+        excludeFolderName={retargetContext.sourceFolderName}
       />
 
       <AlertDialog open={showRetargetWarning} onOpenChange={setShowRetargetWarning}>

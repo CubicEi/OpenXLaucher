@@ -8,6 +8,7 @@ import { DownloadProvider } from "@/components/download/download-provider";
 import { RetargetInstallListener } from "@/components/download/retarget-install-listener";
 import { FlyToProcessListOverlay } from "@/components/process-list/fly-to-process-list";
 import { LaunchProvider } from "@/components/launch/launch-provider";
+import { MultiplayerProvider } from "@/components/multiplayer/multiplayer-provider";
 import { DeferredGlobalFeatures } from "@/components/global/deferred-global-features";
 import { StartupRuntimeDependencyNotifier } from "@/components/settings/startup-runtime-dependency-notifier";
 import { UIConfigProvider } from "@/components/ui-config/ui-config-provider";
@@ -21,6 +22,7 @@ import { StartupOnboardingHost } from "@/components/onboarding/startup-onboardin
 import { CornerNoticeProvider } from "@/components/global/corner-notice";
 import { ScrollbarProximity } from "@/components/global/scrollbar-proximity";
 import { APPEARANCE_BOOTSTRAP_SCRIPT } from "@/lib/appearance-bootstrap-script";
+import { APPEARANCE_BACKGROUND_BOOTSTRAP_SCRIPT } from "@/lib/appearance-background-bootstrap-script";
 
 export const metadata: Metadata = {
   title: "OpenXLauncher",
@@ -41,6 +43,9 @@ export default function RootLayout({
         <script
           dangerouslySetInnerHTML={{ __html: APPEARANCE_BOOTSTRAP_SCRIPT }}
         />
+        <script
+          dangerouslySetInnerHTML={{ __html: APPEARANCE_BACKGROUND_BOOTSTRAP_SCRIPT }}
+        />
       </head>
       <body className="antialiased h-screen flex flex-col overflow-hidden bg-background">
         <ThemeProvider
@@ -54,6 +59,7 @@ export default function RootLayout({
               <SettingsProvider>
                 <AccountProvider>
                   <LaunchProvider>
+                    <MultiplayerProvider>
                       <DownloadProvider>
                         <RetargetInstallListener />
                         <TooltipProvider>
@@ -71,6 +77,7 @@ export default function RootLayout({
                           </ThemeRuntimeProvider>
                         </TooltipProvider>
                       </DownloadProvider>
+                    </MultiplayerProvider>
                   </LaunchProvider>
                 </AccountProvider>
               </SettingsProvider>

@@ -5,6 +5,7 @@ extern crate log;
 mod app_version;
 #[allow(dead_code)]
 mod app_paths;
+mod launcher_restart_focus;
 mod auth;
 mod downloader;
 mod handler;
@@ -20,7 +21,7 @@ use auth::official::{
     delete_cached_skin, fetch_texture_image_base64, get_skin_base64, ms_activate_skin,
     ms_cancel_login, ms_delete_skin, ms_get_skins_and_capes, ms_has_account_in_db,
     ms_poll_and_login, ms_request_device_code, ms_set_active_cape, ms_silent_refresh_account,
-    ms_upload_skin, redownload_littleskin_skin,
+    ms_upload_skin, redownload_littleskin_skin, redownload_yggdrasil_skin,
 };
 use auth::yissadrail::{getAccountList, getPlayerSkin, thirdPartyLogin};
 use downloader::decompression::extract_library_paths;
@@ -69,10 +70,12 @@ use handler::liteloader_handler::{
     cancel_liteloader_download, download_and_install_liteloader, get_liteloader_versions,
 };
 use handler::mod_links::{
-    cancel_mod_download, download_mod_file, download_resource_file, get_curseforge_mod_files,
-    get_mod_files_by_slug, get_mod_links, get_modrinth_mod_files, search_curseforge_projects,
+    cancel_mod_download, download_mod_file, download_resource_file, get_curseforge_mod_by_project_id,
+    get_curseforge_mod_files, get_curseforge_mod_files_by_project_id, get_mod_links,
+    get_modrinth_mod_files_by_project_id, get_modrinth_project, search_curseforge_projects,
     search_modrinth_projects,
 };
+use handler::resource_search::{download_mcschematic_file, search_english_resources};
 use handler::mod_parser::{parse_mod, parse_mods, parse_mods_in_dir, save_incompatible_mods};
 use handler::mod_platform::{
     get_mod_cover_data_url, get_pack_local_description, get_resource_cover_data_url,
@@ -185,6 +188,7 @@ pub fn run() {
             ms_cancel_login,
             get_skin_base64,
             redownload_littleskin_skin,
+            redownload_yggdrasil_skin,
             ms_get_skins_and_capes,
             fetch_texture_image_base64,
             ms_upload_skin,
@@ -282,8 +286,10 @@ pub fn run() {
             get_running_game_state,
             get_mod_links,
             get_curseforge_mod_files,
-            get_mod_files_by_slug,
-            get_modrinth_mod_files,
+            get_curseforge_mod_by_project_id,
+            get_curseforge_mod_files_by_project_id,
+            get_modrinth_mod_files_by_project_id,
+            get_modrinth_project,
             download_mod_file,
             download_resource_file,
             cancel_mod_download,
@@ -336,6 +342,8 @@ pub fn run() {
             update_resources,
             search_curseforge_projects,
             search_modrinth_projects,
+            search_english_resources,
+            download_mcschematic_file,
             export_launch_report,
             get_modrinth_required_dependencies,
             get_curseforge_required_dependencies,
@@ -482,6 +490,7 @@ pub fn run() {
             let _ = &window;
 
             let _ = window.show();
+            launcher_restart_focus::schedule_raise_main_window_after_restart(window.clone());
 
             #[cfg(target_os = "macos")]
             unsafe {

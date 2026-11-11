@@ -22,6 +22,7 @@ function routeIdFromPathname(pathname: string): CoreRouteId | undefined {
   if (path === "/download/detail") return "core.download.detail";
   if (path === "/download") return "core.download";
   if (path === "/process-list") return "core.process-list";
+  if (path === "/multiplayer") return "core.multiplayer";
   if (path === "/tools") return "core.tools";
   if (path === "/settings" || path.startsWith("/settings/")) return "core.settings";
   if (path === "/game-settings") return "core.game-settings";

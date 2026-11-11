@@ -7,6 +7,7 @@ import {
   Wrench,
   Settings,
   Gamepad2,
+  Globe,
 } from "lucide-react"
 import Link from "next/link"
 import { usePathname, useRouter } from "next/navigation"
@@ -37,6 +38,8 @@ interface NavItem {
   icon: React.ReactNode
   label: string
   href: string
+  /** Active highlight prefix; defaults to `href`. */
+  matchHref?: string
   isAvatar?: boolean
 }
 
@@ -45,8 +48,15 @@ const NAV_ITEM_BASE: Omit<NavItem, "label">[] = [
   { id: "game-settings", icon: <Gamepad2 className="size-4" />, href: "/game-settings" },
   { id: "launch", icon: <Rocket className="size-4" />, href: "/launch" },
   { id: "download", icon: <Download className="size-4" />, href: "/download" },
+  { id: "multiplayer", icon: <Globe className="size-4" />, href: "/multiplayer" },
   { id: "tools", icon: <Wrench className="size-4" />, href: "/tools" },
-  { id: "settings", icon: <Settings className="size-4" />, href: "/settings/general" },
+  {
+    id: "settings",
+    icon: <Settings className="size-4" />,
+    href: "/settings/general",
+    // Keep highlight on /settings/download and /settings/appearance too.
+    matchHref: "/settings",
+  },
 ]
 
 const NAV_LABELS: Record<string, TranslationKey> = {
@@ -54,6 +64,7 @@ const NAV_LABELS: Record<string, TranslationKey> = {
   "game-settings": "sidebar.gameSettings",
   launch: "sidebar.launch",
   download: "sidebar.downloads",
+  multiplayer: "sidebar.multiplayer",
   tools: "sidebar.tools",
   settings: "sidebar.settings",
 }
@@ -87,6 +98,8 @@ function NavButton({ item, isActive, isExactActive }: { item: NavItem; isActive:
       <TooltipTrigger asChild>
         <Link
           href={item.href}
+          draggable={false}
+          onDragStart={(event) => event.preventDefault()}
           onClick={handleNavigation}
           suppressHydrationWarning
           aria-label={item.label}
@@ -150,9 +163,6 @@ export function Sidebar({ className }: SidebarProps) {
     label: NAV_LABELS[item.id] ? t(NAV_LABELS[item.id]) : item.id,
   }))
 
-  const isActive = (href: string) => isNavItemActive(pathname, href)
-  const isExactActive = (href: string) => isNavItemExactActive(pathname, href)
-
   // 根据配置过滤可见的导航项
   const visibleNavItems = configLoaded
     ? allNavItems.filter(item => {
@@ -179,7 +189,12 @@ export function Sidebar({ className }: SidebarProps) {
         <ThemeSlot registry={slots} owner={snapshot.activeOwner} slotId="app.sidebar.navigation" onError={reportThemeError}>
           <nav className="flex flex-1 flex-col items-center gap-2 p-2">
             {topNavItems.map((item) => (
-              <NavButton key={item.href} item={item} isActive={isActive(item.href)} isExactActive={isExactActive(item.href)} />
+              <NavButton
+                key={item.href}
+                item={item}
+                isActive={isNavItemActive(pathname, item.matchHref ?? item.href)}
+                isExactActive={isNavItemExactActive(pathname, item.href)}
+              />
             ))}
           </nav>
         </ThemeSlot>
@@ -189,7 +204,12 @@ export function Sidebar({ className }: SidebarProps) {
         <div className="flex shrink-0 flex-col items-center gap-2 border-t border-border p-2">
           <SidebarLaunchButton />
           {bottomNavItems.map((item) => (
-            <NavButton key={item.href} item={item} isActive={isActive(item.href)} isExactActive={isExactActive(item.href)} />
+            <NavButton
+              key={item.href}
+              item={item}
+              isActive={isNavItemActive(pathname, item.matchHref ?? item.href)}
+              isExactActive={isNavItemExactActive(pathname, item.href)}
+            />
           ))}
         </div>
       </ThemeSlot>

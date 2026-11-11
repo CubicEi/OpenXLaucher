@@ -11,6 +11,7 @@ use super::plan::{
     InstallPlan, LoaderSelection, VersionInstallPlanInput,
 };
 use super::restart;
+use crate::launcher_restart_focus;
 use super::session::{
     build_session, cancel_all_sessions_and_rollback, cancel_session_by_id, cancel_session_by_task_id,
     list_active_version_install_tasks, ActiveDownloadTaskDto, VersionInstallSessionStart,
@@ -56,6 +57,7 @@ pub fn restart_launcher_cmd(app: AppHandle) -> Result<(), String> {
     // Do not resume tasks after theme-color restart — cancel + roll back incomplete work.
     restart::clear_pending_restart_plans();
     cancel_all_sessions_and_rollback();
+    launcher_restart_focus::mark_focus_after_restart();
     app.restart();
     #[allow(unreachable_code)]
     Ok(())

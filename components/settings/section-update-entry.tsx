@@ -3,7 +3,8 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Package } from "lucide-react";
+import { invoke } from "@tauri-apps/api/core";
+import { Github, Package } from "lucide-react";
 import {
   createInAppLinkHandler,
   onInAppLinkPointerDown,
@@ -14,13 +15,27 @@ import { Button } from "@/components/ui/button";
 import { useI18n } from "@/components/i18n/use-i18n";
 
 const COPY = {
-  title: "settings.about.updates",
-  description: "settings.general.updateDescription",
+  title: "settings.about.title",
+  description: "settings.about.description",
   version: "settings.about.version",
   manage: "settings.general.manageUpdates",
+  author: "settings.about.author",
+  originalAuthor: "settings.about.originalAuthor",
+  openGithub: "settings.about.openGithub",
 } as const;
 
 const CHECK_UPDATE_HREF = "/check-update";
+const AUTHOR_GITHUB_URL = "https://github.com/CubicEi/OpenXLaucher";
+const ORIGINAL_AUTHOR_GITHUB_URL = "https://github.com/cqw-acq/RTLauncher_new";
+
+async function openExternalUrl(url: string) {
+  try {
+    await invoke("open_external", { url });
+  } catch (error) {
+    console.error("打开链接失败:", error);
+    window.open(url, "_blank", "noopener,noreferrer");
+  }
+}
 
 export function UpdateEntrySection() {
   const { t } = useI18n();
@@ -49,7 +64,39 @@ export function UpdateEntrySection() {
         </CardTitle>
         <CardDescription className="mt-1 text-xs">{t(COPY.description)}</CardDescription>
       </CardHeader>
-      <CardContent>
+      <CardContent className="space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border p-3">
+          <p className="text-sm text-muted-foreground">
+            {t(COPY.author)}{" "}
+            <span className="font-medium text-foreground">CubicEi</span>
+          </p>
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-8 gap-1.5"
+            onClick={() => void openExternalUrl(AUTHOR_GITHUB_URL)}
+          >
+            <Github className="size-3.5" />
+            {t(COPY.openGithub)}
+          </Button>
+        </div>
+
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border p-3">
+          <p className="text-sm text-muted-foreground">
+            {t(COPY.originalAuthor)}{" "}
+            <span className="font-medium text-foreground">cqw-acq</span>
+          </p>
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-8 gap-1.5"
+            onClick={() => void openExternalUrl(ORIGINAL_AUTHOR_GITHUB_URL)}
+          >
+            <Github className="size-3.5" />
+            {t(COPY.openGithub)}
+          </Button>
+        </div>
+
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border p-3">
           <p className="text-sm text-muted-foreground">
             {t(COPY.version)}{" "}

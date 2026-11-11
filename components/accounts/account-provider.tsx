@@ -161,13 +161,61 @@ export function AccountProvider({ children }: { children: React.ReactNode }) {
   );
   const [microsoftLaunchTokenError, setMicrosoftLaunchTokenError] = useState<string | null>(null);
 
+  /**
+   * 本进程会话内：刷新成功后的 Minecraft 令牌缓存。
+   * 启动器关闭前、且未过期时直接复用，避免每次启动都走静默刷新。
+   */
+  const msSessionTokenCacheRef = React.useRef<
+    Map<string, { accessToken: string; expiresAt: number }>
+  >(new Map());
+
+  /** 提前量：到期前 30 分钟视为需要刷新 */
+  const MS_TOKEN_EXPIRY_SKEW_MS = 30 * 60 * 1000;
+  /** 后端未返回 expires_in 时按 12h 计 */
+  const MS_TOKEN_DEFAULT_TTL_MS = 12 * 60 * 60 * 1000;
+
+  const rememberMsSessionToken = useCallback(
+    (uuid: string, accessToken: string, expiresInSec?: number | null) => {
+      const token = accessToken.trim();
+      const id = uuid.trim();
+      if (!id || !token) return;
+      const ttlMs =
+        typeof expiresInSec === "number" && expiresInSec > 0
+          ? expiresInSec * 1000
+          : MS_TOKEN_DEFAULT_TTL_MS;
+      msSessionTokenCacheRef.current.set(id, {
+        accessToken: token,
+        expiresAt: Date.now() + ttlMs,
+      });
+    },
+    [MS_TOKEN_DEFAULT_TTL_MS],
+  );
+
+  const getValidMsSessionToken = useCallback((uuid: string): string | null => {
+    const id = uuid.trim();
+    if (!id) return null;
+    const entry = msSessionTokenCacheRef.current.get(id);
+    if (!entry) return null;
+    if (Date.now() >= entry.expiresAt - MS_TOKEN_EXPIRY_SKEW_MS) {
+      msSessionTokenCacheRef.current.delete(id);
+      return null;
+    }
+    return entry.accessToken;
+  }, [MS_TOKEN_EXPIRY_SKEW_MS]);
+
   const applyMicrosoftRefresh = useCallback(
     async (
       pid: string,
       puuid: string,
       pName: string,
-      refreshed: { access_token: string; name?: string; variant?: string | null }
+      refreshed: {
+        access_token: string;
+        name?: string;
+        variant?: string | null;
+        expires_in?: number | null;
+      }
     ) => {
+      rememberMsSessionToken(puuid, refreshed.access_token, refreshed.expires_in);
       let avatarSrc: string | undefined;
       try {
         avatarSrc = (await getSkinBase64(puuid)) || undefined;
@@ -200,7 +248,7 @@ export function AccountProvider({ children }: { children: React.ReactNode }) {
           : current
       );
     },
-    []
+    [rememberMsSessionToken]
   );
 
   const runForcedMicrosoftRelogin = useCallback(
@@ -312,6 +360,7 @@ export function AccountProvider({ children }: { children: React.ReactNode }) {
                 skinUrl: avatarSrc ?? undefined,
                 variant: normalizeSkinVariant(info.variant),
               };
+              rememberMsSessionToken(info.uuid, info.access_token, info.expires_in);
               setProfiles((prev) => {
                 const filtered = prev.filter(
                   (p) => !(p.uuid === info.uuid && p.authType === "microsoft")
@@ -353,7 +402,7 @@ export function AccountProvider({ children }: { children: React.ReactNode }) {
         })();
       });
     },
-    [useSystemProxy]
+    [rememberMsSessionToken, useSystemProxy]
   );
 
   const prepareMicrosoftAccountForLaunch = useCallback(
@@ -364,6 +413,12 @@ export function AccountProvider({ children }: { children: React.ReactNode }) {
       }
 
       const puuid = profile.uuid;
+      // 本会话已成功刷新且仍在有效期内：直接使用，不再请求微软接口
+      const cached = getValidMsSessionToken(puuid);
+      if (cached) {
+        return { ok: true, accessToken: cached };
+      }
+
       // cancelMicrosoftLogin 会递增该计数；停止准备后静默刷新即使超时也不应再弹强制登录
       const cancelEpoch = msLoginVersionRef.current;
       const wasCancelled = () => msLoginVersionRef.current !== cancelEpoch;
@@ -439,7 +494,7 @@ export function AccountProvider({ children }: { children: React.ReactNode }) {
       }
       return { ok: false, reason: "cancelled" };
     },
-    [applyMicrosoftRefresh, runForcedMicrosoftRelogin]
+    [applyMicrosoftRefresh, getValidMsSessionToken, runForcedMicrosoftRelogin]
   );
 
   // 客户端挂载后从 localStorage 恢复数据，避免 SSR hydration 不匹配
@@ -879,6 +934,7 @@ export function AccountProvider({ children }: { children: React.ReactNode }) {
             skinUrl: avatarSrc ?? undefined,
             variant: normalizeSkinVariant(info.variant),
           };
+          rememberMsSessionToken(info.uuid, info.access_token, info.expires_in);
           setProfiles((prev) => {
             const filtered = prev.filter(
               (p) => !(p.uuid === info.uuid && p.authType === "microsoft")
@@ -912,7 +968,7 @@ export function AccountProvider({ children }: { children: React.ReactNode }) {
       setLoginState("error");
       throw e;
     }
-  }, []);
+  }, [rememberMsSessionToken]);
 
   // ---- 取消微软正版登录（用户关闭对话框时调用）----
   const cancelMicrosoftLogin = useCallback(() => {

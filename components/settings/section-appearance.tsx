@@ -13,7 +13,15 @@ import {
   type ThemeMode,
   type HomeMode,
   type ThemeColor,
+  type BackgroundConfig,
+  persistLauncherBackground,
 } from "@/components/settings/settings-provider";
+import {
+  backgroundHasImageFlag,
+  draftBackgroundDiffersFromSaved,
+  getSessionBackground,
+  savedBackgroundNeedsRestart,
+} from "@/lib/appearance-background-session";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
@@ -33,8 +41,10 @@ import { invoke } from "@tauri-apps/api/core";
 import { cn } from "@/lib/utils";
 import { useI18n } from "@/components/i18n/use-i18n";
 import { ThemeSwitcher } from "@/components/settings/theme-switcher";
+import { ThemeColorPickerDialog } from "@/components/settings/theme-color-picker-dialog";
 import { useDownloadManager } from "@/components/download/download-provider";
 import { getSessionThemeColor } from "@/lib/appearance-palette";
+import { themeColorToHex } from "@/lib/theme-color-utils";
 
 // ============================================================
 // 主题模式（浅色 / 深色 / 跟随系统）
@@ -80,159 +90,6 @@ function ThemeModeRow({
 }
 
 // ============================================================
-// 主题色：简约自定义调色盘
-// ============================================================
-function ThemeColorRow({
-  savedValue,
-  onApply,
-}: {
-  /** Persisted theme color (may differ from session-active until restart). */
-  savedValue: ThemeColor;
-  onApply: (v: ThemeColor) => void;
-}) {
-  const { t } = useI18n();
-  const { tasks, cancelDownload } = useDownloadManager();
-  const sessionActive = getSessionThemeColor();
-  const [draft, setDraft] = useState<ThemeColor>(savedValue);
-  const [restartOpen, setRestartOpen] = useState(false);
-  const [restarting, setRestarting] = useState(false);
-
-  useEffect(() => {
-    setDraft(savedValue);
-  }, [savedValue]);
-
-  const previewColor =
-    draft === "default" ? "#1f1f1f" : oklchToHex(draft) ?? "#1f1f1f";
-  const canApply = draft !== savedValue && !restarting;
-  const pendingRestart = savedValue !== sessionActive;
-
-  const onCustomColor = (hex: string) => {
-    const oklch = hexToOklch(hex);
-    if (oklch) setDraft(oklch);
-  };
-
-  /** Open confirm only — do not persist yet so Cancel keeps pre-apply draft. */
-  const handleApply = () => {
-    setRestartOpen(true);
-  };
-
-  const handleCancelRestart = () => {
-    setRestartOpen(false);
-    // Draft stays as chosen before Apply; settings were not saved.
-  };
-
-  const handleConfirmRestart = async () => {
-    if (restarting) return;
-    setRestarting(true);
-    try {
-      onApply(draft);
-      const activeIds = [
-        ...new Set(
-          tasks
-            .filter((task) => task.status === "downloading" || task.status === "queued")
-            .map((task) => task.taskId),
-        ),
-      ];
-      await Promise.allSettled(activeIds.map((id) => cancelDownload(id)));
-      await invoke("restart_launcher_cmd");
-    } catch (e) {
-      console.error("重启启动器失败:", e);
-      setRestarting(false);
-      setRestartOpen(false);
-    }
-  };
-
-  return (
-    <div className="space-y-2.5">
-      <div className="flex items-center justify-between gap-2">
-        <Label className="font-medium text-sm">{t("settings.appearance.themeColor")}</Label>
-        <Button
-          type="button"
-          size="sm"
-          className="h-7 px-2.5 text-xs shrink-0"
-          disabled={!canApply}
-          onClick={handleApply}
-        >
-          {t("settings.appearance.applyThemeColor")}
-        </Button>
-      </div>
-
-      <div className="flex items-center gap-3 rounded-lg border border-border bg-card p-2.5">
-        <label className="relative shrink-0 cursor-pointer">
-          <input
-            type="color"
-            value={previewColor}
-            onChange={(e) => onCustomColor(e.target.value)}
-            className="h-8 w-8 cursor-pointer appearance-none rounded-md border border-border bg-transparent p-0"
-          />
-        </label>
-
-        <div
-          className="h-2 flex-1 rounded-full"
-          style={{ backgroundColor: previewColor }}
-        />
-
-        <span className="shrink-0 font-mono text-xs text-muted-foreground">
-          {previewColor.toUpperCase()}
-        </span>
-
-        {draft !== "default" && (
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            onClick={() => setDraft("default")}
-            className="h-7 px-2 text-xs shrink-0"
-          >
-            {t("settings.appearance.reset")}
-          </Button>
-        )}
-      </div>
-
-      <p className="text-[11px] text-muted-foreground">
-        {pendingRestart
-          ? t("settings.appearance.themeColorRestartDescription")
-          : t("settings.appearance.themeColorApplyHint")}
-      </p>
-
-      <AlertDialog
-        open={restartOpen}
-        onOpenChange={(open) => {
-          if (restarting) return;
-          if (!open) handleCancelRestart();
-          else setRestartOpen(true);
-        }}
-      >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>
-              {t("settings.appearance.themeColorRestartTitle")}
-            </AlertDialogTitle>
-            <AlertDialogDescription>
-              {t("settings.appearance.themeColorRestartDescription")}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={restarting} onClick={handleCancelRestart}>
-              {t("common.cancel")}
-            </AlertDialogCancel>
-            <AlertDialogAction
-              disabled={restarting}
-              onClick={(e) => {
-                e.preventDefault();
-                void handleConfirmRestart();
-              }}
-            >
-              {t("settings.appearance.themeColorRestartConfirm")}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-    </div>
-  );
-}
-
-// ============================================================
 // 字体大小：滑块（1~30 px，整数）
 // ============================================================
 function FontSizeRow({
@@ -271,47 +128,188 @@ function FontSizeRow({
 }
 
 // ============================================================
-// 背景图片：上传 + 不透明度 + 模糊（高斯）
+// 主题色 + 页面背景（会话锁定，共用一个「应用」与重启）
 // ============================================================
-function BackgroundRow({
-  value,
-  onChange,
+function SessionAppearanceRow({
+  savedThemeColor,
+  savedBackground,
+  onApply,
+  buildPersistedSettings,
 }: {
-  value: { imageDataUrl?: string; opacity: number; blur: number };
-  onChange: (v: { imageDataUrl?: string; opacity: number; blur: number }) => void;
+  savedThemeColor: ThemeColor;
+  savedBackground: BackgroundConfig;
+  onApply: (patch: { themeColor: ThemeColor; background: BackgroundConfig }) => void;
+  buildPersistedSettings: (patch: {
+    themeColor: ThemeColor;
+    background: BackgroundConfig;
+  }) => Parameters<typeof persistLauncherBackground>[0];
 }) {
   const { t } = useI18n();
+  const { tasks, cancelDownload } = useDownloadManager();
   const fileRef = useRef<HTMLInputElement>(null);
-  const hasImage = !!value.imageDataUrl;
+  const sessionThemeColor = getSessionThemeColor();
 
-  const handleFile = (f: File) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      onChange({ ...value, imageDataUrl: reader.result as string });
-    };
-    reader.readAsDataURL(f);
+  const [themeDraft, setThemeDraft] = useState<ThemeColor>(savedThemeColor);
+  const [backgroundDraft, setBackgroundDraft] = useState<BackgroundConfig>(savedBackground);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [restartOpen, setRestartOpen] = useState(false);
+  const [restarting, setRestarting] = useState(false);
+
+  useEffect(() => {
+    setThemeDraft(savedThemeColor);
+  }, [savedThemeColor]);
+
+  useEffect(() => {
+    setBackgroundDraft({
+      opacity: savedBackground.opacity,
+      blur: savedBackground.blur,
+      hasStoredImage: savedBackground.hasStoredImage,
+      imageObjectUrl: savedBackground.imageObjectUrl,
+      imageBlob: savedBackground.imageBlob,
+    });
+  }, [savedBackground]);
+
+  const previewColor = themeColorToHex(themeDraft);
+  const sessionBgUrl = getSessionBackground().imageObjectUrl;
+  const previewImageUrl = backgroundDraft.imageObjectUrl ?? sessionBgUrl;
+  const hasImage = backgroundHasImageFlag(backgroundDraft) || !!sessionBgUrl;
+  const themeDirty = themeDraft !== savedThemeColor;
+  const backgroundDirty = draftBackgroundDiffersFromSaved(backgroundDraft, savedBackground);
+  const canApply = (themeDirty || backgroundDirty) && !restarting;
+  const pendingRestart =
+    savedThemeColor !== sessionThemeColor || savedBackgroundNeedsRestart(savedBackground);
+
+  const patchBackground = (next: BackgroundConfig) => {
+    setBackgroundDraft(next);
   };
 
-  const opacityPct = Math.round(value.opacity * 100);
-  const blurInt = Math.round(value.blur);
+  const handleFile = (f: File) => {
+    if (
+      backgroundDraft.imageObjectUrl?.startsWith("blob:") &&
+      backgroundDraft.imageObjectUrl !== savedBackground.imageObjectUrl
+    ) {
+      URL.revokeObjectURL(backgroundDraft.imageObjectUrl);
+    }
+    const imageObjectUrl = URL.createObjectURL(f);
+    patchBackground({
+      opacity: backgroundDraft.opacity,
+      blur: backgroundDraft.blur,
+      imageObjectUrl,
+      imageBlob: f,
+      hasStoredImage: true,
+    });
+  };
+
+  const handleConfirmRestart = async () => {
+    if (restarting) return;
+    setRestarting(true);
+    try {
+      const patch = { themeColor: themeDraft, background: backgroundDraft };
+      await persistLauncherBackground(buildPersistedSettings(patch));
+      onApply(patch);
+      const activeIds = [
+        ...new Set(
+          tasks
+            .filter((task) => task.status === "downloading" || task.status === "queued")
+            .map((task) => task.taskId),
+        ),
+      ];
+      await Promise.allSettled(activeIds.map((id) => cancelDownload(id)));
+      await invoke("restart_launcher_cmd");
+    } catch (e) {
+      console.error("重启启动器失败:", e);
+      setRestarting(false);
+      setRestartOpen(false);
+    }
+  };
+
+  const opacityPct = Math.round(backgroundDraft.opacity * 100);
+  const blurInt = Math.round(backgroundDraft.blur);
 
   return (
-    <div className="space-y-2.5">
-      <div className="flex items-center justify-between">
-        <Label className="font-medium text-sm">{t("settings.appearance.pageBackground")}</Label>
-        {hasImage && (
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            onClick={() => onChange({ ...value, imageDataUrl: undefined })}
-            className="h-7 px-2 text-xs gap-1"
-          >
-            <X className="size-3" />
-            {t("settings.appearance.remove")}
-          </Button>
-        )}
+    <div className="space-y-4">
+      <div className="flex items-start justify-between gap-2">
+        <Label className="font-medium text-sm">{t("settings.appearance.themeColorAndPageBackground")}</Label>
+        <Button
+          type="button"
+          size="sm"
+          className="h-7 shrink-0 px-2.5 text-xs"
+          disabled={!canApply}
+          onClick={() => setRestartOpen(true)}
+        >
+          {t("settings.appearance.applyAppearanceSession")}
+        </Button>
       </div>
+
+      <div className="space-y-2.5">
+        <Label className="text-xs text-muted-foreground">{t("settings.appearance.themeColor")}</Label>
+        <button
+          type="button"
+          onClick={() => setPickerOpen(true)}
+          className="flex w-full items-center gap-3 rounded-lg border border-border bg-card p-2.5 text-left transition-colors hover:border-primary/40 hover:bg-muted/30"
+        >
+          <span
+            className="size-9 shrink-0 rounded-md border border-border shadow-sm"
+            style={{
+              backgroundColor: previewColor,
+              ...(themeDraft === "default"
+                ? {
+                    background: "linear-gradient(135deg, #f5f5f4 50%, #292524 50%)",
+                  }
+                : {}),
+            }}
+          />
+          <div className="min-w-0 flex-1">
+            <p className="text-sm font-medium">{t("settings.appearance.themeColor")}</p>
+            <p className="truncate font-mono text-xs text-muted-foreground">
+              {themeDraft === "default" ? "default" : previewColor.toUpperCase()}
+            </p>
+          </div>
+          <span className="shrink-0 text-xs text-primary">
+            {t("settings.appearance.chooseThemeColor")}
+          </span>
+        </button>
+      </div>
+
+      <ThemeColorPickerDialog
+        open={pickerOpen}
+        onOpenChange={setPickerOpen}
+        value={themeDraft}
+        onConfirm={setThemeDraft}
+      />
+
+      <div className="h-px bg-border" />
+
+      <div className="space-y-2.5">
+        <div className="flex items-center justify-between gap-2">
+          <Label className="text-xs text-muted-foreground">{t("settings.appearance.pageBackground")}</Label>
+          {hasImage && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={() => {
+                if (
+                  backgroundDraft.imageObjectUrl?.startsWith("blob:") &&
+                  backgroundDraft.imageObjectUrl !== savedBackground.imageObjectUrl
+                ) {
+                  URL.revokeObjectURL(backgroundDraft.imageObjectUrl);
+                }
+                patchBackground({
+                  opacity: backgroundDraft.opacity,
+                  blur: backgroundDraft.blur,
+                  hasStoredImage: false,
+                  imageObjectUrl: undefined,
+                  imageBlob: undefined,
+                });
+              }}
+              className="h-7 gap-1 px-2 text-xs"
+            >
+              <X className="size-3" />
+              {t("settings.appearance.remove")}
+            </Button>
+          )}
+        </div>
 
       {/* 上传区 / 图片预览 —— 更紧凑的高度 */}
       <div
@@ -325,11 +323,13 @@ function BackgroundRow({
             <div
               className="absolute inset-0"
               style={{
-                backgroundImage: `url(${value.imageDataUrl})`,
+                backgroundImage: previewImageUrl
+                  ? `url(${JSON.stringify(previewImageUrl)})`
+                  : undefined,
                 backgroundSize: "cover",
                 backgroundPosition: "center",
-                filter: `blur(${value.blur}px)`,
-                opacity: value.opacity,
+                filter: `blur(${backgroundDraft.blur}px)`,
+                opacity: backgroundDraft.opacity,
                 transform: "scale(1.08)",
               }}
             />
@@ -373,7 +373,9 @@ function BackgroundRow({
           step={1}
           value={opacityPct}
           disabled={!hasImage}
-          onChange={(e) => onChange({ ...value, opacity: parseInt(e.target.value, 10) / 100 })}
+          onChange={(e) =>
+            patchBackground({ ...backgroundDraft, opacity: parseInt(e.target.value, 10) / 100 })
+          }
           className="accent-primary h-1.5 w-full cursor-pointer appearance-none rounded-full bg-muted disabled:cursor-not-allowed"
         />
       </div>
@@ -391,16 +393,54 @@ function BackgroundRow({
           step={1}
           value={blurInt}
           disabled={!hasImage}
-          onChange={(e) => onChange({ ...value, blur: parseInt(e.target.value, 10) })}
+          onChange={(e) =>
+            patchBackground({ ...backgroundDraft, blur: parseInt(e.target.value, 10) })
+          }
           className="accent-primary h-1.5 w-full cursor-pointer appearance-none rounded-full bg-muted disabled:cursor-not-allowed"
         />
       </div>
+      </div>
+
+      <p className="text-[11px] text-muted-foreground">
+        {pendingRestart
+          ? t("settings.appearance.appearanceSessionRestartPending")
+          : t("settings.appearance.appearanceSessionApplyHint")}
+      </p>
+
+      <AlertDialog
+        open={restartOpen}
+        onOpenChange={(open) => {
+          if (restarting) return;
+          setRestartOpen(open);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t("settings.appearance.appearanceSessionRestartTitle")}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {t("settings.appearance.appearanceSessionRestartDescription")}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={restarting}>{t("common.cancel")}</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={restarting}
+              onClick={(e) => {
+                e.preventDefault();
+                void handleConfirmRestart();
+              }}
+            >
+              {t("settings.appearance.appearanceSessionRestartConfirm")}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
 
 // ============================================================
-// 主页模式（Simple / Full）
+// 主页模式（简约 simple / 经典 full）
 // ============================================================
 function HomeModeRow({
   value,
@@ -482,13 +522,6 @@ export function AppearanceSection() {
 
         <div className="h-px bg-border" />
 
-        <ThemeColorRow
-          savedValue={appearance.themeColor}
-          onApply={(v) => update("appearance", { themeColor: v })}
-        />
-
-        <div className="h-px bg-border" />
-
         <FontSizeRow
           value={appearance.fontSize}
           onChange={(v) => update("appearance", { fontSize: v })}
@@ -503,94 +536,18 @@ export function AppearanceSection() {
 
         <div className="h-px bg-border" />
 
-        <BackgroundRow
-          value={appearance.background}
-          onChange={(v) => update("appearance", { background: v })}
+        <SessionAppearanceRow
+          savedThemeColor={appearance.themeColor}
+          savedBackground={appearance.background}
+          onApply={({ themeColor, background }) =>
+            update("appearance", { themeColor, background })
+          }
+          buildPersistedSettings={({ themeColor, background }) => ({
+            ...settings,
+            appearance: { ...settings.appearance, themeColor, background },
+          })}
         />
       </CardContent>
     </Card>
   );
-}
-
-// ============================================================
-// 颜色转换工具：oklch <-> hex
-// （简化实现，满足主题色 picker 的显示需求）
-// ============================================================
-function oklchToHex(oklchStr: string): string | null {
-  const m = oklchStr.match(/oklch\(\s*([\d.]+)\s+([\d.]+)\s+([\d.]+)/);
-  if (!m) return null;
-  const l = parseFloat(m[1]); // 0 ~ 1
-  const c = parseFloat(m[2]); // 0 ~ ~0.37
-  const h = parseFloat(m[3]); // 0 ~ 360
-
-  // OKLCH -> OKLAB
-  const hRad = (h * Math.PI) / 180;
-  const a = c * Math.cos(hRad);
-  const b = c * Math.sin(hRad);
-
-  // OKLAB -> Linear sRGB (approximate)
-  const l_ = l + 0.3963377774 * a + 0.2158037573 * b;
-  const m_ = l - 0.1055613458 * a - 0.0638541728 * b;
-  const s_ = l - 0.0894841775 * a - 1.291485548 * b;
-
-  const L = l_ * l_ * l_;
-  const M = m_ * m_ * m_;
-  const S = s_ * s_ * s_;
-
-  const rLinear = +4.0767416621 * L - 3.3077115913 * M + 0.2309699292 * S;
-  const gLinear = -1.2684380046 * L + 2.6097574011 * M - 0.3413193965 * S;
-  const bLinear = -0.0041960863 * L - 0.7034186147 * M + 1.707614701 * S;
-
-  // Linear sRGB -> sRGB (gamma)
-  const toSrgb = (v: number) => {
-    const abs = Math.abs(v);
-    if (abs <= 0.0031308) return v * 12.92;
-    return 1.055 * Math.sign(v) * Math.pow(abs, 1 / 2.4) - 0.055;
-  };
-
-  const r = Math.max(0, Math.min(1, toSrgb(rLinear)));
-  const g = Math.max(0, Math.min(1, toSrgb(gLinear)));
-  const bCh = Math.max(0, Math.min(1, toSrgb(bLinear)));
-
-  const toHex = (v: number) =>
-    Math.round(v * 255)
-      .toString(16)
-      .padStart(2, "0");
-
-  return `#${toHex(r)}${toHex(g)}${toHex(bCh)}`;
-}
-
-function hexToOklch(hex: string): string | null {
-  const m = hex.match(/^#?([\da-f]{6})$/i);
-  if (!m) return null;
-  const r = parseInt(m[1].slice(0, 2), 16) / 255;
-  const g = parseInt(m[1].slice(2, 4), 16) / 255;
-  const b = parseInt(m[1].slice(4, 6), 16) / 255;
-
-  // sRGB -> Linear sRGB
-  const toLin = (v: number) => (v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4));
-  const rLin = toLin(r);
-  const gLin = toLin(g);
-  const bLin = toLin(b);
-
-  // Linear sRGB -> OKLAB
-  const L = 0.4122214708 * rLin + 0.5363325363 * gLin + 0.0514459929 * bLin;
-  const M = 0.2119034982 * rLin + 0.6806995451 * gLin + 0.1073969566 * bLin;
-  const S = 0.0883024619 * rLin + 0.2817188376 * gLin + 0.6299787005 * bLin;
-
-  const l_ = Math.cbrt(L);
-  const m_ = Math.cbrt(M);
-  const s_ = Math.cbrt(S);
-
-  const l = 0.2104542553 * l_ + 0.793617785 * m_ - 0.0040720468 * s_;
-  const a = 1.9779984951 * l_ - 2.428592205 * m_ + 0.4505937099 * s_;
-  const b2 = 0.0259040371 * l_ + 0.7827717662 * m_ - 0.808675766 * s_;
-
-  // OKLAB -> OKLCH
-  const c = Math.sqrt(a * a + b2 * b2);
-  let hDeg = (Math.atan2(b2, a) * 180) / Math.PI;
-  if (hDeg < 0) hDeg += 360;
-  if (c < 0.0001) hDeg = 0;
-
-  return `oklch(${l.toFixed(4)} ${c.toFixed(4)} ${hDeg.toFixed(2)})`;
 }
