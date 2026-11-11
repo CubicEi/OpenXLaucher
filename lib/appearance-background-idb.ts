@@ -113,6 +113,8 @@ export type HydratedBackgroundConfig = {
   imageBlob?: Blob;
   /** @deprecated 仅从旧版 localStorage 读取时短暂存在 */
   imageDataUrl?: string;
+  /** 同步首帧预览，保留在 localStorage */
+  bootstrapDataUrl?: string;
   hasStoredImage?: boolean;
   opacity: number;
   blur: number;
@@ -145,6 +147,7 @@ export async function hydrateBackgroundConfig(
         hasStoredImage: true,
         imageObjectUrl,
         imageBlob: blob,
+        bootstrapDataUrl: bg.bootstrapDataUrl,
       };
     } catch (e) {
       console.warn("[settings] 迁移背景图到 IndexedDB 失败", e);
@@ -162,6 +165,7 @@ export async function hydrateBackgroundConfig(
         hasStoredImage: true,
         imageObjectUrl,
         imageBlob: blob,
+        bootstrapDataUrl: bg.bootstrapDataUrl,
       };
     }
     return {
@@ -178,6 +182,7 @@ export async function hydrateBackgroundConfig(
       hasStoredImage: true,
       imageObjectUrl: bg.imageObjectUrl,
       imageBlob: bg.imageBlob,
+      bootstrapDataUrl: bg.bootstrapDataUrl,
     };
   }
 

@@ -17,6 +17,12 @@ let sessionBackground: SessionBackground = { ...DEFAULT_SESSION };
 let sessionBackgroundLocked = false;
 
 /** 从 `url("...")` / `url('...')` 解析出 URL 字符串 */
+function readAppBgUrlFromDom(root: HTMLElement): string | undefined {
+  const inline = parseAppBgCssUrl(root.style.getPropertyValue("--app-bg"));
+  if (inline) return inline;
+  return parseAppBgCssUrl(getComputedStyle(root).getPropertyValue("--app-bg"));
+}
+
 export function parseAppBgCssUrl(raw: string): string | undefined {
   const trimmed = raw.trim();
   if (!trimmed || trimmed === "none") return undefined;
@@ -47,23 +53,69 @@ export function lockSessionBackground(config: SessionBackground): void {
   markSessionBackgroundLocked();
 }
 
-export function applySessionBackgroundToDom(): void {
-  if (typeof document === "undefined") return;
+function isAppBgActive(root: HTMLElement, body: HTMLElement | null): boolean {
+  return (
+    root.getAttribute("data-app-bg") === "active" ||
+    body?.getAttribute("data-app-bg") === "active"
+  );
+}
+
+function setAppBgActive(root: HTMLElement, body: HTMLElement | null, active: boolean): void {
+  if (active) {
+    root.setAttribute("data-app-bg", "active");
+    body?.setAttribute("data-app-bg", "active");
+  } else {
+    root.removeAttribute("data-app-bg");
+    body?.removeAttribute("data-app-bg");
+  }
+}
+
+export function sessionDomMatches(config: SessionBackground): boolean {
+  if (typeof document === "undefined") return true;
   const root = document.documentElement;
   const body = document.body;
-  const bg = sessionBackground;
+  const url = readAppBgUrlFromDom(root);
+  const hasImage = !!config.imageObjectUrl && config.imageObjectUrl.length > 0;
+  if (hasImage) {
+    if (url !== config.imageObjectUrl) return false;
+    if (!isAppBgActive(root, body)) return false;
+    const opacityRaw = root.style.getPropertyValue("--app-bg-opacity");
+    const opacity = opacityRaw ? parseFloat(opacityRaw) : NaN;
+    if (!Number.isFinite(opacity) || Math.abs(opacity - config.opacity) > 0.01) return false;
+    const blurMatch = root.style.getPropertyValue("--app-bg-blur").match(/([\d.]+)/);
+    const blur = blurMatch ? parseInt(blurMatch[1], 10) : NaN;
+    if (!Number.isFinite(blur) || blur !== Math.round(config.blur)) return false;
+    return true;
+  }
+  return !url && !isAppBgActive(root, body);
+}
+
+export function applySessionBackgroundToDom(config?: SessionBackground): void {
+  if (typeof document === "undefined") return;
+  const bg = config ?? sessionBackground;
+  const root = document.documentElement;
+  const body = document.body;
   const hasImage = !!bg.imageObjectUrl && bg.imageObjectUrl.length > 0;
 
   if (hasImage) {
     root.style.setProperty("--app-bg", `url(${JSON.stringify(bg.imageObjectUrl)})`);
     root.style.setProperty("--app-bg-opacity", bg.opacity.toFixed(2));
     root.style.setProperty("--app-bg-blur", `${Math.round(bg.blur)}px`);
-    body.setAttribute("data-app-bg", "active");
+    setAppBgActive(root, body, true);
   } else {
     root.style.setProperty("--app-bg", "none");
-    body.removeAttribute("data-app-bg");
+    setAppBgActive(root, body, false);
   }
   root.setAttribute("data-session-background", hasImage ? "active" : "none");
+}
+
+/** 仅在 DOM 与目标不一致时写入，避免重复触发 background-image 过渡 */
+export function applySessionBackgroundToDomIfNeeded(config: SessionBackground): void {
+  if (sessionDomMatches(config)) {
+    markSessionBackgroundLocked();
+    return;
+  }
+  applySessionBackgroundToDom(config);
 }
 
 export function markSessionBackgroundLocked(): void {
@@ -80,7 +132,7 @@ export function captureSessionBackgroundFromDom(
   fallback: BackgroundConfig,
 ): SessionBackground {
   const root = document.documentElement;
-  const fromCss = parseAppBgCssUrl(getComputedStyle(root).getPropertyValue("--app-bg"));
+  const fromCss = readAppBgUrlFromDom(root);
   const opacityRaw = root.style.getPropertyValue("--app-bg-opacity");
   const blurRaw = root.style.getPropertyValue("--app-bg-blur");
   const opacity = opacityRaw ? parseFloat(opacityRaw) : fallback.opacity;

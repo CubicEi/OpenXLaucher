@@ -3,9 +3,6 @@
 import { useCallback, useEffect, useState, useSyncExternalStore } from 'react'
 import { Copy, Cpu, Maximize2, Minus, X } from 'lucide-react'
 import { usePathname, useRouter } from 'next/navigation'
-
-import { useTheme } from 'next-themes'
-
 import { ModeToggle } from '@/components/mode-toggle'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
@@ -40,28 +37,31 @@ interface WindowButtonProps {
 const TITLEBAR_ICON_LIGHT = '/icon/icon_black.svg'
 const TITLEBAR_ICON_DARK = '/icon/icon_white.svg'
 
+// Light/dark is chosen by the `.dark` class on <html> (set by the head bootstrap),
+// not by next-themes, which can disagree with the launcher's own theme mode.
 function AppLogo({ className }: { className?: string }) {
-  const { resolvedTheme } = useTheme()
-  const mounted = useSyncExternalStore(
-    subscribeToNothing,
-    () => true,
-    () => false
-  )
-  const src =
-    mounted && resolvedTheme === 'dark'
-      ? TITLEBAR_ICON_DARK
-      : TITLEBAR_ICON_LIGHT
-
+  const imgClass = cn('h-5 w-5 shrink-0 object-contain', className)
   return (
-    // eslint-disable-next-line @next/next/no-img-element -- theme-specific SVG assets
-    <img
-      src={src}
-      alt=''
-      width={20}
-      height={20}
-      className={cn('h-5 w-5 shrink-0 object-contain', className)}
-      draggable={false}
-    />
+    <>
+      {/* eslint-disable-next-line @next/next/no-img-element -- theme-specific SVG assets */}
+      <img
+        src={TITLEBAR_ICON_LIGHT}
+        alt=''
+        width={20}
+        height={20}
+        className={cn(imgClass, 'dark:hidden')}
+        draggable={false}
+      />
+      {/* eslint-disable-next-line @next/next/no-img-element -- theme-specific SVG assets */}
+      <img
+        src={TITLEBAR_ICON_DARK}
+        alt=''
+        width={20}
+        height={20}
+        className={cn(imgClass, 'hidden dark:block')}
+        draggable={false}
+      />
+    </>
   )
 }
 

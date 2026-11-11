@@ -17,7 +17,9 @@ import {
   persistLauncherBackground,
 } from "@/components/settings/settings-provider";
 import {
+  backgroundHasImageFlag,
   draftBackgroundDiffersFromSaved,
+  getSessionBackground,
   savedBackgroundNeedsRestart,
 } from "@/lib/appearance-background-session";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -168,7 +170,9 @@ function SessionAppearanceRow({
   }, [savedBackground]);
 
   const previewColor = themeColorToHex(themeDraft);
-  const hasImage = !!backgroundDraft.imageObjectUrl;
+  const sessionBgUrl = getSessionBackground().imageObjectUrl;
+  const previewImageUrl = backgroundDraft.imageObjectUrl ?? sessionBgUrl;
+  const hasImage = backgroundHasImageFlag(backgroundDraft) || !!sessionBgUrl;
   const themeDirty = themeDraft !== savedThemeColor;
   const backgroundDirty = draftBackgroundDiffersFromSaved(backgroundDraft, savedBackground);
   const canApply = (themeDirty || backgroundDirty) && !restarting;
@@ -319,7 +323,9 @@ function SessionAppearanceRow({
             <div
               className="absolute inset-0"
               style={{
-                backgroundImage: `url(${backgroundDraft.imageObjectUrl})`,
+                backgroundImage: previewImageUrl
+                  ? `url(${JSON.stringify(previewImageUrl)})`
+                  : undefined,
                 backgroundSize: "cover",
                 backgroundPosition: "center",
                 filter: `blur(${backgroundDraft.blur}px)`,

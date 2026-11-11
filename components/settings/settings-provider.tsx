@@ -14,7 +14,8 @@ import {
   revokeBackgroundObjectUrl,
 } from "@/lib/appearance-background-idb";
 import {
-  applySessionBackgroundToDom,
+  applySessionBackgroundToDomIfNeeded,
+  backgroundHasImageFlag,
   captureSessionBackgroundFromDom,
   lockSessionBackground,
 } from "@/lib/appearance-background-session";
@@ -36,6 +37,11 @@ export interface BackgroundConfig {
   imageBlob?: Blob;
   /** @deprecated 旧版 localStorage 内联数据，加载后会迁移 */
   imageDataUrl?: string;
+  /**
+   * 压缩 JPEG data URL，仅写入 localStorage，供硬刷新首帧同步绘制。
+   * 完整原图仍在 IndexedDB。
+   */
+  bootstrapDataUrl?: string;
   /** 图片本体在 IndexedDB；localStorage 只存 opacity/blur 与此标记 */
   hasStoredImage?: boolean;
   opacity: number; // 0 ~ 1（精确到 0.01）
@@ -334,16 +340,96 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
   React.useEffect(() => {
     if (!ready) return;
     const hydrated = settings.appearance.background;
-    const captured = captureSessionBackgroundFromDom(hydrated);
+    const hydratedUrl = hydrated.imageObjectUrl;
+    let captured = captureSessionBackgroundFromDom(hydrated);
+    if (!captured.imageObjectUrl && backgroundHasImageFlag(hydrated) && hydratedUrl) {
+      captured = {
+        ...captured,
+        imageObjectUrl: hydratedUrl,
+      };
+    }
+    // 同步首帧可能是压缩 data URL：锁定前升级为 IndexedDB 原图 blob，减轻色差
     if (
-      hydrated.imageObjectUrl &&
+      hydratedUrl?.startsWith("blob:") &&
       captured.imageObjectUrl &&
-      hydrated.imageObjectUrl !== captured.imageObjectUrl
+      (captured.imageObjectUrl.startsWith("data:") ||
+        captured.imageObjectUrl !== hydratedUrl)
     ) {
-      revokeBackgroundObjectUrl(hydrated.imageObjectUrl);
+      captured = {
+        ...captured,
+        imageObjectUrl: hydratedUrl,
+      };
     }
     lockSessionBackground(captured);
-    applySessionBackgroundToDom();
+    applySessionBackgroundToDomIfNeeded(captured);
+
+    const previewUrl = captured.imageObjectUrl;
+    const bg = settings.appearance.background;
+    const needsPreviewSync =
+      bg.imageObjectUrl !== previewUrl ||
+      Math.abs(bg.opacity - captured.opacity) > 0.005 ||
+      Math.round(bg.blur) !== Math.round(captured.blur);
+    if (needsPreviewSync) {
+      setSettings((prev) => ({
+        ...prev,
+        appearance: {
+          ...prev.appearance,
+          background: {
+            ...prev.appearance.background,
+            imageObjectUrl: previewUrl,
+            opacity: captured.opacity,
+            blur: captured.blur,
+            hasStoredImage: backgroundHasImageFlag({
+              ...prev.appearance.background,
+              imageObjectUrl: previewUrl,
+            }),
+          },
+        },
+      }));
+    }
+    // 仅撤销未被会话采用的多余 blob；会话 URL 本身勿 revoke
+    if (
+      hydratedUrl &&
+      previewUrl &&
+      hydratedUrl !== previewUrl &&
+      hydratedUrl.startsWith("blob:") &&
+      previewUrl.startsWith("blob:")
+    ) {
+      queueMicrotask(() => revokeBackgroundObjectUrl(hydratedUrl));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ready]);
+
+  // 旧背景缺少同步首帧预览时补写，减轻之后硬刷新闪成无背景
+  React.useEffect(() => {
+    if (!ready) return;
+    const bg = settings.appearance.background;
+    if (!backgroundHasImageFlag(bg) || bg.bootstrapDataUrl || !bg.imageBlob) return;
+    let cancelled = false;
+    void import("@/lib/appearance-background-bootstrap-preview")
+      .then(({ createBootstrapBackgroundDataUrl }) =>
+        createBootstrapBackgroundDataUrl(bg.imageBlob!),
+      )
+      .then((bootstrapDataUrl) => {
+        if (cancelled || !bootstrapDataUrl) return;
+        setSettings((prev) => {
+          if (prev.appearance.background.bootstrapDataUrl) return prev;
+          return {
+            ...prev,
+            appearance: {
+              ...prev.appearance,
+              background: {
+                ...prev.appearance.background,
+                bootstrapDataUrl,
+              },
+            },
+          };
+        });
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready]);
 
