@@ -493,10 +493,9 @@ fn startup_minecraft_paths() -> Vec<String> {
         .to_string_lossy()
         .into_owned();
     #[cfg(target_os = "macos")]
-    let default_path = {
-        let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
-        format!("{}/Library/Application Support/minecraft", home)
-    };
+    let default_path = crate::app_paths::macos_standard_minecraft_dir()
+        .to_string_lossy()
+        .into_owned();
     #[cfg(target_os = "linux")]
     let default_path = crate::app_paths::linux_minecraft_dir()
         .to_string_lossy()

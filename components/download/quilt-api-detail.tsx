@@ -12,6 +12,7 @@ import type { LoaderVersion } from "@/types";
 import { invoke } from "@tauri-apps/api/core";
 import { useDownloadManager } from "@/components/download/download-provider";
 import { useI18n } from "@/components/i18n/use-i18n";
+import { buildSingleLoaderInstanceName } from "@/lib/instance-name";
 
 interface QuiltApiDetailProps {
   mcVersion: string;
@@ -76,7 +77,8 @@ export function QuiltApiDetail({ mcVersion, onBack }: QuiltApiDetailProps) {
     };
   }, [mcVersion, pushNotice, dismissNotice, t]);
 
-  const defaultName = (apiVer: string) => `${mcVersion}-Quilt-${QUILT_LOADER_DEFAULT}-API-${apiVer}`;
+  const defaultName = (_apiVer: string) =>
+    buildSingleLoaderInstanceName(mcVersion, "quilt", QUILT_LOADER_DEFAULT);
 
   const confirmDownload = async () => {
     if (!pendingApi) return;

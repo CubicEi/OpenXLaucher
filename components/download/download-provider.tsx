@@ -26,6 +26,7 @@ import {
   type PushDownloadCornerNoticeInput,
 } from "@/components/download/download-corner-notice";
 import { useI18n } from "@/components/i18n/use-i18n";
+import { LAUNCHER_UPDATE_TASK_ID } from "@/lib/launcher-update-task";
 import {
   downloadTaskLabel,
   formatJavaInvokeError,
@@ -156,6 +157,8 @@ interface DownloadContextValue {
     directory: string;
     fileName?: string | null;
   }) => Promise<number>;
+  /** 启动器自更新：下载到 OpenX/update，并入任务队列 */
+  startLauncherUpdateDownload: (opts?: { version?: string }) => Promise<void>;
   /** 单个模组更新（下载到临时目录后替换，进度走 mod-download 事件） */
   startModUpdate: (
     instanceDir: string,
@@ -1211,6 +1214,63 @@ function DownloadProviderInner({ children }: { children: React.ReactNode }) {
     [ensureDownloadListeners]
   );
 
+  const startLauncherUpdateDownload = useCallback(
+    async (opts?: { version?: string }) => {
+      await ensureDownloadListeners();
+      const label = opts?.version
+        ? `启动器更新 v${opts.version}`
+        : t("checkUpdate.downloadUpdate");
+
+      setTasks((prev) => {
+        const existing = prev.find((t) => t.taskId === LAUNCHER_UPDATE_TASK_ID);
+        const nextTask: DownloadTask = {
+          clientId: "launcher-update",
+          taskId: LAUNCHER_UPDATE_TASK_ID,
+          label,
+          mcVersion: "—",
+          status: "downloading",
+          progress: 0,
+          startedAt: Date.now(),
+        };
+        if (existing) {
+          return prev.map((t) =>
+            t.taskId === LAUNCHER_UPDATE_TASK_ID ? { ...t, ...nextTask, startedAt: t.startedAt } : t
+          );
+        }
+        return [nextTask, ...prev];
+      });
+
+      flyToProcessList();
+
+      try {
+        await invoke<{ success: boolean; path: string; size: number }>("download_update");
+        setTasks((prev) =>
+          prev.map((t) =>
+            t.taskId === LAUNCHER_UPDATE_TASK_ID && t.status === "downloading"
+              ? { ...t, status: "success" as const, progress: 100, speedBps: undefined }
+              : t
+          )
+        );
+      } catch (err) {
+        console.error("启动器更新下载失败:", err);
+        setTasks((prev) =>
+          prev.map((t) =>
+            t.taskId === LAUNCHER_UPDATE_TASK_ID && t.status === "downloading"
+              ? {
+                  ...t,
+                  status: "error" as const,
+                  error: err instanceof Error ? err.message : String(err),
+                  speedBps: undefined,
+                }
+              : t
+          )
+        );
+        throw err;
+      }
+    },
+    [ensureDownloadListeners, t]
+  );
+
   /** ========== 取消与清理 ========== */
   const cancelDownload = useCallback(
     async (taskId: number) => {
@@ -1291,6 +1351,10 @@ function DownloadProviderInner({ children }: { children: React.ReactNode }) {
             invoke("cancel_custom_download", { taskId }),
             invoke("cancel_java_download", { taskId }),
             invoke("cancel_instance_export_cmd", { taskId }),
+            // 启动器更新固定 task id；取消时必须打到 cancel_update（共享 cancel_flag）。
+            ...(pairedIds.includes(LAUNCHER_UPDATE_TASK_ID) || taskId === LAUNCHER_UPDATE_TASK_ID
+              ? [invoke("cancel_update")]
+              : []),
           ]);
         }
       } catch (e) {
@@ -1342,6 +1406,7 @@ function DownloadProviderInner({ children }: { children: React.ReactNode }) {
         startModpackDownload,
         startInstanceExport,
         startCustomDownload,
+        startLauncherUpdateDownload,
         startModUpdate,
         startModUpdateAll,
         cancelDownload,

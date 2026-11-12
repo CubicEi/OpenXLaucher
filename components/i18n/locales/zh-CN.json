@@ -317,6 +317,8 @@
     "manageGame": "管理游戏",
     "thisAccountHasNoPreviewableSkin": "该档案暂无可预览的皮肤",
     "signInToPreviewA3DSkin": "登录后即可预览 3D 皮肤",
+    "confirmDeleteSkinTitle": "删除皮肤",
+    "confirmDeleteSkinBody": "确认删除此皮肤？删除后无法恢复。",
     "announcement": {
       "welcomeToOpenXLauncher": "欢迎使用 OpenXLauncher",
       "aModernMinecraftLauncherWithAPolishedSmoothExperience": "全新的 Minecraft 启动器，提供现代化的设计和流畅的体验。",
@@ -720,8 +722,11 @@
     "lastCheckTime": "上次检查时间",
     "willRestartShortly": "安装完成后会自动关闭启动器并重启应用，请稍候...",
     "updateSuccessTitle": "更新成功",
-    "updateSuccessMessage": "启动器已更新至 v{version}，可以正常使用。",
-    "updateFailedTitle": "更新失败"
+    "updateSuccessMessage": "启动器已更新至 v{version}。",
+    "updateFailedTitle": "更新失败",
+    "preferencesTitle": "更新偏好",
+    "showUpdatePopup": "有更新时显示弹窗",
+    "showUpdatePopupHint": "启动时检查到新版本会弹出提示。"
   },
   "download": {
     "title": "下载中心",
@@ -775,8 +780,8 @@
     "latest": "最新",
     "released": "发布于 {date}",
     "selectFabricApiVersion": "选择 Fabric API 版本",
-    "selectFabricApiVersionHint": "选择一个 Fabric API 版本进行安装",
-    "selectFabricApiVersionCombinedHint": "选择要纳入组合安装的 Fabric API 版本，点选后将返回加载器列表",
+    "selectFabricApiVersionHint": "选择 Fabric API 版本",
+    "selectFabricApiVersionCombinedHint": "选择要安装的 Fabric API 版本",
     "selectQuiltApiVersion": "选择 Quilt API 版本",
     "selectQuiltApiVersionHint": "选择一个 Quilt API 版本进行安装",
     "viewFabricApiVersions": "查看 Fabric API 版本",
@@ -787,6 +792,9 @@
     "selectVersion": "选择版本…",
     "fabricApiHint": "Fabric 模组前置库，推荐同时安装",
     "fabricApiRequiresFabric": "需先选择 Fabric",
+    "fabricApiMissingWarnTitle": "未选择 Fabric API",
+    "fabricApiMissingWarnBody": "没有选择 Fabric API，部分 mod 可能无法工作。",
+    "fabricApiMissingContinue": "仍然安装",
     "selectedVersion": "已选择 {version}",
     "clearSelection": "清除选择",
     "select": "选择",

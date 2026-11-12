@@ -132,7 +132,7 @@ use multiplayer::{
 use multiplayer::quick_kill_openp2p;
 use updater::handler::{
     cancel_update, can_check_update, check_for_updates, create_updater_state, download_update,
-    get_update_status, install_update,
+    get_update_status, install_update, set_show_update_popup, sync_local_launcher_update,
 };
 use version_management::{
     vm_clear_version_cache, vm_copy_instance_user_data, vm_delete_cached_file, vm_delete_file,
@@ -353,6 +353,8 @@ pub fn run() {
             check_for_updates,
             download_update,
             install_update,
+            sync_local_launcher_update,
+            set_show_update_popup,
             cancel_update,
             can_check_update,
             updater::handler::take_post_update_success,

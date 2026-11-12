@@ -7,7 +7,6 @@ import { Loader2, Download, Check, RefreshCcw, Package, Sparkles } from "lucide-
 import { cn } from "@/lib/utils";
 import { useI18n } from "@/components/i18n/use-i18n";
 import { invoke } from "@tauri-apps/api/core";
-import { listenLauncherUpdateProgress } from "@/lib/launcher-update-progress";
 import { LauncherUpdateProgressBar } from "@/components/settings/launcher-update-progress-bar";
 import {
   markUpToDateAndSuppressAutoCheck,
@@ -18,6 +17,8 @@ import {
 } from "@/lib/launcher-update-session";
 import { isUpdateCheckTimeoutError } from "@/lib/update-check";
 import { ChangelogMarkdown } from "@/components/settings/changelog-markdown";
+import { useDownloadManager } from "@/components/download/download-provider";
+import { isLauncherUpdateTask } from "@/lib/launcher-update-task";
 
 type UpdateState =
   | { kind: "idle" }
@@ -28,10 +29,19 @@ type UpdateState =
 
 export function AboutSection() {
   const { t } = useI18n();
+  const { startLauncherUpdateDownload, tasks } = useDownloadManager();
   const [state, setState] = useState<UpdateState>({ kind: "idle" });
   const [installing, setInstalling] = useState(false);
   const [downloadProgress, setDownloadProgress] = useState<number | null>(null);
   const [version, setVersion] = useState<string | null>(null);
+
+  useEffect(() => {
+    const task = tasks.find((t) => isLauncherUpdateTask(t.taskId));
+    if (!task || !installing) return;
+    if (typeof task.progress === "number") {
+      setDownloadProgress(task.progress);
+    }
+  }, [tasks, installing]);
 
   useEffect(() => {
     (async () => {
@@ -81,12 +91,8 @@ export function AboutSection() {
     setInstalling(true);
     setDownloadProgress(0);
     try {
-      const unlisten = await listenLauncherUpdateProgress(setDownloadProgress);
-      try {
-        await invoke("download_update");
-      } finally {
-        unlisten();
-      }
+      const ver = state.kind === "available" ? state.version : undefined;
+      await startLauncherUpdateDownload({ version: ver });
       await invoke("install_update");
     } catch (e) {
       setState({ kind: "error", message: e instanceof Error ? e.message : String(e) });

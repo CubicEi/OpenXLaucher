@@ -54,7 +54,14 @@ export function resolveTaskStage(task: DownloadTask): string {
   if (task.status === "cancelled") return "cancelled";
   if (task.status === "error") return "error";
   if (task.status === "warning") return "warning";
-  if (task.status === "success") return "success";
+  if (task.status === "success") {
+    // 自定义下载等：成功后展示真实落盘路径，便于用户定位文件
+    const saved = task.detail?.trim() || task.stage?.trim();
+    if (saved && (/[\\/]/.test(saved) || /^[A-Za-z]:/.test(saved))) {
+      return saved;
+    }
+    return "success";
+  }
 
   // Prefer backend stage / stage_label (already Chinese when from version-install).
   if (task.stage?.trim()) return task.stage.trim();

@@ -240,10 +240,10 @@ export function RetargetCombinedInstall({
       .filter((l) => l !== "vanilla")
       .map((l) => ({ loader: l as SelectionItem["loader"], version: versions[l]! }));
 
-  const defaultInstanceName = buildDefaultInstanceName(version.id, installSelections(), {
-    includeFabricApi: fabricApiEnabled,
-    fabricApiVersionLabel,
-  });
+  const defaultInstanceName = buildDefaultInstanceName(
+    version.id,
+    installSelections(),
+  );
 
   const allVersionsChosen = selected
     .filter((l) => l !== "vanilla")

@@ -30,6 +30,7 @@ import type { AppLanguage } from "@/components/settings/settings-provider";
 import { CustomDownloadCard } from "@/components/tools/custom-download-card";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { InputDialog } from "@/components/input-dialog";
+import { useCornerNotice } from "@/components/global/corner-notice";
 
 interface NewPackDialogState {
   open: boolean;
@@ -41,6 +42,7 @@ interface NewPackDialogState {
 export default function ToolsPage() {
   const router = useRouter();
   const { t, language } = useI18n();
+  const { pushNotice } = useCornerNotice();
   const L = <T extends { [k in AppLanguage]: string }>(obj: T): string => obj[language] ?? obj["zh-CN"] ?? obj["en-US"];
 
   // 整合包实例
@@ -97,7 +99,10 @@ export default function ToolsPage() {
       await deleteInstance(pendingDelete);
       await reloadInstances();
     } catch (e: any) {
-      alert(`${t("tools.deleteFailed")}: ${e?.message || e}`);
+      pushNotice({
+        variant: "error",
+        message: `${t("tools.deleteFailed")}: ${e?.message || e}`,
+      });
     }
     setPendingDelete(null);
   };

@@ -51,7 +51,7 @@ fn launcher_config_path() -> PathBuf {
     PathBuf::from(config_dir()).join("launcher.json")
 }
 
-/// 获取平台默认游戏目录（与 get_minecraft_dir 一致：便携优先 exe 旁 `.minecraft`）
+/// 获取平台默认游戏目录（Windows：exe 旁 `.minecraft`；macOS：Application Support/minecraft）
 fn default_minecraft_path() -> String {
     #[cfg(target_os = "windows")]
     {
@@ -61,17 +61,56 @@ fn default_minecraft_path() -> String {
     }
     #[cfg(target_os = "macos")]
     {
-        // macOS: ~/Library/Application Support/minecraft
-        if let Ok(home) = std::env::var("HOME") {
-            return format!("{}/Library/Application Support/minecraft", home);
-        }
-        "./.minecraft".to_string()
+        return crate::app_paths::macos_standard_minecraft_dir()
+            .to_string_lossy()
+            .into_owned();
     }
     #[cfg(target_os = "linux")]
     {
         crate::app_paths::linux_minecraft_dir()
             .to_string_lossy()
             .to_string()
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn apply_macos_minecraft_path_policy(cfg: &mut LauncherPathsConfig) -> bool {
+    let before_selected = cfg.selected_minecraft_path.clone();
+    let before_paths = cfg.minecraft_paths.clone();
+    let before_default = cfg.default_minecraft_path.clone();
+
+    let standard = default_minecraft_path();
+    cfg.default_minecraft_path = standard.clone();
+
+    cfg.minecraft_paths
+        .retain(|p| !crate::app_paths::is_macos_legacy_game_minecraft_path(Path::new(p)));
+
+    let selected = cfg.selected_minecraft_path.trim();
+    if selected.is_empty()
+        || crate::app_paths::is_macos_legacy_game_minecraft_path(Path::new(selected))
+    {
+        cfg.selected_minecraft_path = standard.clone();
+    }
+
+    if !cfg.minecraft_paths.contains(&standard) {
+        cfg.minecraft_paths.insert(0, standard.clone());
+    }
+
+    let _ = fs::create_dir_all(Path::new(&standard));
+
+    before_selected != cfg.selected_minecraft_path
+        || before_paths != cfg.minecraft_paths
+        || before_default != cfg.default_minecraft_path
+}
+
+#[cfg(not(target_os = "macos"))]
+fn apply_macos_minecraft_path_policy(_cfg: &mut LauncherPathsConfig) -> bool {
+    false
+}
+
+fn persist_launcher_paths_if_macos_migrated(cfg: &LauncherPathsConfig, migrated: bool) {
+    if migrated {
+        let _ = save_launcher_paths_config(cfg.clone());
     }
 }
 
@@ -400,6 +439,9 @@ pub fn get_launcher_paths_config() -> LauncherPathsConfig {
                     cfg.selected_java_path = JAVA_AUTO_SELECT_PATH.to_string();
                 }
 
+                let migrated = apply_macos_minecraft_path_policy(&mut cfg);
+                persist_launcher_paths_if_macos_migrated(&cfg, migrated);
+
                 cfg
             }
             Err(_) => def,
@@ -419,6 +461,8 @@ pub fn get_launcher_paths_config() -> LauncherPathsConfig {
                 cfg.minecraft_paths.push(pcl2_path);
             }
         }
+        let migrated = apply_macos_minecraft_path_policy(&mut cfg);
+        persist_launcher_paths_if_macos_migrated(&cfg, migrated);
         cfg
     }
 }
@@ -535,12 +579,24 @@ pub async fn run_portable_first_launch_setup() -> Result<PortableFirstLaunchResu
     }
 
     let mut cfg = LauncherPathsConfig::default();
-    let portable_mc = crate::app_paths::portable_game_minecraft_dir();
-    fs::create_dir_all(&portable_mc).map_err(|e| format!("创建 .minecraft 失败: {}", e))?;
-    let path = portable_mc.to_string_lossy().into_owned();
-    cfg.minecraft_paths = vec![path.clone()];
-    cfg.selected_minecraft_path = path;
-    cfg.default_minecraft_path = default_minecraft_path();
+    #[cfg(target_os = "windows")]
+    {
+        let portable_mc = crate::app_paths::portable_game_minecraft_dir();
+        fs::create_dir_all(&portable_mc).map_err(|e| format!("创建 .minecraft 失败: {}", e))?;
+        let path = portable_mc.to_string_lossy().into_owned();
+        cfg.minecraft_paths = vec![path.clone()];
+        cfg.selected_minecraft_path = path;
+        cfg.default_minecraft_path = default_minecraft_path();
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let standard = default_minecraft_path();
+        fs::create_dir_all(Path::new(&standard))
+            .map_err(|e| format!("创建游戏目录失败: {}", e))?;
+        cfg.minecraft_paths = vec![standard.clone()];
+        cfg.selected_minecraft_path = standard.clone();
+        cfg.default_minecraft_path = standard;
+    }
 
     let installations = super::java_scanner::search_java_installations().await?;
     if let Some(best) = installations.first() {

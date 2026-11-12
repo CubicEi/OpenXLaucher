@@ -1,20 +1,49 @@
-/** 组合安装默认实例文件夹名（与 CombinedInstall 逻辑一致） */
+import { LOADER_OPTIONS } from "@/constants/data";
+
+const LOADER_DISPLAY_NAME: Record<string, string> = Object.fromEntries(
+  LOADER_OPTIONS.map((o) => [o.id, o.name]),
+);
+
+/** 加载器 ID → 展示名（如 fabric → Fabric，neoforge → NeoForge） */
+export function loaderDisplayName(loaderId: string): string {
+  const known = LOADER_DISPLAY_NAME[loaderId];
+  if (known) return known;
+  const trimmed = loaderId.trim();
+  if (!trimmed) return trimmed;
+  return trimmed.charAt(0).toUpperCase() + trimmed.slice(1).toLowerCase();
+}
+
+/** 单段：`Fabric 0.20.1` */
+export function formatLoaderInstanceSegment(loaderId: string, version: string): string {
+  const name = loaderDisplayName(loaderId);
+  const ver = version.trim();
+  return ver ? `${name} ${ver}` : name;
+}
+
+function sanitizeInstanceFolderName(name: string): string {
+  return name.replace(/[\\/:*?"<>|]/g, "_");
+}
+
+/** 默认实例名：`{MC}-{Loader} {ver}`，多加载器用 `-` 连接各段，如 `26.3-Fabric 0.20.1` */
 export function buildDefaultInstanceName(
   mcVersion: string,
   selections: { loader: string; version: string }[],
-  options?: { fabricApiVersionLabel?: string; includeFabricApi?: boolean }
 ): string {
-  const includeFabricApi = options?.includeFabricApi ?? false;
-  const parts = [mcVersion];
+  const segments: string[] = [];
   for (const s of selections) {
     if (s.loader === "vanilla" || s.loader === "fabric_api") continue;
-    parts.push(s.version ? `${s.loader}-${s.version}` : s.loader);
+    segments.push(formatLoaderInstanceSegment(s.loader, s.version));
   }
-  if (includeFabricApi) {
-    const label = options?.fabricApiVersionLabel?.trim();
-    parts.push(label ? `API-${label}` : "API");
-  }
-  return parts.join("-").replace(/[\\/:*?"<>|]/g, "_");
+  if (segments.length === 0) return sanitizeInstanceFolderName(mcVersion);
+  return sanitizeInstanceFolderName(`${mcVersion}-${segments.join("-")}`);
+}
+
+export function buildSingleLoaderInstanceName(
+  mcVersion: string,
+  loaderId: string,
+  loaderVersion: string,
+): string {
+  return buildDefaultInstanceName(mcVersion, [{ loader: loaderId, version: loaderVersion }]);
 }
 
 /** 从版本号或文件夹名中提取可比较的 MC 版本（如 1.20.1 / 26.3） */

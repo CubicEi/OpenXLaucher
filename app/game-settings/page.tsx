@@ -184,7 +184,10 @@ export default function GameSettings() {
   function handleDeleteVersionClick(e: React.MouseEvent) {
     e.stopPropagation();
     if (!config.minecraftPath || !effectiveVersionDirName) {
-      alert(t("gameSettings.pleaseSelectAVersionToDeleteFirst"));
+      pushNotice({
+        variant: "error",
+        message: t("gameSettings.pleaseSelectAVersionToDeleteFirst"),
+      });
       return;
     }
     setDeleteVersionOpen(true);
@@ -256,13 +259,12 @@ export default function GameSettings() {
       }
 
       setRenameDialogOpen(false);
-      alert(
-        t("gameSettings.renameVersionSuccess", {
-          newName,
-        })
-      );
+      pushNotice({
+        variant: "success",
+        message: t("gameSettings.renameVersionSuccess", { newName }),
+      });
     } catch (err) {
-      alert(String(err));
+      pushNotice({ variant: "error", message: String(err) });
     } finally {
       setRenaming(false);
     }

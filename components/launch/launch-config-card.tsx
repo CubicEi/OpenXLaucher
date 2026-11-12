@@ -34,6 +34,7 @@ import {
 } from "@/lib/java-paths";
 import { mergeJavaScanIntoPathsConfig } from "@/lib/java-scan-merge";
 import { getVersionProfileOverride } from "@/lib/version-profile";
+import { useCornerNotice } from "@/components/global/corner-notice";
 
 interface MemoryInfo {
   totalMB: number;
@@ -132,6 +133,7 @@ function PathItem({
  */
 export function LaunchConfigCard() {
   const { t } = useI18n();
+  const { pushNotice } = useCornerNotice();
   const { config, updateConfig, configLoaded } = useLaunchContext();
   const { profiles, selectedProfile } = useAccountContext();
   const autoMemory = config.autoMemory !== false;
@@ -190,19 +192,11 @@ export function LaunchConfigCard() {
 
   const handleResetJvmArgs = useCallback(() => {
     updateConfig({ customJvmArgs: DEFAULT_INITIAL_JVM_ARGS });
-    // 轻量提示
-    try {
-      // @ts-expect-error 浏览器原生提示
-      if (window.__rt_toast) {
-        // @ts-expect-error 自定义 toast hook
-        window.__rt_toast(t("launch.config.jvmArgsResetTip"));
-      } else {
-        alert(t("launch.config.jvmArgsResetTip"));
-      }
-    } catch {
-      alert(t("launch.config.jvmArgsResetTip"));
-    }
-  }, [t, updateConfig]);
+    pushNotice({
+      variant: "success",
+      message: t("launch.config.jvmArgsResetTip"),
+    });
+  }, [t, updateConfig, pushNotice]);
 
   const openDialog = async (mode: "java" | "minecraft") => {
     try {
@@ -273,7 +267,10 @@ export function LaunchConfigCard() {
           ? profiles.find((p) => p.id === overrideId)
           : null) ?? selectedProfile;
       if (!exportProfile) {
-        alert(t("launch.config.selectAnAccountFirst"));
+        pushNotice({
+          variant: "error",
+          message: t("launch.config.selectAnAccountFirst"),
+        });
         return;
       }
 
@@ -336,9 +333,15 @@ ${result}
 `;
 
       await invoke("write_file", { path: filePath, content: exportData });
-      alert(t("launch.config.launchCommandExported"));
+      pushNotice({
+        variant: "success",
+        message: t("launch.config.launchCommandExported"),
+      });
     } catch (err) {
-      alert(`${t("launch.config.exportFailed")}: ${err}`);
+      pushNotice({
+        variant: "error",
+        message: `${t("launch.config.exportFailed")}: ${err}`,
+      });
     }
   };
 

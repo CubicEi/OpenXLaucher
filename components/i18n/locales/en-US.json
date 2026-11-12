@@ -317,6 +317,8 @@
     "manageGame": "Manage game",
     "thisAccountHasNoPreviewableSkin": "This profile has no previewable skin.",
     "signInToPreviewA3DSkin": "Sign in to preview a 3D skin.",
+    "confirmDeleteSkinTitle": "Delete skin",
+    "confirmDeleteSkinBody": "Delete this skin? This cannot be undone.",
     "announcement": {
       "welcomeToOpenXLauncher": "Welcome to OpenXLauncher",
       "aModernMinecraftLauncherWithAPolishedSmoothExperience": "A modern Minecraft launcher with a polished, smooth experience.",
@@ -720,8 +722,11 @@
     "lastCheckTime": "Last check time",
     "willRestartShortly": "Once installed, the launcher will automatically close and restart. Please wait...",
     "updateSuccessTitle": "Update successful",
-    "updateSuccessMessage": "OpenXLauncher has been updated to v{version}. You're good to go.",
-    "updateFailedTitle": "Update failed"
+    "updateSuccessMessage": "OpenXLauncher has been updated to v{version}.",
+    "updateFailedTitle": "Update failed",
+    "preferencesTitle": "Update preferences",
+    "showUpdatePopup": "Show popup when an update is available",
+    "showUpdatePopupHint": "Prompt on startup when a new version is found."
   },
   "download": {
     "title": "Download Center",
@@ -775,8 +780,8 @@
     "latest": "Latest",
     "released": "Released {date}",
     "selectFabricApiVersion": "Select Fabric API version",
-    "selectFabricApiVersionHint": "Select a Fabric API version to install",
-    "selectFabricApiVersionCombinedHint": "Pick a version to include in combined install; tap a version to confirm and return",
+    "selectFabricApiVersionHint": "Select a Fabric API version",
+    "selectFabricApiVersionCombinedHint": "Pick a version to install",
     "selectQuiltApiVersion": "Select Quilt API version",
     "selectQuiltApiVersionHint": "Select a Quilt API version to install",
     "viewFabricApiVersions": "View Fabric API versions",
@@ -787,6 +792,9 @@
     "selectVersion": "Select version…",
     "fabricApiHint": "Core mod library for Fabric; recommended",
     "fabricApiRequiresFabric": "Requires Fabric first",
+    "fabricApiMissingWarnTitle": "Fabric API not selected",
+    "fabricApiMissingWarnBody": "Fabric API was not selected. Some mods may not work.",
+    "fabricApiMissingContinue": "Install anyway",
     "selectedVersion": "Selected: {version}",
     "clearSelection": "Clear selection",
     "select": "Select",

@@ -23,15 +23,7 @@ fn active_tasks() -> &'static Mutex<HashMap<u64, ActiveTaskInfo>> {
 pub fn default_minecraft_dir() -> PathBuf {
     #[cfg(target_os = "macos")]
     {
-        return std::env::var_os("HOME")
-            .map(PathBuf::from)
-            .filter(|path| path.is_absolute())
-            .map(|home| {
-                home.join("Library")
-                    .join("Application Support")
-                    .join("minecraft")
-            })
-            .unwrap_or_else(|| std::env::temp_dir().join("OpenXLauncher").join("minecraft"));
+        return crate::app_paths::macos_standard_minecraft_dir();
     }
     #[cfg(target_os = "linux")]
     {

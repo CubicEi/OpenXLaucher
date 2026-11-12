@@ -12,6 +12,7 @@ import type { LoaderVersion } from "@/types";
 import { invoke } from "@tauri-apps/api/core";
 import { useDownloadManager } from "@/components/download/download-provider";
 import { useI18n } from "@/components/i18n/use-i18n";
+import { buildSingleLoaderInstanceName } from "@/lib/instance-name";
 
 interface FabricApiDetailProps {
   mcVersion: string;
@@ -77,7 +78,8 @@ export function FabricApiDetail({ mcVersion, onBack }: FabricApiDetailProps) {
     };
   }, [mcVersion, pushNotice, dismissNotice, t]);
 
-  const defaultName = (apiVer: string) => `${mcVersion}-Fabric-${FABRIC_LOADER_DEFAULT}-API-${apiVer}`;
+  const defaultName = (_apiVer: string) =>
+    buildSingleLoaderInstanceName(mcVersion, "fabric", FABRIC_LOADER_DEFAULT);
 
   const confirmDownload = async () => {
     if (!pendingApi) return;

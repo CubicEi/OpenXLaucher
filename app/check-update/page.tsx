@@ -15,10 +15,10 @@ import {
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Switch } from "@/components/ui/switch";
 import { useI18n, type TranslationKey } from "@/components/i18n/use-i18n";
 import { invoke } from "@tauri-apps/api/core";
 import { getVersion } from "@tauri-apps/api/app";
-import { listenLauncherUpdateProgress } from "@/lib/launcher-update-progress";
 import { LauncherUpdateProgressBar } from "@/components/settings/launcher-update-progress-bar";
 import {
   getPendingUpdateCheckError,
@@ -29,6 +29,8 @@ import {
 import { isUpdateCheckTimeoutError } from "@/lib/update-check";
 import { ChangelogMarkdown } from "@/components/settings/changelog-markdown";
 import { navigateBackWithMainTransition } from "@/lib/main-navigation-transition";
+import { useDownloadManager } from "@/components/download/download-provider";
+import { isLauncherUpdateTask } from "@/lib/launcher-update-task";
 
 type UpdateStatus =
   | "idle"
@@ -52,6 +54,7 @@ interface UpdateInfo {
 interface UpdateCheckResult {
   needs_check: boolean;
   update_available: boolean;
+  package_ready?: boolean;
   current_version: string;
   target_version: string | null;
   message: string;
@@ -68,6 +71,74 @@ function readPreparedVersion(): string | null {
   if (typeof window === "undefined") return null;
   const version = new URLSearchParams(window.location.search).get("preparedVersion");
   return version?.trim() || null;
+}
+
+type BackendUpdateConfig = {
+  status: string | { error: string };
+  target_version?: string | null;
+  changelog?: string | null;
+  download_progress?: number | null;
+  show_update_popup?: boolean;
+};
+
+function backendStatusToUi(status: BackendUpdateConfig["status"]): UpdateStatus {
+  if (typeof status === "object" && status !== null && "error" in status) {
+    return "error";
+  }
+  if (typeof status !== "string") return "idle";
+  switch (status) {
+    case "checking":
+      return "checking";
+    case "available":
+      return "available";
+    case "downloading":
+      return "downloading";
+    case "downloaded":
+      return "downloaded";
+    case "idle":
+      return "idle";
+    case "error":
+      return "error";
+    default:
+      return "idle";
+  }
+}
+
+function applyBackendUpdateConfig(
+  cfg: BackendUpdateConfig,
+  setInfo: React.Dispatch<React.SetStateAction<UpdateInfo>>,
+  setDownloadProgress: React.Dispatch<React.SetStateAction<number | null>>,
+) {
+  const uiStatus = backendStatusToUi(cfg.status);
+  const errorMsg =
+    typeof cfg.status === "object" && cfg.status !== null && "error" in cfg.status
+      ? cfg.status.error
+      : undefined;
+
+  setInfo((prev) => ({
+    ...prev,
+    status: uiStatus === "up-to-date" && prev.status === "available" ? prev.status : uiStatus,
+    version: cfg.target_version ?? prev.version,
+    changelog: cfg.changelog ?? prev.changelog,
+    errorMessage: errorMsg ?? (uiStatus === "error" ? prev.errorMessage : undefined),
+    canCheck: true,
+  }));
+
+  if (typeof cfg.download_progress === "number") {
+    setDownloadProgress(cfg.download_progress);
+  }
+  if (uiStatus === "downloaded") {
+    setDownloadProgress(100);
+  }
+}
+
+async function hydrateLocalUpdateCache(
+  setInfo: React.Dispatch<React.SetStateAction<UpdateInfo>>,
+  setDownloadProgress: React.Dispatch<React.SetStateAction<number | null>>,
+) {
+  const cfg = await invoke<BackendUpdateConfig>("sync_local_launcher_update");
+  applyBackendUpdateConfig(cfg, setInfo, setDownloadProgress);
+  return cfg;
 }
 
 function formatCheckErrorMessage(message: string, t: (key: TranslationKey) => string): string {
@@ -87,15 +158,27 @@ export default function CheckUpdatePage() {
   const autoStartedRef = useRef(false);
 
   const { t } = useI18n();
+  const { startLauncherUpdateDownload, tasks } = useDownloadManager();
   const [currentVersion, setCurrentVersion] = useState<string>("");
   const [info, setInfo] = useState<UpdateInfo>({
     status: "idle",
     canCheck: true,
   });
   const [downloadProgress, setDownloadProgress] = useState<number | null>(null);
+  const [showUpdatePopup, setShowUpdatePopup] = useState(true);
 
   useEffect(() => {
     loadVersion();
+    void invoke<BackendUpdateConfig>("get_update_status")
+      .then((cfg) => {
+        if (typeof cfg.show_update_popup === "boolean") {
+          setShowUpdatePopup(cfg.show_update_popup);
+        }
+      })
+      .catch(() => {});
+    void hydrateLocalUpdateCache(setInfo, setDownloadProgress).catch(() => {
+      // 非 Tauri 或读取失败时忽略
+    });
     if (autoStart) {
       if (autoStartedRef.current) return;
       autoStartedRef.current = true;
@@ -110,7 +193,7 @@ export default function CheckUpdatePage() {
             changelog?: string;
           }>("get_update_status");
           if (
-            config.status !== "available" ||
+            (config.status !== "available" && config.status !== "downloaded") ||
             config.target_version !== preparedVersion
           ) {
             setInfo({
@@ -122,12 +205,17 @@ export default function CheckUpdatePage() {
           }
 
           setInfo({
-            status: "available",
+            status: config.status === "downloaded" ? "downloaded" : "available",
             version: preparedVersion,
             changelog: config.changelog ?? "",
             canCheck: true,
             lastCheckTime: Math.floor(Date.now() / 1000),
           });
+          if (config.status === "downloaded") {
+            setDownloadProgress(100);
+            setTimeout(() => handleInstall(), 600);
+            return;
+          }
           const downloadOk = await handleDownload();
           if (downloadOk) {
             setTimeout(() => handleInstall(), 600);
@@ -172,38 +260,39 @@ export default function CheckUpdatePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // 进度只跟任务队列走；已完成/安装中时不再被 downloading 任务态回写。
   useEffect(() => {
-    if (info.status !== "downloading") return;
-    let unlisten: (() => void) | undefined;
-    listenLauncherUpdateProgress((percent) => setDownloadProgress(percent)).then((fn) => {
-      unlisten = fn;
-    });
-    let timer: ReturnType<typeof setInterval>;
-    const poll = async () => {
-      try {
-        const cfg = await invoke<{
-          status: string;
-          download_progress?: number;
-          download_path?: string;
-        }>("get_update_status");
-        if (typeof cfg.download_progress === "number") {
-          setDownloadProgress(cfg.download_progress);
-        }
-        if (cfg.status === "downloaded") {
-          setDownloadProgress(100);
-          clearInterval(timer);
-        }
-      } catch {
-        // 忽略轮询错误
-      }
-    };
-    poll();
-    timer = setInterval(poll, 500);
-    return () => {
-      clearInterval(timer);
-      unlisten?.();
-    };
-  }, [info.status]);
+    const task = tasks.find((t) => isLauncherUpdateTask(t.taskId));
+    if (!task) return;
+    if (task.status === "downloading" && typeof task.progress === "number") {
+      setDownloadProgress(task.progress);
+      setInfo((prev) => {
+        if (prev.status === "downloaded" || prev.status === "installing") return prev;
+        return prev.status === "downloading" ? prev : { ...prev, status: "downloading" };
+      });
+    }
+    if (task.status === "success") {
+      setDownloadProgress(100);
+      setInfo((prev) =>
+        prev.status === "installing" ? prev : { ...prev, status: "downloaded" },
+      );
+    }
+    if (task.status === "cancelled") {
+      setInfo((prev) => ({
+        ...prev,
+        status: "available",
+        errorMessage: undefined,
+      }));
+      setDownloadProgress(null);
+    }
+    if (task.status === "error") {
+      setInfo((prev) => ({
+        ...prev,
+        status: "error",
+        errorMessage: task.error ?? prev.errorMessage,
+      }));
+    }
+  }, [tasks]);
 
   const loadVersion = async () => {
     try {
@@ -235,13 +324,24 @@ export default function CheckUpdatePage() {
       }
 
       if (result.update_available && result.target_version) {
-        setInfo({
-          status: "available",
-          version: result.target_version,
-          changelog: result.changelog ?? "",
-          canCheck: true,
-          lastCheckTime: Math.floor(Date.now() / 1000),
-        });
+        if (result.package_ready) {
+          setInfo({
+            status: "downloaded",
+            version: result.target_version,
+            changelog: result.changelog ?? "",
+            canCheck: true,
+            lastCheckTime: Math.floor(Date.now() / 1000),
+          });
+          setDownloadProgress(100);
+        } else {
+          setInfo({
+            status: "available",
+            version: result.target_version,
+            changelog: result.changelog ?? "",
+            canCheck: true,
+            lastCheckTime: Math.floor(Date.now() / 1000),
+          });
+        }
         return true;
       } else {
         setInfo({
@@ -271,23 +371,31 @@ export default function CheckUpdatePage() {
     void handleCheck(true);
   };
 
+  const handleShowUpdatePopupChange = async (enabled: boolean) => {
+    setShowUpdatePopup(enabled);
+    try {
+      const cfg = await invoke<BackendUpdateConfig>("set_show_update_popup", { enabled });
+      if (typeof cfg.show_update_popup === "boolean") {
+        setShowUpdatePopup(cfg.show_update_popup);
+      }
+    } catch {
+      setShowUpdatePopup(!enabled);
+    }
+  };
+
   const handleDownload = async (): Promise<boolean> => {
     setDownloadProgress(0);
     setInfo((prev) => ({ ...prev, status: "downloading", errorMessage: undefined }));
     try {
-      const result = await invoke<{ success: boolean; path: string; size: number }>("download_update");
-      if (result.success) {
-        setDownloadProgress(100);
+      await startLauncherUpdateDownload({ version: info.version });
+      const cfg = await invoke<BackendUpdateConfig>("get_update_status");
+      applyBackendUpdateConfig(cfg, setInfo, setDownloadProgress);
+      const done = backendStatusToUi(cfg.status) === "downloaded";
+      if (done) {
         setInfo((prev) => ({ ...prev, status: "downloaded" }));
-        return true;
-      } else {
-        setInfo({
-          status: "error",
-          errorMessage: "下载失败",
-          canCheck: true,
-        });
-        return false;
+        setDownloadProgress(100);
       }
+      return done;
     } catch (e) {
       setInfo({
         status: "error",
@@ -538,15 +646,30 @@ export default function CheckUpdatePage() {
           </Card>
 
           <Card>
-            <CardContent className="pt-6">
-              <div className="text-xs text-muted-foreground space-y-2">
-                {info.lastCheckTime && (
-                  <p>
-                    {t("checkUpdate.lastCheckTime")}:{" "}
-                    {new Date(info.lastCheckTime * 1000).toLocaleString()}
+            <CardHeader className="pb-3">
+              <CardTitle className="text-sm font-medium">
+                {t("checkUpdate.preferencesTitle")}
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="flex items-center justify-between gap-4">
+                <div className="min-w-0">
+                  <p className="text-sm">{t("checkUpdate.showUpdatePopup")}</p>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    {t("checkUpdate.showUpdatePopupHint")}
                   </p>
-                )}
+                </div>
+                <Switch
+                  checked={showUpdatePopup}
+                  onCheckedChange={(v) => void handleShowUpdatePopupChange(!!v)}
+                />
               </div>
+              {info.lastCheckTime && (
+                <p className="text-xs text-muted-foreground">
+                  {t("checkUpdate.lastCheckTime")}:{" "}
+                  {new Date(info.lastCheckTime * 1000).toLocaleString()}
+                </p>
+              )}
             </CardContent>
           </Card>
         </div>

@@ -39,6 +39,13 @@ pub struct UpdateConfig {
     pub download_progress: Option<f64>,
     #[serde(default)]
     pub status: UpdateStatus,
+    /// 发现更新时是否弹出提示（启动检查等）。默认开启。
+    #[serde(default = "default_true")]
+    pub show_update_popup: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -77,6 +84,7 @@ impl Default for UpdateConfig {
             download_path: None,
             download_progress: None,
             status: UpdateStatus::Idle,
+            show_update_popup: true,
         }
     }
 }
@@ -185,8 +193,26 @@ pub fn update_temp_root() -> PathBuf {
     std::env::temp_dir().join("OpenXLauncher")
 }
 
+/// 启动器更新安装包目录：`OpenX/update`（与替换脚本使用的系统临时目录分离）。
 pub fn update_download_dir() -> PathBuf {
-    update_temp_root().join("updates")
+    crate::app_paths::ensure_portable_dirs();
+    crate::app_paths::portable_data_dir().join("update")
+}
+
+/// 清空 `OpenX/update` 目录中的文件（更新安装成功后调用）。
+pub fn clear_update_download_dir() {
+    let dir = update_download_dir();
+    let Ok(entries) = fs::read_dir(&dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_file() {
+            let _ = fs::remove_file(&path);
+        } else if path.is_dir() {
+            let _ = fs::remove_dir_all(&path);
+        }
+    }
 }
 
 /// 读取 `launcher.json` 中的界面语言（用于更新脚本弹窗文案）。

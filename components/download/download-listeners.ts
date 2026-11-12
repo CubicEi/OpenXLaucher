@@ -207,6 +207,9 @@ function defaultLabelForEvent(eventName: string): string {
     case "custom-download-progress":
     case "custom-download-finished":
       return "自定义下载";
+    case "launcher-update-progress":
+    case "launcher-update-finished":
+      return "启动器更新";
     case "combined-download-progress":
     case "combined-download-finished":
       return "组合安装";
@@ -364,6 +367,8 @@ function makeProgressHandler(
     const payload = event.payload;
     const { task_id, percent, label: payloadLabel } = payload;
     if (typeof percent !== "number" || Number.isNaN(percent)) return;
+    // 缺少合法 task_id 的进度（旧版重复 emit）一律忽略，避免凭空多出一条任务。
+    if (typeof task_id !== "number" || !Number.isFinite(task_id)) return;
     if (isTaskDismissed(task_id)) {
       clearSpeedSample(task_id);
       return;
@@ -504,6 +509,7 @@ function makeFinishedHandler(
   return (event: { payload: FinishedPayload }) => {
     if (cancelledRef.current) return;
     const { task_id, success, error, failed_count = 0, label: payloadLabel } = event.payload;
+    if (typeof task_id !== "number" || !Number.isFinite(task_id)) return;
     clearSpeedSample(task_id);
     if (isTaskDismissed(task_id)) {
       onEnd?.();
@@ -593,6 +599,7 @@ export async function setupAllDownloadListeners(
     ["forge-download-progress", "forge-download-finished", "other"],
     ["mod-download-progress", "mod-download-finished", "other"],
     ["custom-download-progress", "custom-download-finished", "other"],
+    ["launcher-update-progress", "launcher-update-finished", "other"],
     ["neoforge-download-progress", "neoforge-download-finished", "other"],
     ["liteloader-download-progress", "liteloader-download-finished", "other"],
     ["quilt-download-progress", "quilt-download-finished", "other"],
