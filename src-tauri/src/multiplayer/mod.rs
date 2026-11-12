@@ -1,19 +1,20 @@
 mod codec;
+mod download;
 mod logs;
 mod paths;
+mod privileges;
 mod process;
 
+pub use download::{mp_ensure_installed, mp_get_download_progress};
+pub use privileges::mp_prepare_privileges;
 pub use process::{
-    ensure_openp2p_stopped, mp_check_openp2p, mp_encode_room_info, mp_get_openp2p_dir,
-    mp_get_openp2p_path, mp_install_openp2p, mp_is_openp2p_running, mp_poll_log,
-    mp_start_openp2p_host, mp_start_openp2p_join, mp_stop_openp2p,
+    ensure_easytier_stopped_on_exit, mp_encode_room_info, mp_force_kill_process, mp_get_paths,
+    mp_get_tool_status, mp_is_running, mp_poll_log, mp_set_peer, mp_start_host, mp_start_join,
+    mp_stop_session, mp_uninstall_tool,
 };
 
-#[cfg(target_os = "windows")]
-pub use process::quick_kill_openp2p;
-
-const OPENP2P_BIN: &str = if cfg!(target_os = "windows") {
-    "openp2p.exe"
+pub(crate) const EASYTIER_BIN: &str = if cfg!(target_os = "windows") {
+    "easytier-core.exe"
 } else {
-    "openp2p"
+    "easytier-core"
 };

@@ -70,6 +70,9 @@ objc2-app-kit = { version = "0.3.2", features = ["NSColor", "NSWindow"] }
 [target."cfg(target_os = \"windows\")".dependencies]
 winapi = { version = "0.3", features = ["processthreadsapi", "securitybaseapi", "winnt", "shellapi", "winuser", "winbase"] }
 winreg = "0.52"
+# Match wry/tauri WebView2 bindings so we can disable password/autofill chrome.
+webview2-com = "0.38"
+windows = "0.61"
 
 [target.'cfg(not(target_os = "macos"))'.dependencies]
 tauri-plugin-single-instance = "2"

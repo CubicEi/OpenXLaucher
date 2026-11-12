@@ -124,12 +124,11 @@ use handler::diagnostics::{
 };
 use handler::mod_links::{get_modrinth_required_dependencies, get_curseforge_required_dependencies};
 use multiplayer::{
-    ensure_openp2p_stopped, mp_check_openp2p, mp_encode_room_info, mp_get_openp2p_dir,
-    mp_get_openp2p_path, mp_install_openp2p, mp_is_openp2p_running, mp_poll_log,
-    mp_start_openp2p_host, mp_start_openp2p_join, mp_stop_openp2p,
+    ensure_easytier_stopped_on_exit, mp_encode_room_info, mp_ensure_installed,
+    mp_force_kill_process, mp_get_download_progress, mp_get_paths, mp_get_tool_status,
+    mp_is_running, mp_poll_log, mp_prepare_privileges, mp_set_peer, mp_start_host, mp_start_join,
+    mp_stop_session, mp_uninstall_tool,
 };
-#[cfg(target_os = "windows")]
-use multiplayer::quick_kill_openp2p;
 use updater::handler::{
     cancel_update, can_check_update, check_for_updates, create_updater_state, download_update,
     get_update_status, install_update, set_show_update_popup, sync_local_launcher_update,
@@ -161,6 +160,27 @@ use tauri::TitleBarStyle;
 const NS_WINDOW_TITLE_HIDDEN: i64 = 1;
 #[cfg(target_os = "macos")]
 const NS_WINDOW_STYLE_MASK_FULL_SIZE_CONTENT_VIEW: u64 = 1 << 15;
+
+/// Disable WebView2 password autosave + general autofill (Windows “保存的信息” UI).
+#[cfg(windows)]
+fn disable_webview2_autofill(platform_webview: tauri::webview::PlatformWebview) {
+    use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2Settings4;
+    use windows::core::Interface;
+
+    unsafe {
+        let Ok(core) = platform_webview.controller().CoreWebView2() else {
+            return;
+        };
+        let Ok(settings) = core.Settings() else {
+            return;
+        };
+        let Ok(settings4) = settings.cast::<ICoreWebView2Settings4>() else {
+            return;
+        };
+        let _ = settings4.SetIsPasswordAutosaveEnabled(false);
+        let _ = settings4.SetIsGeneralAutofillEnabled(false);
+    }
+}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -200,16 +220,20 @@ pub fn run() {
             ms_silent_refresh_account,
             ms_has_account_in_db,
             delete_cached_skin,
-            mp_check_openp2p,
-            mp_install_openp2p,
-            mp_start_openp2p_host,
-            mp_start_openp2p_join,
-            mp_encode_room_info,
-            mp_stop_openp2p,
-            mp_is_openp2p_running,
+            mp_ensure_installed,
+            mp_get_tool_status,
+            mp_get_download_progress,
+            mp_start_host,
+            mp_start_join,
+            mp_stop_session,
+            mp_is_running,
             mp_poll_log,
-            mp_get_openp2p_dir,
-            mp_get_openp2p_path,
+            mp_get_paths,
+            mp_uninstall_tool,
+            mp_prepare_privileges,
+            mp_encode_room_info,
+            mp_force_kill_process,
+            mp_set_peer,
             vm_scan_instances,
             vm_find_resource_packs,
             vm_parse_level_dat,
@@ -455,41 +479,23 @@ pub fn run() {
                 #[cfg(not(target_os = "macos"))]
                 let win_builder = win_builder.decorations(false);
 
+                #[cfg(windows)]
+                let win_builder = win_builder.additional_browser_args(
+                    "--disable-features=AutofillServerCommunication,PasswordManagerOnboarding,msPasswordBreachDetection",
+                );
+
                 win_builder.build()?
             };
 
-            // 注册窗口关闭事件：关闭窗口时立即停止 openp2p 进程
-            // 注意：这里只做一次快速的 killall（避免阻塞窗口关闭流程）
-            // 完整的多层清理会在 tauri 退出后（下方）再做一次
-            window.on_window_event(move |event| {
-                if let tauri::WindowEvent::CloseRequested { .. } = event {
-                    #[cfg(target_os = "windows")]
-                    {
-                        use std::os::windows::process::CommandExt;
-                        use winapi::um::winbase::CREATE_NO_WINDOW;
-                        let _ = std::process::Command::new("taskkill")
-                            .args(["/F", "/T", "/IM", "openp2p.exe"])
-                            .creation_flags(CREATE_NO_WINDOW)
-                            .output();
-                        let _ = std::process::Command::new("taskkill")
-                            .args(["/F", "/T", "/IM", "openp2p"])
-                            .creation_flags(CREATE_NO_WINDOW)
-                            .output();
-                        // 用系统进程 API 兜底结束 openp2p，替代已弃用且会被杀毒软件拦截的 wmic
-                        quick_kill_openp2p();
-                    }
-                    #[cfg(any(target_os = "linux", target_os = "macos"))]
-                    {
-                        // Linux / macOS: 快速 killall + pkill -9
-                        let _ = std::process::Command::new("killall")
-                            .args(["-9", "openp2p"])
-                            .output();
-                        let _ = std::process::Command::new("pkill")
-                            .args(["-9", "-f", "openp2p"])
-                            .output();
-                    }
-                }
-            });
+            // Suppress WebView2 password-manager / autofill “saved information” chrome on Windows.
+            #[cfg(windows)]
+            {
+                let _ = window.with_webview(|platform_webview| {
+                    disable_webview2_autofill(platform_webview);
+                });
+            }
+
+            // EasyTier 退出由前端 CloseRequested + confirm-dialog 处理：确认后先 stop 再 destroy。
 
             #[cfg(not(target_os = "macos"))]
             let _ = &window;
@@ -516,9 +522,11 @@ pub fn run() {
 
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
-
-    // tauri 退出后，确保 openp2p 也被停止（防止有保护线程残留）
-    ensure_openp2p_stopped();
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|_app_handle, event| {
+            if let tauri::RunEvent::Exit = event {
+                ensure_easytier_stopped_on_exit();
+            }
+        });
 }

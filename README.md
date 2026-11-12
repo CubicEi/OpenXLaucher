@@ -37,7 +37,7 @@
 
 - **账户**：Microsoft（设备码）、LittleSkin、Yggdrasil（authlib-injector）、离线  
 - **皮肤**：3D 预览（skinview3d）  
-- **联机**：OpenP2P 相关能力（见 `src-tauri/src/multiplayer`）  
+- **联机**：基于 EasyTier 的虚拟局域网联机（自动下载/初始化 EasyTier；创建或加入房间后组成虚拟 LAN；可在设置「联机」页卸载模块；见 `src-tauri/src/multiplayer`）  
 
 ### 界面与其它
 

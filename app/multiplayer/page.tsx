@@ -1,68 +1,79 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import { AlertCircle, Check, Copy, Globe, Loader2, RefreshCw } from "lucide-react";
+import { useEffect, useMemo, useRef } from "react";
+import {
+  AlertCircle,
+  Globe,
+  Loader2,
+  RefreshCw,
+  Settings,
+  ShieldAlert,
+} from "lucide-react";
+import { useRouter } from "next/navigation";
 
+import { useI18n } from "@/components/i18n/use-i18n";
 import { MultiplayerRunningPanel } from "@/components/multiplayer/multiplayer-running-panel";
 import { MultiplayerSetupPanel } from "@/components/multiplayer/multiplayer-setup-panel";
-import { OpenP2PInstaller } from "@/components/multiplayer/openp2p-installer";
 import { useMultiplayerContext } from "@/components/multiplayer/multiplayer-provider";
-import type { OpenP2PStatus } from "@/components/multiplayer/multiplayer-state";
+import type { MultiplayerStatus } from "@/components/multiplayer/multiplayer-state";
 import { useMultiplayerLogPolling } from "@/components/multiplayer/use-multiplayer-log-polling";
 import { Button } from "@/components/ui/button";
+import { Progress } from "@/components/ui/progress";
+import {
+  createInAppLinkHandler,
+  onInAppLinkPointerDown,
+  toAppHref,
+} from "@/lib/main-navigation-transition";
 import { cn } from "@/lib/utils";
 
+const SETTINGS_MULTIPLAYER_HREF = "/settings/multiplayer";
+
 export default function MultiplayerPage() {
+  const { t } = useI18n();
+  const router = useRouter();
   const {
     status,
     errorMsg,
+    privilegeRequired,
     runMode,
     roomInfo,
+    decodedInvite,
     logText,
+    downloadProgress,
+    toolDirectory,
     checkStatus,
+    ensureInstalled,
     startAsHost,
     startAsJoin,
-    stopOpenP2P,
+    stopSession,
+    preparePrivileges,
     pollLog,
     clearLog,
-    getOpenP2PPaths,
   } = useMultiplayerContext();
-  const [openP2PDirectory, setOpenP2PDirectory] = useState("");
-  const [openP2PPath, setOpenP2PPath] = useState("");
-  const [pathCopied, setPathCopied] = useState(false);
-  const copyTimerRef = useRef<number | null>(null);
 
+  const ensureAttemptedRef = useRef(false);
+
+  // Re-sync with backend on enter; provider keeps session across route changes.
+  // Do NOT stop EasyTier on unmount — leaving /multiplayer must leave the process running.
   useEffect(() => {
     void checkStatus();
-    void getOpenP2PPaths().then(({ directory, executable }) => {
-      setOpenP2PDirectory(directory);
-      setOpenP2PPath(executable);
-    });
-  }, [checkStatus, getOpenP2PPaths]);
+  }, [checkStatus]);
 
-  useEffect(
-    () => () => {
-      if (copyTimerRef.current !== null) window.clearTimeout(copyTimerRef.current);
-    },
-    []
-  );
-
-  useMultiplayerLogPolling(
-    status === "running" || status === "starting",
-    pollLog
-  );
-
-  const copyOpenP2PPath = async () => {
-    if (!openP2PPath) return;
-    try {
-      await navigator.clipboard.writeText(openP2PPath);
-      setPathCopied(true);
-      if (copyTimerRef.current !== null) window.clearTimeout(copyTimerRef.current);
-      copyTimerRef.current = window.setTimeout(() => setPathCopied(false), 2_000);
-    } catch (error) {
-      console.error("复制失败:", error);
+  useEffect(() => {
+    if (status !== "not_installed") {
+      if (status === "installed" || status === "running") {
+        ensureAttemptedRef.current = false;
+      }
+      return;
     }
-  };
+    if (ensureAttemptedRef.current) return;
+    ensureAttemptedRef.current = true;
+    void ensureInstalled().catch(() => {
+      // Error state is handled in the provider.
+    });
+  }, [ensureInstalled, status]);
+
+  useMultiplayerLogPolling(status === "running" || status === "starting", pollLog);
 
   return (
     <div className="flex h-full flex-col gap-4 overflow-hidden p-4">
@@ -72,52 +83,50 @@ export default function MultiplayerPage() {
             <Globe className="size-5 text-primary" />
           </div>
           <div>
-            <h1 className="text-lg font-semibold leading-none">多人联机</h1>
+            <h1 className="text-lg font-semibold leading-none">
+              {t("multiplayer.page.title")}
+            </h1>
             <p className="mt-1 text-xs text-muted-foreground">
-              使用OpenP2P工具联机
+              {t("multiplayer.page.subtitle")}
             </p>
           </div>
         </div>
 
         <div className="flex items-center gap-2">
-          <StatusBadge status={status} />
           <Button
             variant="ghost"
             size="icon"
             className="size-8"
             onClick={() => void checkStatus()}
-            title="刷新状态"
-            aria-label="刷新状态"
+            title={t("common.refresh")}
+            aria-label={t("common.refresh")}
           >
             <RefreshCw className="size-4" />
           </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="size-8"
+            asChild
+            title={t("multiplayer.page.openSettings")}
+            aria-label={t("multiplayer.page.openSettings")}
+          >
+            <a
+              href={toAppHref(SETTINGS_MULTIPLAYER_HREF)}
+              onPointerDown={onInAppLinkPointerDown}
+              onClick={createInAppLinkHandler(router, SETTINGS_MULTIPLAYER_HREF)}
+            >
+              <Settings className="size-4" />
+            </a>
+          </Button>
+          <StatusBadge status={status} />
         </div>
       </header>
 
-      {status === "error" && errorMsg ? (
+      {status === "error" && errorMsg && !privilegeRequired ? (
         <div className="flex shrink-0 items-start gap-2 rounded-xl bg-destructive/10 p-3 text-xs text-destructive">
           <AlertCircle className="mt-0.5 size-3.5 shrink-0" />
           <span className="break-all">{errorMsg}</span>
-        </div>
-      ) : null}
-
-      {openP2PPath ? (
-        <div className="flex shrink-0 items-center justify-between gap-2 rounded-lg bg-muted/30 px-3 py-2">
-          <div className="min-w-0 flex-1">
-            <span className="text-[10px] text-muted-foreground">OpenP2P 位置：</span>
-            <code className="ml-1 truncate font-mono text-[11px] text-muted-foreground">
-              {openP2PPath}
-            </code>
-          </div>
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-6 shrink-0 gap-1 px-2 text-[10px]"
-            onClick={copyOpenP2PPath}
-          >
-            {pathCopied ? <Check className="size-3" /> : <Copy className="size-3" />}
-            <span>{pathCopied ? "已复制" : "复制"}</span>
-          </Button>
         </div>
       ) : null}
 
@@ -126,121 +135,229 @@ export default function MultiplayerPage() {
           <MultiplayerRunningPanel
             runMode={runMode}
             roomInfo={roomInfo}
+            decodedInvite={decodedInvite}
             logText={logText}
-            openP2PDirectory={openP2PDirectory}
-            onStop={stopOpenP2P}
+            toolDirectory={toolDirectory ?? ""}
+            onStop={stopSession}
             onClearLog={clearLog}
+          />
+        ) : status === "installing" || status === "not_installed" ? (
+          <InstallPanel
+            progress={downloadProgress}
+            failed={status === "not_installed" && Boolean(errorMsg)}
+            errorMsg={errorMsg}
+            onRetry={() => {
+              ensureAttemptedRef.current = false;
+              void ensureInstalled().catch(() => undefined);
+            }}
           />
         ) : status === "starting" || status === "stopping" ? (
           <PendingPanel status={status} />
-        ) : status === "installed" ? (
-          <MultiplayerSetupPanel
-            onStartHost={startAsHost}
-            onStartJoin={startAsJoin}
+        ) : status === "error" && privilegeRequired ? (
+          <PrivilegePanel
+            message={errorMsg}
+            onPrepare={() => void preparePrivileges().catch(() => undefined)}
+            onRetry={() => void checkStatus()}
           />
-        ) : status === "not_installed" ? (
-          <NotInstalledPanel />
+        ) : status === "installed" || status === "error" ? (
+          <MultiplayerSetupPanel onStartHost={startAsHost} onStartJoin={startAsJoin} />
         ) : (
           <CheckingPanel />
         )}
       </main>
+    </div>
+  );
+}
 
-      <OpenP2PInstaller />
+function PrivilegePanel({
+  message,
+  onPrepare,
+  onRetry,
+}: {
+  message: string | null;
+  onPrepare: () => void;
+  onRetry: () => void;
+}) {
+  const { t } = useI18n();
+  return (
+    <div className="flex flex-1 flex-col items-center justify-center gap-4 rounded-xl border border-border bg-card p-6">
+      <div className="flex size-16 items-center justify-center rounded-2xl bg-amber-500/10">
+        <ShieldAlert className="size-8 text-amber-600 dark:text-amber-400" />
+      </div>
+      <div className="max-w-md space-y-1 text-center">
+        <h2 className="text-base font-semibold text-foreground">
+          {t("multiplayer.privilege.title")}
+        </h2>
+        <p className="text-xs leading-relaxed text-muted-foreground">
+          {message || t("multiplayer.privilege.message")}
+        </p>
+        <p className="text-xs leading-relaxed text-muted-foreground">
+          {t("multiplayer.privilege.manualHint")}
+        </p>
+      </div>
+      <div className="flex flex-wrap justify-center gap-2">
+        <Button onClick={onPrepare}>{t("multiplayer.privilege.prepare")}</Button>
+        <Button variant="outline" onClick={onRetry}>
+          {t("common.refresh")}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function InstallPanel({
+  progress,
+  failed,
+  errorMsg,
+  onRetry,
+}: {
+  progress: { downloaded: number; total: number } | null;
+  failed?: boolean;
+  errorMsg?: string | null;
+  onRetry: () => void;
+}) {
+  const { t } = useI18n();
+  const percent = useMemo(() => {
+    if (!progress || progress.total <= 0) return undefined;
+    return Math.min(100, Math.round((progress.downloaded / progress.total) * 100));
+  }, [progress]);
+
+  const progressLabel = useMemo(() => {
+    if (failed) return errorMsg || t("multiplayer.install.failedHint");
+    if (!progress || progress.total <= 0) return t("multiplayer.install.preparing");
+    return t("multiplayer.install.progress", {
+      percent: percent ?? 0,
+      downloaded: formatBytes(progress.downloaded),
+      total: formatBytes(progress.total),
+    });
+  }, [errorMsg, failed, percent, progress, t]);
+
+  return (
+    <div className="flex flex-1 flex-col items-center justify-center gap-4 rounded-xl border border-border bg-card p-6">
+      <div
+        className={cn(
+          "flex size-16 items-center justify-center rounded-2xl",
+          failed ? "bg-destructive/10" : "bg-primary/10"
+        )}
+      >
+        {failed ? (
+          <AlertCircle className="size-8 text-destructive" />
+        ) : (
+          <Loader2 className="size-8 animate-spin text-primary" />
+        )}
+      </div>
+      <div className="w-full max-w-md space-y-3 text-center">
+        <h2 className="text-base font-semibold text-foreground">
+          {failed ? t("multiplayer.install.failedTitle") : t("multiplayer.install.title")}
+        </h2>
+        <p className="text-xs leading-relaxed text-muted-foreground">
+          {t("multiplayer.install.description")}
+        </p>
+        {!failed ? <Progress value={percent} className="h-2" /> : null}
+        <p className={cn("text-xs", failed ? "break-all text-destructive" : "text-muted-foreground")}>
+          {progressLabel}
+        </p>
+      </div>
+      <Button variant={failed ? "default" : "outline"} size="sm" onClick={onRetry}>
+        {t("multiplayer.install.retry")}
+      </Button>
     </div>
   );
 }
 
 function PendingPanel({ status }: { status: "starting" | "stopping" }) {
+  const { t } = useI18n();
   return (
     <div className="flex flex-1 flex-col items-center justify-center gap-3 rounded-xl border border-border bg-card text-muted-foreground">
       <Loader2 className="size-8 animate-spin text-primary" />
       <p className="text-sm font-medium text-foreground">
-        {status === "starting" ? "正在启动 OpenP2P..." : "正在停止 OpenP2P..."}
+        {status === "starting"
+          ? t("multiplayer.page.starting")
+          : t("multiplayer.page.stopping")}
       </p>
-      <p className="text-xs text-muted-foreground">请稍候...</p>
-    </div>
-  );
-}
-
-function NotInstalledPanel() {
-  return (
-    <div className="flex flex-1 flex-col items-center justify-center gap-4 rounded-xl border border-border bg-card p-6">
-      <div className="flex size-16 items-center justify-center rounded-2xl bg-destructive/10">
-        <AlertCircle className="size-8 text-destructive" />
-      </div>
-      <div className="space-y-1 text-center">
-        <h2 className="text-base font-semibold text-foreground">尚未安装 OpenP2P</h2>
-        <p className="max-w-md text-xs leading-relaxed text-muted-foreground">
-          多人联机功能需要 openp2p.exe 作为外置联机工具。
-          请将 openp2p 可执行文件拖入此窗口完成安装。
-        </p>
-      </div>
-      <div className="mt-2 flex items-center gap-2 rounded-lg bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
-        <div className="size-1.5 rounded-full bg-primary" />
-        <span>将 openp2p.exe 文件拖入窗口即可完成安装</span>
-      </div>
+      <p className="text-xs text-muted-foreground">{t("multiplayer.page.pleaseWait")}</p>
     </div>
   );
 }
 
 function CheckingPanel() {
+  const { t } = useI18n();
   return (
     <div className="flex flex-1 flex-col items-center justify-center gap-3 rounded-xl border border-border bg-card text-muted-foreground">
       <Loader2 className="size-6 animate-spin text-primary" />
-      <p className="text-sm">正在检查 OpenP2P 状态...</p>
+      <p className="text-sm">{t("multiplayer.page.checking")}</p>
     </div>
   );
 }
 
+function formatBytes(bytes: number) {
+  if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
+  const units = ["B", "KB", "MB", "GB"];
+  let value = bytes;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit += 1;
+  }
+  return `${value >= 10 || unit === 0 ? value.toFixed(0) : value.toFixed(1)} ${units[unit]}`;
+}
+
 const STATUS_CONFIG: Record<
-  OpenP2PStatus,
-  { label: string; dot: string; background: string; text: string }
+  MultiplayerStatus,
+  { labelKey: `multiplayer.status.${MultiplayerStatus}`; dot: string; background: string; text: string }
 > = {
   idle: {
-    label: "检查中",
+    labelKey: "multiplayer.status.idle",
     dot: "bg-muted-foreground/40",
     background: "bg-muted",
     text: "text-muted-foreground",
   },
   not_installed: {
-    label: "未安装",
+    labelKey: "multiplayer.status.not_installed",
     dot: "bg-destructive",
     background: "bg-destructive/10",
     text: "text-destructive",
   },
+  installing: {
+    labelKey: "multiplayer.status.installing",
+    dot: "bg-primary",
+    background: "bg-primary/10",
+    text: "text-primary",
+  },
   installed: {
-    label: "就绪",
+    labelKey: "multiplayer.status.installed",
     dot: "bg-emerald-500",
     background: "bg-emerald-500/10",
     text: "text-emerald-700 dark:text-emerald-400",
   },
   starting: {
-    label: "启动中",
+    labelKey: "multiplayer.status.starting",
     dot: "bg-primary",
     background: "bg-primary/10",
     text: "text-primary",
   },
   running: {
-    label: "运行中",
+    labelKey: "multiplayer.status.running",
     dot: "bg-green-500 animate-pulse",
     background: "bg-green-500/10",
     text: "text-green-700 dark:text-green-400",
   },
   stopping: {
-    label: "停止中",
+    labelKey: "multiplayer.status.stopping",
     dot: "bg-orange-500",
     background: "bg-orange-500/10",
     text: "text-orange-700 dark:text-orange-400",
   },
   error: {
-    label: "出错",
+    labelKey: "multiplayer.status.error",
     dot: "bg-destructive",
     background: "bg-destructive/10",
     text: "text-destructive",
   },
 };
 
-function StatusBadge({ status }: { status: OpenP2PStatus }) {
+function StatusBadge({ status }: { status: MultiplayerStatus }) {
+  const { t } = useI18n();
   const config = STATUS_CONFIG[status];
   return (
     <div
@@ -251,7 +368,7 @@ function StatusBadge({ status }: { status: OpenP2PStatus }) {
       )}
     >
       <span className={cn("size-1.5 rounded-full", config.dot)} />
-      {config.label}
+      {t(config.labelKey)}
     </div>
   );
 }

@@ -1,122 +1,414 @@
-#[cfg(target_os = "windows")]
-use std::io::Error;
 use std::io::{BufRead, BufReader};
-#[cfg(target_os = "windows")]
-use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
 use std::thread;
-#[cfg(target_os = "windows")]
-use std::{env, fs};
+
+use serde::Serialize;
 use tauri::command;
 
-use super::codec;
-use super::logs::{self, append_text as append_log_str, clear_files as clear_openp2p_log_files};
-use super::paths::{
-    bridge_dir as get_bridge_dir, executable_path as get_executable_path,
-    openp2p_dir as get_openp2p_dir, openp2p_path as get_openp2p_path,
+use super::codec::{
+    self, build_host_invite, decode_invite, encode_invite, generate_network_secret, host_arguments,
+    join_arguments, peer_url, sanitize_hostname, sanitize_room_name, InvitePayload, HOST_VIP,
 };
-use super::OPENP2P_BIN;
-static OPENP2P_PROCESS: Mutex<Option<Child>> = Mutex::new(None);
-static OPENP2P_START_LOCK: Mutex<()> = Mutex::new(());
+use super::download::current_download_progress;
+use super::logs::{self, append_text};
+use super::paths::{
+    bridge_dir, executable_path, is_easytier_managed_file, read_installed_version, read_peer_url,
+    tool_dir, tool_path, write_peer_url, DEFAULT_PEER,
+};
+use super::EASYTIER_BIN;
 
-fn is_openp2p_process_name(name: &str) -> bool {
-    name.eq_ignore_ascii_case("openp2p") || name.eq_ignore_ascii_case("openp2p.exe")
+static SESSION_PROCESS: Mutex<Option<Child>> = Mutex::new(None);
+static SESSION_START_LOCK: Mutex<()> = Mutex::new(());
+static PENDING_HOST: Mutex<Option<InvitePayload>> = Mutex::new(None);
+static ACTIVE_SESSION: Mutex<Option<ActiveSession>> = Mutex::new(None);
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ActiveSession {
+    pub mode: String,
+    pub room_info: String,
 }
 
-/// 窗口关闭时的快速兜底清理：直接用系统进程 API 结束 openp2p，
-/// 不依赖 wmic/taskkill 等外部命令，避免触发杀毒软件拦截。
-#[cfg(target_os = "windows")]
-pub fn quick_kill_openp2p() {
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolStatus {
+    pub installed: bool,
+    pub version: Option<String>,
+    pub path: String,
+    pub bridge_dir: String,
+    pub running: bool,
+    pub peer: String,
+    pub download: super::download::MpDownloadProgress,
+    pub run_mode: Option<String>,
+    pub room_info: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MpPaths {
+    pub bridge_dir: String,
+    pub tool_path: String,
+    pub tool_name: String,
+    pub peer: String,
+    pub default_peer: String,
+    pub host_vip: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EncodeRoomResult {
+    pub invite: String,
+    pub network_name: String,
+    pub host_ipv4: String,
+    pub port: u16,
+    pub peer: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StartHostResult {
+    pub invite: String,
+    pub network_name: String,
+    pub host_ipv4: String,
+    pub port: u16,
+    pub peer: String,
+    pub path: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StartJoinResult {
+    pub path: String,
+    pub network_name: String,
+    pub host_ipv4: String,
+    pub port: u16,
+    pub connect_hint: String,
+    pub peer: String,
+}
+
+fn is_easytier_process_name(name: &str) -> bool {
+    name.eq_ignore_ascii_case("easytier-core") || name.eq_ignore_ascii_case("easytier-core.exe")
+}
+
+fn has_session_system_process() -> bool {
     let system = sysinfo::System::new_all();
-    for process in system.processes().values() {
-        if is_openp2p_process_name(&process.name().to_string_lossy()) {
-            let _ = process.kill();
+    let our_path = tool_path().ok();
+    system.processes().values().any(|process| {
+        if !is_easytier_process_name(&process.name().to_string_lossy()) {
+            return false;
         }
+        if let Some(ref expected) = our_path {
+            if let Some(exe) = process.exe() {
+                return exe == expected.as_path();
+            }
+        }
+        true
+    })
+}
+
+fn kill_tracked_child() {
+    if let Ok(mut guard) = SESSION_PROCESS.lock() {
+        if let Some(child) = guard.as_mut() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+        *guard = None;
     }
 }
 
-fn has_openp2p_system_process() -> bool {
+fn kill_our_easytier_processes() -> Result<(), String> {
     let system = sysinfo::System::new_all();
-    system
-        .processes()
-        .values()
-        .any(|process| is_openp2p_process_name(&process.name().to_string_lossy()))
-}
-
-#[cfg(target_os = "windows")]
-fn quote_windows_argument(argument: &str) -> String {
-    if !argument.is_empty()
-        && !argument
-            .chars()
-            .any(|character| character.is_whitespace() || character == '"')
-    {
-        return argument.to_string();
-    }
-
-    let mut quoted = String::from("\"");
-    let mut backslashes = 0usize;
-    for character in argument.chars() {
-        if character == '\\' {
-            backslashes += 1;
+    let our_path = tool_path().ok();
+    let mut killed_any = false;
+    for process in system.processes().values() {
+        if !is_easytier_process_name(&process.name().to_string_lossy()) {
             continue;
         }
-        if character == '"' {
-            quoted.push_str(&"\\".repeat(backslashes * 2 + 1));
-            quoted.push('"');
-        } else {
-            quoted.push_str(&"\\".repeat(backslashes));
-            quoted.push(character);
+        let matches_path = match (&our_path, process.exe()) {
+            (Some(expected), Some(exe)) => exe == expected.as_path(),
+            (Some(_), None) => false,
+            (None, _) => true,
+        };
+        if matches_path {
+            let _ = process.kill();
+            killed_any = true;
         }
-        backslashes = 0;
     }
-    quoted.push_str(&"\\".repeat(backslashes * 2));
-    quoted.push('"');
-    quoted
+    if killed_any {
+        thread::sleep(std::time::Duration::from_millis(300));
+    }
+
+    // 管理员启动的 easytier 可能杀不掉，再请求提升后的 Stop-Process。
+    #[cfg(target_os = "windows")]
+    if has_session_system_process() {
+        let _ = kill_easytier_elevated();
+        thread::sleep(std::time::Duration::from_millis(400));
+    }
+
+    Ok(())
 }
 
-fn start_openp2p_with_args(args: &[String]) -> Result<String, String> {
-    // 序列化启动请求，并在真正创建进程前检查系统中已有的 OpenP2P。
-    // OpenP2P 默认占用同一个 PublicIPPort；重复启动会导致新实例持续报端口冲突。
-    let _start_guard = OPENP2P_START_LOCK
-        .lock()
-        .map_err(|_| "OpenP2P 启动流程锁异常".to_string())?;
-    if mp_is_openp2p_running() {
-        return Err("OpenP2P 已在后台运行，请先停止当前联机后再启动".to_string());
-    }
+#[cfg(target_os = "windows")]
+fn kill_easytier_elevated() -> Result<(), String> {
+    use std::ffi::OsStr;
+    use std::os::windows::ffi::OsStrExt;
+    use std::ptr;
+    use winapi::um::shellapi::ShellExecuteW;
+    use winapi::um::winuser::SW_HIDE;
 
-    let openp2p_path = get_openp2p_path()?;
-    if !openp2p_path.exists() {
+    let script = "Get-Process -Name 'easytier-core' -ErrorAction SilentlyContinue | Stop-Process -Force; exit 0";
+    let windows_dir =
+        std::env::var_os("WINDIR").unwrap_or_else(|| OsStr::new("C:\\Windows").to_os_string());
+    let powershell_path = std::path::PathBuf::from(windows_dir)
+        .join("System32")
+        .join("WindowsPowerShell")
+        .join("v1.0")
+        .join("powershell.exe");
+    let powershell_wide: Vec<u16> = powershell_path
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+    let runas_wide: Vec<u16> = OsStr::new("runas")
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+    let args = format!(
+        "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -Command \"{}\"",
+        script
+    );
+    let args_wide: Vec<u16> = OsStr::new(&args)
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+    let result = unsafe {
+        ShellExecuteW(
+            ptr::null_mut(),
+            runas_wide.as_ptr(),
+            powershell_wide.as_ptr(),
+            args_wide.as_ptr(),
+            ptr::null(),
+            SW_HIDE,
+        )
+    };
+    if (result as isize) <= 32 {
         return Err(format!(
-            "{} 不存在于: {}，请确保已将 openp2p 可执行文件拖入安装",
-            OPENP2P_BIN,
-            openp2p_path.display()
+            "无法提权结束 EasyTier（ShellExecute 返回 {}）",
+            result as isize
         ));
     }
-    let working_dir = get_openp2p_dir()?;
-    let path_str = get_executable_path(&openp2p_path)?;
+    Ok(())
+}
+
+fn store_active_session(mode: &str, room_info: &str) {
+    if let Ok(mut guard) = ACTIVE_SESSION.lock() {
+        *guard = Some(ActiveSession {
+            mode: mode.to_string(),
+            room_info: room_info.to_string(),
+        });
+    }
+}
+
+fn clear_active_session() {
+    if let Ok(mut guard) = ACTIVE_SESSION.lock() {
+        *guard = None;
+    }
+}
+
+fn active_session_snapshot() -> Option<ActiveSession> {
+    ACTIVE_SESSION.lock().ok().and_then(|guard| guard.clone())
+}
+
+fn stop_session_inner() -> Result<(), String> {
+    append_text("[OpenXLauncher] 正在停止 EasyTier 会话…\n");
+    kill_tracked_child();
+    kill_our_easytier_processes()?;
+    clear_active_session();
+    append_text("[OpenXLauncher] ✅ EasyTier 会话已停止（模块文件保留）\n");
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn is_process_elevated() -> bool {
+    // winapi 0.3 未导出该符号；直接链接 shell32。
+    #[link(name = "shell32")]
+    extern "system" {
+        fn IsUserAnAdmin() -> i32;
+    }
+    unsafe { IsUserAnAdmin() != 0 }
+}
+
+#[cfg(target_os = "windows")]
+fn start_elevated_with_args(
+    bin_path: &std::path::Path,
+    working_dir: &std::path::Path,
+    args: &[String],
+) -> Result<String, String> {
+    use std::ffi::OsStr;
+    use std::os::windows::ffi::OsStrExt;
+    use std::ptr;
+    use winapi::um::shellapi::ShellExecuteW;
+    use winapi::um::winuser::SW_HIDE;
+
+    logs::reset_session_log(working_dir);
+    let log_path = logs::session_log_path(working_dir);
+    let path_str = executable_path(bin_path)?;
+
+    // PowerShell 在管理员上下文中启动 easytier，并把输出写入会话日志供前端轮询。
+    let arg_literals: String = args
+        .iter()
+        .map(|a| format!("'{}'", a.replace('\'', "''")))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let script = format!(
+        "$ErrorActionPreference='Continue'; \
+         Set-Location -LiteralPath '{}'; \
+         $log = '{}'; \
+         $exe = '{}'; \
+         $argList = @({args}); \
+         & $exe @argList *>&1 | ForEach-Object {{ \
+           $line = $_.ToString(); \
+           Add-Content -LiteralPath $log -Value $line -Encoding utf8 \
+         }}; \
+         exit $LASTEXITCODE",
+        working_dir.display().to_string().replace('\'', "''"),
+        log_path.display().to_string().replace('\'', "''"),
+        path_str.replace('\'', "''"),
+        args = arg_literals,
+    );
+
+    let windows_dir =
+        std::env::var_os("WINDIR").unwrap_or_else(|| OsStr::new("C:\\Windows").to_os_string());
+    let powershell_path = std::path::PathBuf::from(windows_dir)
+        .join("System32")
+        .join("WindowsPowerShell")
+        .join("v1.0")
+        .join("powershell.exe");
+    let powershell_wide: Vec<u16> = powershell_path
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+    let runas_wide: Vec<u16> = OsStr::new("runas")
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+    let ps_args = format!(
+        "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -Command \"{}\"",
+        script.replace('"', "\\\"")
+    );
+    let args_wide: Vec<u16> = OsStr::new(&ps_args)
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+    let cwd_wide: Vec<u16> = working_dir
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+
+    append_text(
+        "[OpenXLauncher] 正在请求管理员权限启动 easytier-core（创建 TUN 虚拟网卡需要）…\n\
+         [OpenXLauncher] 请在 UAC 提示中选择「是」。若选择「否」，将无法创建虚拟网卡。\n\n",
+    );
+
+    let result = unsafe {
+        ShellExecuteW(
+            ptr::null_mut(),
+            runas_wide.as_ptr(),
+            powershell_wide.as_ptr(),
+            args_wide.as_ptr(),
+            cwd_wide.as_ptr(),
+            SW_HIDE,
+        )
+    };
+    if (result as isize) <= 32 {
+        let err = format!(
+            "管理员启动未完成（ShellExecute 返回 {}）。创建 TUN 需要管理员权限，请在 UAC 中允许，或右键以管理员身份运行启动器。",
+            result as isize
+        );
+        append_text(&format!("[OpenXLauncher] ❌ {}\n", err));
+        return Err(err);
+    }
+
+    // ShellExecute 异步拉起；等待进程出现。
+    for _ in 0..40 {
+        thread::sleep(std::time::Duration::from_millis(150));
+        if has_session_system_process() {
+            // 提升后的进程不由我们持有 Child 句柄
+            if let Ok(mut guard) = SESSION_PROCESS.lock() {
+                *guard = None;
+            }
+            append_text(
+                "[OpenXLauncher] ✅ 已以管理员权限启动 easytier-core（输出写入会话日志）\n\n",
+            );
+            return Ok(path_str);
+        }
+    }
+
+    // 可能启动极快失败；仍返回成功路径让前端轮询日志，同时提示检查日志。
+    append_text(
+        "[OpenXLauncher] ⚠ 未在短时间内检测到 easytier-core 进程，请查看下方日志（常见原因：UAC 拒绝或 TUN/wintun 失败）\n\n",
+    );
+    Ok(path_str)
+}
+
+fn start_with_args(args: &[String]) -> Result<String, String> {
+    let _start_guard = SESSION_START_LOCK
+        .lock()
+        .map_err(|_| "EasyTier 启动流程锁异常".to_string())?;
+    if is_running_inner() {
+        return Err("EasyTier 会话已在运行，请先停止当前联机后再启动".to_string());
+    }
+    // 清理残留进程，降低 AddrInUse(10048) 概率。
+    let _ = kill_our_easytier_processes();
+
+    let bin_path = tool_path()?;
+    if !bin_path.is_file() {
+        return Err(format!(
+            "{} 不存在于: {}，请先执行安装初始化",
+            EASYTIER_BIN,
+            bin_path.display()
+        ));
+    }
+    let working_dir = tool_dir()?;
+    let path_str = executable_path(&bin_path)?;
     logs::clear_buffer();
-    clear_openp2p_log_files(&working_dir);
-    append_log_str(&format!(
-        "[OpenXLauncher] 正在启动 openp2p...\n\
+    append_text(&format!(
+        "[OpenXLauncher] 正在启动 easytier-core…\n\
          [OpenXLauncher]   可执行文件: {}\n\
          [OpenXLauncher]   工作目录: {}\n\
-         [OpenXLauncher]   参数: {:?}\n\
-         [OpenXLauncher]   日志目录: {}/log/\n\n",
+         [OpenXLauncher]   参数: {:?}\n\n",
         path_str,
         working_dir.display(),
-        args,
-        working_dir.display()
+        args
     ));
+
+    #[cfg(target_os = "windows")]
+    {
+        let wintun = working_dir.join("wintun.dll");
+        if !wintun.is_file() {
+            append_text(
+                "[OpenXLauncher] ⚠ 未在 bridge 目录发现 wintun.dll。若随后报 Failed to create adapter，请重新下载/修复 EasyTier 模块。\n",
+            );
+        }
+        // 非管理员进程无法创建 TUN；提权启动。已是管理员则直接管道捕获输出。
+        if !is_process_elevated() {
+            return start_elevated_with_args(&bin_path, &working_dir, args);
+        }
+    }
+
     #[cfg(target_os = "windows")]
     let mut cmd = {
         use std::os::windows::process::CommandExt;
-        let mut c = Command::new(&openp2p_path);
-        c.creation_flags(0x08000000);
+        let mut c = Command::new(&bin_path);
+        c.creation_flags(0x08000000); // CREATE_NO_WINDOW
         c
     };
     #[cfg(not(target_os = "windows"))]
-    let mut cmd = Command::new(&openp2p_path);
+    let mut cmd = Command::new(&bin_path);
+
     cmd.current_dir(&working_dir);
     for arg in args {
         cmd.arg(arg);
@@ -124,18 +416,15 @@ fn start_openp2p_with_args(args: &[String]) -> Result<String, String> {
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::piped());
     cmd.stdin(Stdio::null());
-    let spawn_result = cmd.spawn();
-    match spawn_result {
+
+    match cmd.spawn() {
         Ok(mut child) => {
             if let Some(stdout) = child.stdout.take() {
                 thread::spawn(move || {
                     let reader = BufReader::new(stdout);
                     for line in reader.lines() {
                         match line {
-                            Ok(text) => {
-                                let with_newline = text + "\n";
-                                append_log_str(&with_newline);
-                            }
+                            Ok(text) => append_text(&(text + "\n")),
                             Err(_) => break,
                         }
                     }
@@ -146,353 +435,260 @@ fn start_openp2p_with_args(args: &[String]) -> Result<String, String> {
                     let reader = BufReader::new(stderr);
                     for line in reader.lines() {
                         match line {
-                            Ok(text) => {
-                                let with_newline = "[stderr] ".to_string() + &text + "\n";
-                                append_log_str(&with_newline);
-                            }
+                            Ok(text) => append_text(&format!("[stderr] {}\n", text)),
                             Err(_) => break,
                         }
                     }
                 });
             }
             {
-                let mut guard = OPENP2P_PROCESS
+                let mut guard = SESSION_PROCESS
                     .lock()
                     .map_err(|_| "无法锁定进程句柄".to_string())?;
                 *guard = Some(child);
             }
-            append_log_str("[OpenXLauncher] ✅ openp2p 进程已启动，正在捕获输出...\n");
-            append_log_str("[OpenXLauncher] (右侧日志窗口会持续显示 openp2p 的所有输出)\n\n");
+            append_text("[OpenXLauncher] ✅ easytier-core 已启动，正在捕获输出…\n\n");
             Ok(path_str)
         }
         Err(e) => {
-            let is_elevation_error = cfg!(target_os = "windows") && e.raw_os_error() == Some(740);
-            if is_elevation_error {
-                append_log_str("[OpenXLauncher] ⚠ openp2p.exe 需要管理员权限才能运行\n");
-                append_log_str("[OpenXLauncher]   正在以管理员身份重新启动（会弹出 UAC 提示）...\n");
-                append_log_str(
-                    "[OpenXLauncher]   注意：以管理员权限启动后，无法通过管道捕获 stdout\n",
-                );
-                append_log_str(
-                    "[OpenXLauncher]   将改为读取 openp2p 自己生成的日志文件来获取反馈\n\n",
-                );
-                #[cfg(target_os = "windows")]
-                {
-                    use std::ffi::OsStr;
-                    use std::os::windows::ffi::OsStrExt;
-                    use std::ptr;
-                    use winapi::um::shellapi::ShellExecuteW;
-                    use winapi::um::winuser::SW_HIDE;
-                    let exe_path = std::path::PathBuf::from(&path_str);
-                    let exe_wide: Vec<u16> = OsStr::new(&exe_path)
-                        .encode_wide()
-                        .chain(std::iter::once(0))
-                        .collect();
-                    let args_str = args
-                        .iter()
-                        .map(|argument| quote_windows_argument(argument))
-                        .collect::<Vec<_>>()
-                        .join(" ");
-                    let args_wide: Vec<u16> = OsStr::new(&args_str)
-                        .encode_wide()
-                        .chain(std::iter::once(0))
-                        .collect();
-                    let runas_wide: Vec<u16> = OsStr::new("runas")
-                        .encode_wide()
-                        .chain(std::iter::once(0))
-                        .collect();
-                    let work_dir_wide: Vec<u16> = working_dir
-                        .as_os_str()
-                        .encode_wide()
-                        .chain(std::iter::once(0))
-                        .collect();
-                    let result = unsafe {
-                        ShellExecuteW(
-                            ptr::null_mut(),
-                            runas_wide.as_ptr(),
-                            exe_wide.as_ptr(),
-                            args_wide.as_ptr(),
-                            work_dir_wide.as_ptr(),
-                            SW_HIDE,
-                        )
-                    };
-                    if (result as i32) <= 32 {
-                        let err = Error::last_os_error();
-                        let err_msg = format!(
-                            "[OpenXLauncher] ❌ 以管理员身份启动也失败: {}\n\
-                             [OpenXLauncher]   请尝试手动以管理员身份运行此程序（右键 → 以管理员身份运行）\n",
-                            err
-                        );
-                        append_log_str(&err_msg);
-                        return Err(err_msg);
-                    }
-                    append_log_str("[OpenXLauncher] ✅ openp2p 已以管理员权限启动\n");
-                    append_log_str("[OpenXLauncher]   正在等待 openp2p 生成日志文件...\n");
-                    append_log_str("[OpenXLauncher]   (如果长时间无输出，请检查 openp2p.exe 是否被杀毒软件拦截)\n\n");
-                    {
-                        let mut guard = OPENP2P_PROCESS
-                            .lock()
-                            .map_err(|_| "无法锁定进程句柄".to_string())?;
-                        *guard = None;
-                    }
-                    Ok(path_str)
-                }
-                #[cfg(not(target_os = "windows"))]
-                {
-                    let err_msg = format!(
-                        "[OpenXLauncher] ❌ 启动失败: {}\n\
-                         [OpenXLauncher]   请尝试以 sudo/管理员权限运行此程序\n",
-                        e
-                    );
-                    append_log_str(&err_msg);
-                    Err(err_msg)
-                }
-            } else {
-                let err_msg = format!(
-                    "[OpenXLauncher] ❌ 启动失败 (系统错误: {})\n\
-                     [OpenXLauncher]   可执行文件路径: {}\n\
-                     [OpenXLauncher]   工作目录: {}\n\
-                     [OpenXLauncher]   请确认:\n\
-                     [OpenXLauncher]   1. {} 存在且与当前操作系统及 CPU 架构匹配\n\
-                     [OpenXLauncher]   2. 当前用户具备该文件的执行权限\n\
-                     [OpenXLauncher]   3. 文件未被系统安全工具拦截\n",
-                    e,
-                    path_str,
-                    working_dir.display(),
-                    OPENP2P_BIN
-                );
-                append_log_str(&err_msg);
-                Err(err_msg)
-            }
+            let err_msg = format!(
+                "[OpenXLauncher] ❌ 启动失败: {}\n\
+                 [OpenXLauncher]   路径: {}\n\
+                 [OpenXLauncher]   若提示权限/TUN 相关错误，请允许 UAC 或以管理员运行启动器\n",
+                e, path_str
+            );
+            append_text(&err_msg);
+            Err(err_msg)
         }
     }
 }
-#[command]
-pub fn mp_check_openp2p() -> bool {
-    get_openp2p_path().map(|p| p.exists()).unwrap_or(false)
-}
-#[command]
-pub fn mp_install_openp2p(src_path: String) -> Result<String, String> {
-    let bridge_dir = get_bridge_dir()?;
-    std::fs::create_dir_all(&bridge_dir).map_err(|e| format!("创建 bridge 目录失败: {}", e))?;
-    let dest = bridge_dir.join(OPENP2P_BIN);
-    std::fs::copy(&src_path, &dest).map_err(|e| format!("复制文件失败: {}", e))?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let mut perms = std::fs::metadata(&dest)
-            .map_err(|e| format!("获取文件属性失败: {}", e))?
-            .permissions();
-        perms.set_mode(0o755);
-        std::fs::set_permissions(&dest, perms).map_err(|e| format!("设置执行权限失败: {}", e))?;
-    }
-    Ok(dest.to_string_lossy().to_string())
-}
-#[command]
-pub fn mp_start_openp2p_host(room_name: String) -> Result<String, String> {
-    let room = codec::sanitize_openp2p_node(&room_name)?;
-    let args = codec::host_arguments(&room);
-    start_openp2p_with_args(&args)
-}
-#[command]
-pub fn mp_encode_room_info(room_name: String, port_count: String) -> Result<String, String> {
-    let room = codec::sanitize_openp2p_node(&room_name)?;
-    let port = port_count.trim();
-    if port.is_empty() || !port.chars().all(|c| c.is_ascii_digit()) {
-        return Err("端口号必须为数字".to_string());
-    }
-    Ok(codec::encode_room_info(&room, port))
-}
-#[command]
-pub fn mp_start_openp2p_join(encoded_value: String, player_name: String) -> Result<String, String> {
-    let args = codec::join_arguments(&encoded_value, &player_name)?;
-    start_openp2p_with_args(&args)
-}
-fn kill_all_openp2p_processes() -> Result<(), String> {
-    #[cfg(target_os = "windows")]
-    {
-        use std::ffi::OsStr;
-        use std::os::windows::ffi::OsStrExt;
-        use std::ptr;
-        use winapi::um::shellapi::ShellExecuteW;
 
-        if !has_openp2p_system_process() {
-            return Ok(());
-        }
-
-        // 这台机器上的 taskkill/tasklist 会返回“分页文件太小”，因此绕开这两个命令，
-        // 使用管理员 PowerShell 的 Process API 重复结束守护/工作进程。
-        let working_dir = get_openp2p_dir()?;
-        let stop_script = working_dir.join(".OpenXLauncher-stop-openp2p.ps1");
-        let script = r#"$ErrorActionPreference = 'SilentlyContinue'
-for ($i = 0; $i -lt 20; $i++) {
-  Get-Process -Name openp2p -ErrorAction SilentlyContinue | Stop-Process -Force
-  Start-Sleep -Milliseconds 250
-}
-"#;
-        fs::write(&stop_script, script).map_err(|e| format!("写入 OpenP2P 停止脚本失败: {}", e))?;
-
-        let windows_dir =
-            env::var_os("WINDIR").unwrap_or_else(|| OsStr::new("C:\\Windows").to_os_string());
-        let powershell_path = PathBuf::from(windows_dir)
-            .join("System32")
-            .join("WindowsPowerShell")
-            .join("v1.0")
-            .join("powershell.exe");
-        let powershell_wide: Vec<u16> = powershell_path
-            .as_os_str()
-            .encode_wide()
-            .chain(std::iter::once(0))
-            .collect();
-        let runas_wide: Vec<u16> = OsStr::new("runas")
-            .encode_wide()
-            .chain(std::iter::once(0))
-            .collect();
-        let powershell_args = format!(
-            "-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File \"{}\"",
-            stop_script.display()
-        );
-        let args_wide: Vec<u16> = OsStr::new(&powershell_args)
-            .encode_wide()
-            .chain(std::iter::once(0))
-            .collect();
-        append_log_str("[OpenXLauncher] 请求管理员权限，通过进程 API 结束 OpenP2P...\n");
-        let work_dir_wide: Vec<u16> = working_dir
-            .as_os_str()
-            .encode_wide()
-            .chain(std::iter::once(0))
-            .collect();
-        let result = unsafe {
-            ShellExecuteW(
-                ptr::null_mut(),
-                runas_wide.as_ptr(),
-                powershell_wide.as_ptr(),
-                args_wide.as_ptr(),
-                work_dir_wide.as_ptr(),
-                winapi::um::winuser::SW_HIDE,
-            )
-        };
-        if (result as isize) <= 32 {
-            let _ = fs::remove_file(&stop_script);
-            return Err(format!(
-                "管理员终止请求未执行（ShellExecute 返回 {}）",
-                result as isize
-            ));
-        }
-
-        // 停止逻辑运行在 blocking 线程中，等待期间不占用 Tauri 界面线程。
-        let mut consecutive_missing = 0;
-        for _ in 0..150 {
-            thread::sleep(std::time::Duration::from_millis(200));
-            if !has_openp2p_system_process() {
-                consecutive_missing += 1;
-                if consecutive_missing >= 3 {
-                    let _ = fs::remove_file(&stop_script);
-                    return Ok(());
-                }
-            } else {
-                consecutive_missing = 0;
-            }
-        }
-        let _ = fs::remove_file(&stop_script);
-        return Err("OpenP2P 进程仍在运行，请确认管理员提示后重试".to_string());
-    }
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
-    {
-        use sysinfo::Signal;
-
-        // Linux 与 macOS 共用 sysinfo 进程 API，避免依赖 killall/pkill/grep 等外部命令。
-        // 前几轮先发送 TERM，仍存活时再发送 KILL。
-        for attempt in 0..12 {
-            let system = sysinfo::System::new_all();
-            let mut found = false;
-            for process in system
-                .processes()
-                .values()
-                .filter(|process| is_openp2p_process_name(&process.name().to_string_lossy()))
-            {
-                found = true;
-                if attempt < 4 {
-                    let _ = process.kill_with(Signal::Term);
-                } else {
-                    let _ = process.kill();
-                }
-            }
-            if !found {
-                return Ok(());
-            }
-            thread::sleep(std::time::Duration::from_millis(250));
-        }
-
-        Err("OpenP2P 进程仍在运行，请检查当前用户的进程权限".to_string())
-    }
-}
-#[command]
-pub async fn mp_stop_openp2p() -> Result<(), String> {
-    let working_dir = get_openp2p_dir().ok();
-    append_log_str("[OpenXLauncher] 正在停止 openp2p 进程（含保护线程）...\n");
-    {
-        if let Ok(mut guard) = OPENP2P_PROCESS.lock() {
-            if let Some(child) = guard.as_mut() {
-                let _ = child.kill();
-            }
-            *guard = None;
-        }
-    }
-    tauri::async_runtime::spawn_blocking(kill_all_openp2p_processes)
-        .await
-        .map_err(|e| format!("OpenP2P 停止任务异常: {}", e))??;
-    if let Some(dir) = &working_dir {
-        clear_openp2p_log_files(dir);
-    }
-    append_log_str("[OpenXLauncher] ✅ openp2p 进程（含所有保护线程）已终止\n");
-    Ok(())
-}
-#[command]
-pub fn mp_is_openp2p_running() -> bool {
-    if let Ok(mut guard) = OPENP2P_PROCESS.lock() {
+fn is_running_inner() -> bool {
+    if let Ok(mut guard) = SESSION_PROCESS.lock() {
         if let Some(child) = guard.as_mut() {
             match child.try_wait() {
                 Ok(None) => return true,
                 Ok(Some(_)) => {
-                    // `openp2p -d` 的父进程会在拉起后台工作进程后正常退出。
-                    // 清除旧句柄，继续通过系统进程列表检查真正的工作进程。
                     *guard = None;
                 }
                 Err(e) => {
-                    append_log_str(&format!("[OpenXLauncher] 检查进程句柄失败: {}\n", e));
+                    append_text(&format!("[OpenXLauncher] 检查进程句柄失败: {}\n", e));
                 }
+            }
+        }
+    }
+    has_session_system_process()
+}
+
+fn take_or_create_host_invite(room_name: &str, port: &str) -> Result<InvitePayload, String> {
+    let network_name = sanitize_room_name(room_name)?;
+    let port_num = codec::parse_port(port)?;
+
+    if let Ok(mut guard) = PENDING_HOST.lock() {
+        if let Some(pending) = guard.as_ref() {
+            if pending.network_name == network_name && pending.port == port_num {
+                let payload = pending.clone();
+                *guard = None;
+                return Ok(payload);
             }
         }
     }
 
-    has_openp2p_system_process()
+    let secret = generate_network_secret();
+    build_host_invite(&network_name, port, &secret)
 }
-#[command]
-pub fn mp_poll_log() -> String {
-    let working_dir = get_openp2p_dir().ok();
-    logs::poll(working_dir.as_deref())
+
+fn store_pending_host(payload: InvitePayload) {
+    if let Ok(mut guard) = PENDING_HOST.lock() {
+        *guard = Some(payload);
+    }
 }
-#[command]
-pub fn mp_get_openp2p_dir() -> String {
-    get_openp2p_dir()
-        .map(|p| p.display().to_string())
-        .unwrap_or_else(|_| String::new())
-}
-#[command]
-pub fn mp_get_openp2p_path() -> String {
-    get_openp2p_path()
-        .map(|p| p.display().to_string())
-        .unwrap_or_else(|_| String::new())
-}
-pub fn ensure_openp2p_stopped() {
-    {
-        if let Ok(mut guard) = OPENP2P_PROCESS.lock() {
-            if let Some(child) = guard.as_mut() {
-                let _ = child.kill();
+
+fn delete_easytier_files(dir: &std::path::Path) -> Result<(), String> {
+    if !dir.is_dir() {
+        return Ok(());
+    }
+    for entry in std::fs::read_dir(dir).map_err(|e| format!("读取 bridge 失败: {}", e))? {
+        let entry = entry.map_err(|e| e.to_string())?;
+        let path = entry.path();
+        let name = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or_default();
+        if path.is_file() && is_easytier_managed_file(name) {
+            std::fs::remove_file(&path)
+                .map_err(|e| format!("删除 {} 失败: {}", path.display(), e))?;
+        } else if path.is_dir() {
+            let lower = name.to_ascii_lowercase();
+            if lower.starts_with("easytier") || lower == "log" {
+                let _ = std::fs::remove_dir_all(&path);
             }
-            *guard = None;
         }
     }
-    let _ = kill_all_openp2p_processes();
+    Ok(())
+}
+
+#[command(rename_all = "camelCase")]
+pub fn mp_get_tool_status() -> ToolStatus {
+    let path = tool_path().unwrap_or_default();
+    let bridge = bridge_dir().unwrap_or_default();
+    let running = is_running_inner();
+    let session = if running {
+        active_session_snapshot()
+    } else {
+        clear_active_session();
+        None
+    };
+    ToolStatus {
+        installed: path.is_file(),
+        version: read_installed_version(),
+        path: path.display().to_string(),
+        bridge_dir: bridge.display().to_string(),
+        running,
+        peer: read_peer_url(),
+        download: current_download_progress(),
+        run_mode: session.as_ref().map(|s| s.mode.clone()),
+        room_info: session.as_ref().map(|s| s.room_info.clone()),
+    }
+}
+
+#[command(rename_all = "camelCase")]
+pub fn mp_get_paths() -> MpPaths {
+    MpPaths {
+        bridge_dir: bridge_dir()
+            .map(|p| p.display().to_string())
+            .unwrap_or_default(),
+        tool_path: tool_path()
+            .map(|p| p.display().to_string())
+            .unwrap_or_default(),
+        tool_name: EASYTIER_BIN.to_string(),
+        peer: read_peer_url(),
+        default_peer: DEFAULT_PEER.to_string(),
+        host_vip: HOST_VIP.to_string(),
+    }
+}
+
+#[command(rename_all = "camelCase")]
+pub fn mp_set_peer(peer: String) -> Result<String, String> {
+    write_peer_url(&peer)?;
+    Ok(read_peer_url())
+}
+
+#[command(rename_all = "camelCase")]
+pub fn mp_encode_room_info(room_name: String, port: String) -> Result<EncodeRoomResult, String> {
+    let secret = generate_network_secret();
+    let payload = build_host_invite(&room_name, &port, &secret)?;
+    store_pending_host(payload.clone());
+    Ok(EncodeRoomResult {
+        invite: encode_invite(&payload),
+        network_name: payload.network_name,
+        host_ipv4: payload.host_ipv4,
+        port: payload.port,
+        peer: peer_url(),
+    })
+}
+
+#[command(rename_all = "camelCase")]
+pub fn mp_start_host(room_name: String, port: String) -> Result<StartHostResult, String> {
+    let payload = take_or_create_host_invite(&room_name, &port)?;
+    let hostname = sanitize_hostname(&payload.network_name)?;
+    let peer = peer_url();
+    let args = host_arguments(
+        &payload.network_name,
+        &payload.network_secret,
+        &hostname,
+        &peer,
+    );
+    let path = start_with_args(&args)?;
+    let invite = encode_invite(&payload);
+    store_active_session("host", &invite);
+    Ok(StartHostResult {
+        invite,
+        network_name: payload.network_name,
+        host_ipv4: payload.host_ipv4,
+        port: payload.port,
+        peer,
+        path,
+    })
+}
+
+#[command(rename_all = "camelCase")]
+pub fn mp_start_join(encoded_invite: String, player_name: String) -> Result<StartJoinResult, String> {
+    let invite = decode_invite(&encoded_invite)?;
+    let hostname = sanitize_hostname(&player_name)?;
+    // 优先使用邀请码中的节点，保证与房主同一引导入口。
+    let peer = if invite.peer.trim().is_empty() {
+        peer_url()
+    } else {
+        invite.peer.clone()
+    };
+    let args = join_arguments(
+        &invite.network_name,
+        &invite.network_secret,
+        &hostname,
+        &peer,
+    );
+    let path = start_with_args(&args)?;
+    store_active_session("join", &encoded_invite);
+    Ok(StartJoinResult {
+        path,
+        network_name: invite.network_name,
+        host_ipv4: invite.host_ipv4.clone(),
+        port: invite.port,
+        connect_hint: format!("{}:{}", invite.host_ipv4, invite.port),
+        peer,
+    })
+}
+
+#[command(rename_all = "camelCase")]
+pub async fn mp_stop_session() -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(stop_session_inner)
+        .await
+        .map_err(|e| format!("停止会话任务异常: {}", e))?
+}
+
+#[command(rename_all = "camelCase")]
+pub fn mp_is_running() -> bool {
+    is_running_inner()
+}
+
+#[command(rename_all = "camelCase")]
+pub fn mp_poll_log() -> String {
+    logs::poll()
+}
+
+#[command(rename_all = "camelCase")]
+pub async fn mp_uninstall_tool() -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(|| {
+        stop_session_inner()?;
+        let dir = bridge_dir()?;
+        append_text(&format!(
+            "[OpenXLauncher] 正在卸载 EasyTier 文件（{}）…\n",
+            dir.display()
+        ));
+        delete_easytier_files(&dir)?;
+        append_text("[OpenXLauncher] ✅ EasyTier 模块已卸载\n");
+        Ok(())
+    })
+    .await
+    .map_err(|e| format!("卸载任务异常: {}", e))?
+}
+
+#[command(rename_all = "camelCase")]
+pub async fn mp_force_kill_process() -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(|| {
+        append_text("[OpenXLauncher] 强制结束 EasyTier 进程（不卸载）…\n");
+        kill_tracked_child();
+        kill_our_easytier_processes()?;
+        clear_active_session();
+        append_text("[OpenXLauncher] ✅ 强制结束完成\n");
+        Ok(())
+    })
+    .await
+    .map_err(|e| format!("强制结束任务异常: {}", e))?
+}
+
+/// Best-effort stop used when the launcher process is exiting.
+pub fn ensure_easytier_stopped_on_exit() {
+    let _ = stop_session_inner();
 }

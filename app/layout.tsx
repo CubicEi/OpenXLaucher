@@ -8,6 +8,7 @@ import { DownloadProvider } from "@/components/download/download-provider";
 import { RetargetInstallListener } from "@/components/download/retarget-install-listener";
 import { FlyToProcessListOverlay } from "@/components/process-list/fly-to-process-list";
 import { LaunchProvider } from "@/components/launch/launch-provider";
+import { MultiplayerExitGuard } from "@/components/multiplayer/multiplayer-exit-guard";
 import { MultiplayerProvider } from "@/components/multiplayer/multiplayer-provider";
 import { DeferredGlobalFeatures } from "@/components/global/deferred-global-features";
 import { StartupRuntimeDependencyNotifier } from "@/components/settings/startup-runtime-dependency-notifier";
@@ -67,6 +68,7 @@ export default function RootLayout({
                           <ConfirmDialogProvider>
                           <ThemeRuntimeProvider>
                             <DeferredGlobalFeatures />
+                            <MultiplayerExitGuard />
                             <ScrollbarProximity />
                             <StartupRuntimeDependencyNotifier />
                             <StartupUpdateNotifier />

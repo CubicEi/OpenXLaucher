@@ -486,7 +486,45 @@
       "categories": "分类",
       "general": "通用",
       "download": "下载",
+      "multiplayer": "联机",
       "appearance": "外观"
+    },
+    "multiplayer": {
+      "title": "联机模块",
+      "description": "管理 EasyTier 联机模块",
+      "status": "模块状态",
+      "installed": "已安装",
+      "yes": "是",
+      "no": "否",
+      "version": "版本",
+      "path": "路径",
+      "running": "运行中",
+      "runningYes": "是",
+      "runningNo": "否",
+      "unknown": "未知",
+      "actions": "操作",
+      "actionsHint": "重新下载可修复损坏的模块；紧急停止将结束进程。卸载将删除 EasyTier 模块文件。",
+      "repair": "重新下载 / 修复",
+      "repairing": "正在修复…",
+      "preparePrivileges": "准备权限（防火墙 / TUN）",
+      "preparingPrivileges": "正在准备权限…",
+      "emergencyStop": "紧急停止进程",
+      "stopping": "正在停止…",
+      "uninstall": "卸载 EasyTier 模块",
+      "uninstalling": "正在卸载…",
+      "uninstallConfirmTitle": "是否卸载 EasyTier 模块？",
+      "uninstallConfirmDescription": "将停止相关进程并删除已下载的 EasyTier 模块文件。",
+      "publicNodeUrl": "公共节点 URL",
+      "publicNodeUrlDescription": "用于 EasyTier 发现与中继的默认公共节点。",
+      "publicNodeUrlHint": "当前保存在本地启动器设置中。",
+      "savePublicNode": "保存",
+      "publicNodeSaved": "公共节点 URL 已保存。",
+      "loadFailed": "无法读取联机模块状态。",
+      "actionFailed": "操作失败。",
+      "repairSuccess": "模块已重新下载或修复。",
+      "privilegesSuccess": "权限准备完成。开房/加入时请允许 UAC，否则无法创建虚拟网卡。",
+      "stopSuccess": "已尝试停止 EasyTier 进程。",
+      "uninstallSuccess": "EasyTier 模块已卸载。"
     },
     "languageSection": {
       "title": "语言 / Language",
@@ -914,6 +952,94 @@
       "replace": "替换",
       "preparing": "准备中…",
       "processing": "处理中…"
+    }
+  },
+  "multiplayer": {
+    "common": {
+      "copy": "复制",
+      "copied": "已复制"
+    },
+    "page": {
+      "title": "多人联机",
+      "subtitle": "通过虚拟局域网与好友联机",
+      "openSettings": "联机设置",
+      "starting": "正在启动联机会话…",
+      "stopping": "正在停止联机会话…",
+      "pleaseWait": "请稍候…",
+      "checking": "正在检查联机工具状态…"
+    },
+    "exit": {
+      "title": "确认退出启动器？",
+      "description": "联机会话仍在运行。退出启动器将停止 EasyTier，当前联机将中断。",
+      "confirm": "停止联机并退出",
+      "cancel": "继续联机"
+    },
+    "status": {
+      "idle": "检查中",
+      "not_installed": "未安装",
+      "installing": "安装中",
+      "installed": "就绪",
+      "starting": "启动中",
+      "running": "运行中",
+      "stopping": "停止中",
+      "error": "出错"
+    },
+    "install": {
+      "title": "正在准备联机工具",
+      "failedTitle": "联机工具安装失败",
+      "description": "首次使用需要下载并初始化联机模块，完成后才能开始联机。",
+      "preparing": "正在下载并安装…",
+      "progress": "{percent}% · {downloaded} / {total}",
+      "failedHint": "安装未完成，请检查网络后再次下载。",
+      "retry": "重新下载"
+    },
+    "setup": {
+      "hostTab": "创建房间（房主）",
+      "joinTab": "加入房间",
+      "hostTitle": "创建房间",
+      "hostDescription": "填写房间名与游戏局域网端口。启动后会生成邀请码，分享给好友即可加入。",
+      "roomName": "房间名",
+      "roomNamePlaceholder": "例如 my_room",
+      "port": "局域网端口",
+      "portPlaceholder": "1 - 65535",
+      "portHint": "请填写 Minecraft「对局域网开放」后提示的端口，不一定是默认 25565。",
+      "startHost": "启动联机",
+      "joinTitle": "加入房间",
+      "joinDescription": "粘贴房主分享的邀请码并填写玩家名。",
+      "inviteCode": "邀请码",
+      "inviteCodePlaceholder": "房主分享的邀请码",
+      "previewAddress": "将要连接的地址",
+      "invalidInvite": "邀请码无效。",
+      "playerName": "玩家名",
+      "playerNamePlaceholder": "你的游戏玩家名",
+      "startJoin": "加入联机"
+    },
+    "running": {
+      "header": "联机会话运行中（{mode}）",
+      "modeHost": "房主",
+      "modeJoin": "加入",
+      "modeBackground": "后台",
+      "stop": "停止联机",
+      "hostReady": "房间已创建",
+      "joinReady": "已加入房间",
+      "sessionRunning": "联机会话运行中",
+      "sessionHint": "联机模块在后台运行。下方日志会实时显示连接状态。",
+      "directConnectTitle": "Minecraft 直接连接",
+      "copyAddress": "复制地址",
+      "directConnectHint": "在 Minecraft 多人游戏 → 直接连接中粘贴此地址（房主虚拟 IP:端口）。",
+      "hostAddressHint": "好友将通过此虚拟地址加入；请保持本机世界已对局域网开放。",
+      "shareInvite": "将此邀请码分享给其他玩家：",
+      "logs": "运行日志",
+      "logsFrom": "（来自 {path}）",
+      "autoScroll": "自动滚动",
+      "waitingLogs": "正在等待联机日志…",
+      "waitingLogsHint": "若长时间没有内容，可能是启动失败或权限不足"
+    },
+    "privilege": {
+      "title": "需要额外权限",
+      "message": "联机模块需要防火墙放行或虚拟网卡权限。",
+      "manualHint": "若系统弹出权限确认请允许；仍失败时可在设置中的联机页查看手动步骤。",
+      "prepare": "一键准备权限"
     }
   }
 }
