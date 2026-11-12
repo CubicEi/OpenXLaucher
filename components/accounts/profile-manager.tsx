@@ -1,8 +1,8 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { AnimatePresence, motion } from "framer-motion";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { ConfirmDialog } from "@/components/confirm-dialog";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { useAccountContext } from "@/components/accounts/account-provider";
@@ -21,7 +21,6 @@ import {
   Shirt,
 } from "lucide-react";
 import { cn, getAvatarColor, getAvatarInitials } from "@/lib/utils";
-import { overlayFade, scaleIn } from "@/lib/motion";
 import type { Account } from "@/types";
 import {
   fetchTextureImageBase64,
@@ -422,57 +421,32 @@ export function ProfileManager() {
         </PageEnter>
       </div>
 
-      <AnimatePresence>
-        {deleteTarget && (
-          <div className="fixed inset-0 z-[60] flex items-center justify-center">
-            <motion.div
-              variants={overlayFade}
-              initial="initial"
-              animate="animate"
-              exit="exit"
-              className="absolute inset-0 bg-black/50 backdrop-blur-sm"
-              onClick={() => setDeleteTarget(null)}
-            />
-            <motion.div
-              variants={scaleIn}
-              initial="initial"
-              animate="animate"
-              exit="exit"
-              className="relative z-10 mx-4 w-full max-w-xs"
-            >
-              <Card className="shadow-2xl">
-                <CardHeader>
-                  <CardTitle className="text-base">{t("profiles.deleteTitle")}</CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <p className="text-sm text-muted-foreground">
-                    {t("profiles.deleteConfirm", { name: deleteTarget.name })}
-                  </p>
-                  <div className="flex justify-end gap-2">
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => setDeleteTarget(null)}
-                    >
-                      {t("common.cancel")}
-                    </Button>
-                    <Button
-                      variant="destructive"
-                      size="sm"
-                      onClick={() => {
-                        removeProfile(deleteTarget.id);
-                        setDeleteTarget(null);
-                      }}
-                    >
-                      {t("profiles.delete")}
-                    </Button>
-                  </div>
-                </CardContent>
-              </Card>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
+      <ConfirmDialog
+        open={deleteTarget != null}
+        onOpenChange={(open) => {
+          if (!open) setDeleteTarget(null);
+        }}
+        title={t("profiles.deleteTitle")}
+        actions={[
+          {
+            label: t("common.cancel"),
+            variant: "outline",
+            onClick: () => setDeleteTarget(null),
+          },
+          {
+            label: t("profiles.delete"),
+            variant: "destructive",
+            onClick: () => {
+              if (deleteTarget) removeProfile(deleteTarget.id);
+              setDeleteTarget(null);
+            },
+          },
+        ]}
+      >
+        {deleteTarget
+          ? t("profiles.deleteConfirm", { name: deleteTarget.name })
+          : ""}
+      </ConfirmDialog>
 
     </>
   );

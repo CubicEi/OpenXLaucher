@@ -20,14 +20,19 @@ export function DialogShell({
 }) {
   return (
     <div className={cn("flex flex-col", className)}>
-      <div className="flex items-center gap-2.5 border-b border-border px-5 py-4">
+      <div className="flex items-center gap-2.5 border-b border-border px-5 pb-4 pt-5">
         <AppLogo />
         <h2 className="text-sm font-semibold text-foreground leading-tight">{title}</h2>
       </div>
-      <div className={cn("px-5 py-4 text-sm text-muted-foreground", bodyClassName)}>
+      <div
+        className={cn(
+          "px-5 pt-6 pb-2 text-sm text-muted-foreground",
+          bodyClassName,
+        )}
+      >
         {children}
       </div>
-      <div className="flex flex-wrap items-center justify-end gap-2 border-t border-border px-5 py-3">
+      <div className="flex flex-wrap items-center justify-end gap-2 px-5 pb-5 pt-5">
         {footer}
       </div>
     </div>

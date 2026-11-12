@@ -103,6 +103,7 @@
       "statusRunning": "Running",
       "statusStopped": "Stopped",
       "statusError": "Failed",
+      "statusCancelled": "Cancelled",
       "statusInProgress": "Launching",
       "statusIdle": "Idle",
       "statusTimeout": "Timeout",

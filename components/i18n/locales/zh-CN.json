@@ -103,6 +103,7 @@
       "statusRunning": "运行中",
       "statusStopped": "已停止",
       "statusError": "启动失败",
+      "statusCancelled": "已取消",
       "statusInProgress": "启动中",
       "statusIdle": "空闲",
       "statusTimeout": "启动超时",

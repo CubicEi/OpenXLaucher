@@ -52,7 +52,7 @@ export function InputDialog({
       <DialogContent hideClose className={cn("!max-w-lg p-0 overflow-hidden", className)}>
         <DialogShell
           title={title}
-          bodyClassName="space-y-3"
+          bodyClassName="space-y-4"
           footer={
             <>
               <Button

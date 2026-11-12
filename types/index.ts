@@ -284,7 +284,14 @@ export interface LaunchAnalysisReport {
   startedAt: number | null;
   endedAt: number | null;
   totalDurationMs: number | null;
-  finalStatus: "idle" | "running" | "stopped" | "error" | "timeout" | "in_progress";
+  finalStatus:
+    | "idle"
+    | "running"
+    | "stopped"
+    | "error"
+    | "timeout"
+    | "in_progress"
+    | "cancelled";
   exitCode: number | null;
   stages: LaunchStageTiming[];
   detectedModCount: number | null;
