@@ -148,10 +148,6 @@
   --tw-ring-color: color-mix(in oklch, var(--popover) 95%, var(--foreground) 5%);
 }
 
-.dark [data-slot="alert-dialog-content"] {
-  --tw-ring-color: color-mix(in oklch, var(--background) 95%, var(--foreground) 5%);
-}
-
 /* 深色模式下输入框/按钮等控件的 focus ring 使用不透明色，
    与上面同理，避免半透明 box-shadow 描边在圆角处抗锯齿粗糙 */
 .dark [data-slot="input"]:focus-visible,

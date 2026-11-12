@@ -22,6 +22,7 @@ import {
 } from "@/components/download/download-provider";
 import { useI18n, type TranslationKey } from "@/components/i18n/use-i18n";
 import { fadeSlideUp, staggerContainer, staggerItem } from "@/lib/motion";
+import { navigateBackWithMainTransition } from "@/lib/main-navigation-transition";
 import {
   averageActiveProgress,
   formatSpeedBps,
@@ -235,7 +236,7 @@ export function ProcessListView() {
               variant="ghost"
               size="icon-sm"
               className="mt-0.5 shrink-0"
-              onClick={() => router.back()}
+              onClick={() => navigateBackWithMainTransition(router)}
               aria-label={t("common.back")}
               title={t("common.back")}
             >

@@ -26,16 +26,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
+import { ConfirmDialog } from "@/components/confirm-dialog";
 import { ImagePlus, RotateCcw, Palette, Type, X, Layout } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { cn } from "@/lib/utils";
@@ -407,34 +398,32 @@ function SessionAppearanceRow({
           : t("settings.appearance.appearanceSessionApplyHint")}
       </p>
 
-      <AlertDialog
+      <ConfirmDialog
         open={restartOpen}
         onOpenChange={(open) => {
           if (restarting) return;
           setRestartOpen(open);
         }}
+        title={t("settings.appearance.appearanceSessionRestartTitle")}
+        lockDismiss={restarting}
+        actions={[
+          {
+            label: t("common.cancel"),
+            variant: "outline",
+            disabled: restarting,
+            onClick: () => setRestartOpen(false),
+          },
+          {
+            label: t("settings.appearance.appearanceSessionRestartConfirm"),
+            variant: "primary",
+            disabled: restarting,
+            loading: restarting,
+            onClick: () => void handleConfirmRestart(),
+          },
+        ]}
       >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>{t("settings.appearance.appearanceSessionRestartTitle")}</AlertDialogTitle>
-            <AlertDialogDescription>
-              {t("settings.appearance.appearanceSessionRestartDescription")}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={restarting}>{t("common.cancel")}</AlertDialogCancel>
-            <AlertDialogAction
-              disabled={restarting}
-              onClick={(e) => {
-                e.preventDefault();
-                void handleConfirmRestart();
-              }}
-            >
-              {t("settings.appearance.appearanceSessionRestartConfirm")}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+        {t("settings.appearance.appearanceSessionRestartDescription")}
+      </ConfirmDialog>
     </div>
   );
 }

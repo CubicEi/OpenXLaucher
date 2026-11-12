@@ -21,15 +21,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import {
-  AlertDialog,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
+import { ConfirmDialog } from "@/components/confirm-dialog";
 import { fadeSlideUp, staggerContainer, staggerItem } from "@/lib/motion";
 import { useI18n } from "@/components/i18n/use-i18n";
 
@@ -778,57 +770,58 @@ export default function ResourcePanel({
         </motion.div>
       </div>
 
-      <AlertDialog
+      <ConfirmDialog
         open={pendingDelete !== null}
         onOpenChange={(open) => {
           if (!open && !deleteInProgress) clearPendingDelete();
         }}
+        title={t("resource.deleteConfirmTitle")}
+        lockDismiss={deleteInProgress}
+        actions={[
+          {
+            label: t("common.cancel"),
+            variant: "outline",
+            disabled: deleteInProgress,
+            onClick: clearPendingDelete,
+          },
+          {
+            label: t("common.delete"),
+            variant: "destructive",
+            disabled: deleteInProgress,
+            onClick: () => void handleConfirmDelete(),
+          },
+        ]}
       >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>{t("resource.deleteConfirmTitle")}</AlertDialogTitle>
-            <AlertDialogDescription>
-              {pendingDelete
-                ? t("resource.deleteConfirm", { name: pendingDelete.displayName })
-                : ""}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={deleteInProgress} onClick={clearPendingDelete}>
-              {t("common.cancel")}
-            </AlertDialogCancel>
-            <Button
-              variant="destructive"
-              disabled={deleteInProgress}
-              onClick={() => void handleConfirmDelete()}
-            >
-              {t("common.delete")}
-            </Button>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+        {pendingDelete
+          ? t("resource.deleteConfirm", { name: pendingDelete.displayName })
+          : ""}
+      </ConfirmDialog>
 
-      <AlertDialog open={clearCacheOpen} onOpenChange={(open) => !clearingCache && setClearCacheOpen(open)}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>{t("resource.clearCacheConfirmTitle")}</AlertDialogTitle>
-            <AlertDialogDescription>
-              {t("resource.clearCacheConfirm")}
-              <span className="mt-2 block text-muted-foreground">{t("resource.clearCacheConfirmDetail")}</span>
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={clearingCache}>{t("common.cancel")}</AlertDialogCancel>
-            <Button
-              variant="destructive"
-              disabled={clearingCache}
-              onClick={() => void handleConfirmClearCache()}
-            >
-              {t("resource.clearCacheLibrary")}
-            </Button>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      <ConfirmDialog
+        open={clearCacheOpen}
+        onOpenChange={(open) => !clearingCache && setClearCacheOpen(open)}
+        title={t("resource.clearCacheConfirmTitle")}
+        lockDismiss={clearingCache}
+        actions={[
+          {
+            label: t("common.cancel"),
+            variant: "outline",
+            disabled: clearingCache,
+            onClick: () => setClearCacheOpen(false),
+          },
+          {
+            label: t("resource.clearCacheLibrary"),
+            variant: "destructive",
+            disabled: clearingCache,
+            onClick: () => void handleConfirmClearCache(),
+          },
+        ]}
+      >
+        {t("resource.clearCacheConfirm")}
+        <span className="mt-2 block text-muted-foreground">
+          {t("resource.clearCacheConfirmDetail")}
+        </span>
+      </ConfirmDialog>
     </div>
   );
 }

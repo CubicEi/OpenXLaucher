@@ -23,6 +23,7 @@ import {
 import { isUpdateCheckTimeoutError } from "@/lib/update-check";
 import { LauncherUpdateProgressBar } from "@/components/settings/launcher-update-progress-bar";
 import { ChangelogMarkdown } from "@/components/settings/changelog-markdown";
+import { showAlertDialog } from "@/components/confirm-dialog";
 
 /**
  * 自动更新组件 — 提供共享更新状态、主页提示和手动更新操作。
@@ -76,9 +77,10 @@ async function checkInBackground(showError = false, language: AppLanguage = "zh-
       setAppUpdateState({ kind: "up-to-date" });
       markUpToDateAndSuppressAutoCheck();
       if (showError) {
-        setTimeout(() => {
-          window.alert(updateAlert(language, "当前已是最新版本 ✅", "You're up to date ✅"));
-        }, 50);
+        void showAlertDialog({
+          title: updateAlert(language, "检查更新", "Check for updates"),
+          description: updateAlert(language, "当前已是最新版本 ✅", "You're up to date ✅"),
+        });
       }
     }
   } catch (e) {
@@ -88,9 +90,10 @@ async function checkInBackground(showError = false, language: AppLanguage = "zh-
     }
     setAppUpdateState({ kind: "error", message: msg });
     if (showError) {
-      setTimeout(() => {
-        window.alert(updateAlert(language, "检查更新失败：\n", "Update check failed:\n") + msg);
-      }, 50);
+      void showAlertDialog({
+        title: updateAlert(language, "检查更新失败", "Update check failed"),
+        description: `${updateAlert(language, "检查更新失败：", "Update check failed:")}\n${msg}`,
+      });
     }
   }
 }
@@ -103,7 +106,10 @@ async function downloadAndInstall(
   try {
     const checkResult = await invoke<UpdateCheckResult>("check_for_updates", { force: true });
     if (!checkResult.update_available) {
-      window.alert(updateAlert(language, "没有可用更新", "No updates are available"));
+      await showAlertDialog({
+        title: updateAlert(language, "检查更新", "Check for updates"),
+        description: updateAlert(language, "没有可用更新", "No updates are available"),
+      });
       return false;
     }
     const unlisten = await listenLauncherUpdateProgress((percent) => {
@@ -118,9 +124,12 @@ async function downloadAndInstall(
     return true;
   } catch (e) {
     console.error("[updater] install failed:", e);
-    window.alert(
-      updateAlert(language, "安装失败：\n", "Installation failed:\n") + (e instanceof Error ? e.message : String(e))
-    );
+    await showAlertDialog({
+      title: updateAlert(language, "安装失败", "Installation failed"),
+      description:
+        updateAlert(language, "安装失败：\n", "Installation failed:\n") +
+        (e instanceof Error ? e.message : String(e)),
+    });
     return false;
   }
 }

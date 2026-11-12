@@ -4,18 +4,11 @@ import { useEffect, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { useRouter } from "next/navigation";
-import { AlertCircle, Download, ExternalLink, Loader2 } from "lucide-react";
 
+import { ConfirmDialog } from "@/components/confirm-dialog";
 import { isTauriRuntime } from "@/lib/tauri-runtime";
 import { useI18n } from "@/components/i18n/use-i18n";
 import { useDownloadManager } from "@/components/download/download-provider";
-import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 
 interface JavaIncompatiblePayload {
   requiredMajor: number;
@@ -23,11 +16,6 @@ interface JavaIncompatiblePayload {
   currentJavaPath?: string;
 }
 
-/**
- * Listens for launch-time `java-incompatible` and offers:
- * - open Download Center → Java tab
- * - one-click install Zulu JDK N
- */
 export function JavaIncompatibleDialog() {
   const { t } = useI18n();
   const router = useRouter();
@@ -89,56 +77,43 @@ export function JavaIncompatibleDialog() {
   };
 
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
-      <DialogContent className="max-w-md">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <AlertCircle className="size-5 text-destructive" />
-            {t("launch.javaIncompatible.title")}
-          </DialogTitle>
-        </DialogHeader>
-
-        <div className="space-y-3 px-5 py-4">
-          <p className="text-sm text-muted-foreground">
-            {requiredMajor != null
-              ? t("launch.javaIncompatible.description", {
-                  major: requiredMajor,
-                  version: versionName || "—",
-                })
-              : null}
-          </p>
-          <p className="text-xs text-muted-foreground">
-            {t("launch.javaIncompatible.hint")}
-          </p>
-          {installMessage ? (
-            <p className="text-xs rounded-md border border-border bg-muted/40 px-3 py-2">
-              {installMessage}
-            </p>
-          ) : null}
-        </div>
-
-        <div className="flex flex-col gap-2 border-t border-border px-5 py-3 sm:flex-row sm:justify-end">
-          <Button type="button" variant="outline" onClick={openDownloadCenter} className="gap-1.5">
-            <ExternalLink className="size-3.5" />
-            {t("launch.javaIncompatible.openDownloadCenter")}
-          </Button>
-          <Button
-            type="button"
-            onClick={() => void installZulu()}
-            disabled={installing || requiredMajor == null}
-            className="gap-1.5"
-          >
-            {installing ? (
-              <Loader2 className="size-3.5 animate-spin" />
-            ) : (
-              <Download className="size-3.5" />
-            )}
-            {requiredMajor != null
+    <ConfirmDialog
+      open={open}
+      onOpenChange={setOpen}
+      title={t("launch.javaIncompatible.title")}
+      lockDismiss={installing}
+      actions={[
+        {
+          label: t("launch.javaIncompatible.openDownloadCenter"),
+          variant: "outline",
+          onClick: openDownloadCenter,
+        },
+        {
+          label:
+            requiredMajor != null
               ? t("launch.javaIncompatible.installZulu", { major: requiredMajor })
-              : t("launch.javaIncompatible.installZuluGeneric")}
-          </Button>
-        </div>
-      </DialogContent>
-    </Dialog>
+              : t("launch.javaIncompatible.installZuluGeneric"),
+          variant: "primary",
+          disabled: installing || requiredMajor == null,
+          loading: installing,
+          onClick: () => void installZulu(),
+        },
+      ]}
+    >
+      {requiredMajor != null ? (
+        <p>
+          {t("launch.javaIncompatible.description", {
+            major: requiredMajor,
+            version: versionName || "—",
+          })}
+        </p>
+      ) : null}
+      <p className="text-xs">{t("launch.javaIncompatible.hint")}</p>
+      {installMessage ? (
+        <p className="text-xs rounded-md border border-border bg-muted/40 px-3 py-2 mt-2">
+          {installMessage}
+        </p>
+      ) : null}
+    </ConfirmDialog>
   );
 }

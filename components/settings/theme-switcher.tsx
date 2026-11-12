@@ -2,7 +2,8 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
-import { useState } from "react";
+import { useMemo, useState } from "react";
+import { useConfirmDialog } from "@/components/confirm-dialog";
 import { FolderCode, PackagePlus, RefreshCw, Trash2 } from "lucide-react";
 
 import { useI18n } from "@/components/i18n/use-i18n";
@@ -47,7 +48,9 @@ const DEFAULT_OPERATIONS: ThemeSwitcherOperations = {
     "theme_set_trusted",
     { themeId, version, trusted },
   ),
-  async confirm(message) { return window.confirm(message); },
+  async confirm() {
+    return false;
+  },
 };
 
 function uniquePackages(packages: ReturnType<typeof useThemeRuntime>["packages"]) {
@@ -59,11 +62,26 @@ function uniquePackages(packages: ReturnType<typeof useThemeRuntime>["packages"]
 }
 
 export function ThemeSwitcher({
-  operations = DEFAULT_OPERATIONS,
+  operations: operationsProp,
 }: {
   operations?: ThemeSwitcherOperations;
 }) {
   const { t } = useI18n();
+  const { confirm: confirmDialog } = useConfirmDialog();
+  const operations = useMemo<ThemeSwitcherOperations>(() => {
+    const base = operationsProp ?? DEFAULT_OPERATIONS;
+    return {
+      ...base,
+      async confirm(message) {
+        return confirmDialog({
+          title: t("settings.themeManager.selectTheme"),
+          description: message,
+          confirmLabel: t("common.confirm"),
+          cancelLabel: t("common.cancel"),
+        });
+      },
+    };
+  }, [confirmDialog, operationsProp, t]);
   const { update } = useSettings();
   const theme = useThemeRuntime();
   const [busy, setBusy] = useState(false);

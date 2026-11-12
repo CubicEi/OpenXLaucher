@@ -109,7 +109,9 @@ use handler::quilt_handler::{
     get_quilt_loader_versions,
 };
 use handler::runtime_dependencies::check_runtime_dependencies;
-use handler::runtime_log::{append_runtime_log, format_runtime_log_line, write_runtime_log};
+use handler::runtime_log::{
+    append_runtime_log, format_runtime_log_line, rotate_launcher_log_on_startup, write_runtime_log,
+};
 use handler::system::{
     get_system_memory, open_external, optimize_memory_usage, read_file_base64, vm_open_path,
     write_file,
@@ -391,6 +393,7 @@ pub fn run() {
 
             system_proxy::reapply_system_proxy_from_preferences();
             app_paths::ensure_portable_dirs();
+            rotate_launcher_log_on_startup();
             if let Err(error) = updater::identity::ensure_portable_self_hash() {
                 eprintln!("[identity] {}", error);
             }

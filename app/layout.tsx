@@ -19,6 +19,7 @@ import { StartupJavaScan } from "@/components/settings/startup-java-scan";
 import { JavaIncompatibleDialog } from "@/components/launch/java-incompatible-dialog";
 import { GameExitErrorDialog } from "@/components/launch/game-exit-error-dialog";
 import { StartupOnboardingHost } from "@/components/onboarding/startup-onboarding-host";
+import { ConfirmDialogProvider } from "@/components/confirm-dialog";
 import { CornerNoticeProvider } from "@/components/global/corner-notice";
 import { ScrollbarProximity } from "@/components/global/scrollbar-proximity";
 import { APPEARANCE_BOOTSTRAP_SCRIPT } from "@/lib/appearance-bootstrap-script";
@@ -63,6 +64,7 @@ export default function RootLayout({
                       <DownloadProvider>
                         <RetargetInstallListener />
                         <TooltipProvider>
+                          <ConfirmDialogProvider>
                           <ThemeRuntimeProvider>
                             <DeferredGlobalFeatures />
                             <ScrollbarProximity />
@@ -75,6 +77,7 @@ export default function RootLayout({
                             <ThemeShell>{children}</ThemeShell>
                             <FlyToProcessListOverlay />
                           </ThemeRuntimeProvider>
+                          </ConfirmDialogProvider>
                         </TooltipProvider>
                       </DownloadProvider>
                     </MultiplayerProvider>

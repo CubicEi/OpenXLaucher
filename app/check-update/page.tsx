@@ -28,6 +28,7 @@ import {
 } from "@/lib/launcher-update-session";
 import { isUpdateCheckTimeoutError } from "@/lib/update-check";
 import { ChangelogMarkdown } from "@/components/settings/changelog-markdown";
+import { navigateBackWithMainTransition } from "@/lib/main-navigation-transition";
 
 type UpdateStatus =
   | "idle"
@@ -363,7 +364,7 @@ export default function CheckUpdatePage() {
           <Button
             variant="ghost"
             size="icon"
-            onClick={() => router.back()}
+            onClick={() => navigateBackWithMainTransition(router, "/settings/general")}
             className="shrink-0"
           >
             <ArrowLeft className="size-4" />

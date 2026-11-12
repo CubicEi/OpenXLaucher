@@ -2,6 +2,8 @@ pub mod cache_paths;
 pub mod custom_download;
 pub mod runtime_dependencies;
 pub mod runtime_log;
+pub mod launch_trace_log;
+pub mod auth_trace_log;
 pub mod config;
 pub mod game_dir;
 pub mod instance_export;

@@ -28,6 +28,8 @@ import {
 import { useI18n } from "@/components/i18n/use-i18n";
 import type { AppLanguage } from "@/components/settings/settings-provider";
 import { CustomDownloadCard } from "@/components/tools/custom-download-card";
+import { ConfirmDialog } from "@/components/confirm-dialog";
+import { InputDialog } from "@/components/input-dialog";
 
 interface NewPackDialogState {
   open: boolean;
@@ -300,71 +302,57 @@ export default function ToolsPage() {
         </div>
       </div>
 
-      {/* 新建整合包：命名弹窗 */}
-      {dialog?.open && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <div className="bg-card border border-border rounded-2xl shadow-xl max-w-md w-full p-6">
-            <h3 className="font-semibold text-base mb-1">
-              {t("tools.new")} {dialog.format === "modrinth" ? "Modrinth" : "CurseForge"} {t("modpack.modpackBuilder.modpack")}
-            </h3>
-            <p className="text-xs text-muted-foreground mb-4">
-              {t("tools.giveYourModpackANameYouCanChangeIt")}
-            </p>
-            <div className="mb-4">
-              <label className="text-xs text-muted-foreground block mb-1">
-                {t("modpack.modpackBuilder.modpackName")} *
-              </label>
-              <Input
-                autoFocus
-                value={dialog.name}
-                onChange={(e) => setDialog({ ...dialog, name: e.target.value })}
-                onKeyDown={(e) => e.key === "Enter" && confirmNewPack()}
-                placeholder={t("modpack.modpackBuilder.eGMyFantasticPack")}
-              />
-              {dialog.error && (
-                <div className="mt-1 text-xs text-red-500">{dialog.error}</div>
-              )}
-            </div>
-            <div className="flex items-center justify-end gap-2">
-              <Button variant="outline" size="sm" onClick={() => setDialog(null)}>
-                {t("common.cancel")}
-              </Button>
-              <Button
-                size="sm"
-                onClick={confirmNewPack}
-                disabled={!dialog.name.trim()}
-              >
-                {t("tools.startCreating")}
-              </Button>
-            </div>
-          </div>
-        </div>
-      )}
+      <InputDialog
+        open={dialog?.open ?? false}
+        onOpenChange={(open) => {
+          if (!open) setDialog(null);
+        }}
+        title={
+          dialog
+            ? `${t("tools.new")} ${dialog.format === "modrinth" ? "Modrinth" : "CurseForge"} ${t("modpack.modpackBuilder.modpack")}`
+            : ""
+        }
+        value={dialog?.name ?? ""}
+        onValueChange={(name) => {
+          if (dialog) setDialog({ ...dialog, name, error: undefined });
+        }}
+        placeholder={t("modpack.modpackBuilder.eGMyFantasticPack")}
+        confirmLabel={t("tools.startCreating")}
+        cancelLabel={t("common.cancel")}
+        confirmDisabled={!dialog?.name.trim()}
+        onConfirm={confirmNewPack}
+        onInputKeyDown={(e) => {
+          if (e.key === "Enter") confirmNewPack();
+        }}
+      >
+        <p className="text-xs">{t("tools.giveYourModpackANameYouCanChangeIt")}</p>
+        {dialog?.error ? (
+          <p className="text-xs text-destructive">{dialog.error}</p>
+        ) : null}
+      </InputDialog>
 
-      {/* 删除确认弹窗 */}
-      {pendingDelete && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <div className="bg-card border border-border rounded-2xl shadow-xl max-w-sm w-full p-6">
-            <h3 className="font-semibold text-base mb-1">{t("tools.deleteThisModpack")}</h3>
-            <p className="text-xs text-muted-foreground mb-4">
-              {t("tools.thisWillBePermanentlyRemovedFromDisk")}
-              <span className="block font-mono mt-1 text-primary">{pendingDelete}.json</span>
-            </p>
-            <div className="flex items-center justify-end gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setPendingDelete(null)}
-              >
-                {t("common.cancel")}
-              </Button>
-              <Button size="sm" variant="destructive" onClick={doDelete}>
-                {t("common.delete")}
-              </Button>
-            </div>
-          </div>
-        </div>
-      )}
+      <ConfirmDialog
+        open={pendingDelete != null}
+        onOpenChange={(open) => !open && setPendingDelete(null)}
+        title={t("tools.deleteThisModpack")}
+        actions={[
+          {
+            label: t("common.cancel"),
+            variant: "outline",
+            onClick: () => setPendingDelete(null),
+          },
+          {
+            label: t("common.delete"),
+            variant: "destructive",
+            onClick: doDelete,
+          },
+        ]}
+      >
+        {t("tools.thisWillBePermanentlyRemovedFromDisk")}
+        {pendingDelete ? (
+          <span className="mt-2 block font-mono text-primary">{pendingDelete}.json</span>
+        ) : null}
+      </ConfirmDialog>
     </div>
   );
 }

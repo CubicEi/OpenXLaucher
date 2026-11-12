@@ -8,7 +8,7 @@ import { Download, Sparkles } from "lucide-react";
 
 import { useI18n } from "@/components/i18n/use-i18n";
 import { setAppUpdateState } from "@/components/settings/app-updater";
-import { LauncherUpdateNoticeAlert } from "@/components/settings/launcher-update-notice-alert";
+import { ConfirmDialog } from "@/components/confirm-dialog";
 import {
   markStartupUpdateCheckCompleted,
   markStartupUpdatePromptDismissed,
@@ -218,19 +218,35 @@ export function StartupUpdateNotifier({ delayMs = 1500 }: { delayMs?: number }) 
         </DialogContent>
       </Dialog>
 
-      <LauncherUpdateNoticeAlert
+      <ConfirmDialog
         open={updateSuccessOpen}
         onOpenChange={setUpdateSuccessOpen}
         title={t("checkUpdate.updateSuccessTitle")}
-        description={t("checkUpdate.updateSuccessMessage", { version: installedVersion })}
-      />
+        actions={[
+          {
+            label: t("common.confirm"),
+            variant: "primary",
+            onClick: () => setUpdateSuccessOpen(false),
+          },
+        ]}
+      >
+        {t("checkUpdate.updateSuccessMessage", { version: installedVersion })}
+      </ConfirmDialog>
 
-      <LauncherUpdateNoticeAlert
+      <ConfirmDialog
         open={updateFailedOpen}
         onOpenChange={setUpdateFailedOpen}
         title={t("checkUpdate.updateFailedTitle")}
-        description={updateFailureMessage}
-      />
+        actions={[
+          {
+            label: t("common.confirm"),
+            variant: "primary",
+            onClick: () => setUpdateFailedOpen(false),
+          },
+        ]}
+      >
+        {updateFailureMessage}
+      </ConfirmDialog>
     </>
   );
 }

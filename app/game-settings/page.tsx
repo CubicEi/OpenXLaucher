@@ -20,15 +20,7 @@ import {
 } from "@/hooks/use-instances";
 import { PageEnterItem } from "@/components/layout/page-enter";
 import { Button } from "@/components/ui/button";
-import {
-  AlertDialog,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
+import { ConfirmDialog } from "@/components/confirm-dialog";
 import {
   Select,
   SelectContent,
@@ -439,36 +431,35 @@ export default function GameSettings() {
         onConfirm={handleRenameVersionConfirm}
       />
 
-      <AlertDialog
+      <ConfirmDialog
         open={deleteVersionOpen}
         onOpenChange={(open) => !deleting && setDeleteVersionOpen(open)}
+        title={t("resource.deleteConfirmTitle")}
+        lockDismiss={deleting}
+        actions={[
+          {
+            label: t("common.cancel"),
+            variant: "outline",
+            disabled: deleting,
+            onClick: () => setDeleteVersionOpen(false),
+          },
+          {
+            label: t("gameSettings.deleteVersion"),
+            variant: "destructive",
+            disabled: deleting,
+            loading: deleting,
+            onClick: () => void handleConfirmDeleteVersion(),
+          },
+        ]}
       >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>{t("resource.deleteConfirmTitle")}</AlertDialogTitle>
-            <AlertDialogDescription>
-              {effectiveVersionDirName
-                ? t("gameSettings.confirmDeletionOfGameVersionDirectoryEffectiveVersionDir", {
-                    effectiveVersionDirName,
-                    minecraftPath: config.minecraftPath ?? "",
-                    effectiveVersionDirName2: effectiveVersionDirName,
-                  })
-                : ""}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={deleting}>{t("common.cancel")}</AlertDialogCancel>
-            <Button
-              variant="destructive"
-              disabled={deleting}
-              onClick={() => void handleConfirmDeleteVersion()}
-            >
-              {deleting ? <Loader2 className="size-3.5 animate-spin" /> : null}
-              {t("gameSettings.deleteVersion")}
-            </Button>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+        {effectiveVersionDirName
+          ? t("gameSettings.confirmDeletionOfGameVersionDirectoryEffectiveVersionDir", {
+              effectiveVersionDirName,
+              minecraftPath: config.minecraftPath ?? "",
+              effectiveVersionDirName2: effectiveVersionDirName,
+            })
+          : ""}
+      </ConfirmDialog>
     </div>
   );
 }

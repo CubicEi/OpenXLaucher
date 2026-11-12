@@ -1,6 +1,7 @@
 use regex::Regex;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use sqlite::{Connection, State};
 use std::fs;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -10,7 +11,13 @@ use tokio::time::sleep;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use tokio::time::Instant;
 
+use crate::handler::auth_trace_log::{auth_trace, auth_trace_error, auth_trace_warn};
+
 use super::AccountInfo;
+
+const MS_FLOW_DEVICE: &str = "microsoft_device_login";
+const MS_FLOW_SILENT: &str = "microsoft_silent_refresh";
+const MS_FLOW_DEVICE_CODE: &str = "microsoft_device_code";
 
 /// 微软登录取消标志：当用户关闭登录对话框时设置为 true（设备码轮询）
 static MS_LOGIN_CANCELLED: AtomicBool = AtomicBool::new(false);
@@ -189,27 +196,35 @@ fn is_retryable_auth_error(msg: &str) -> bool {
     false
 }
 
-/// 对暂态网络 / 408·429·5xx 最多尝试 3 次，退避 1s → 2s → 4s。
+/// 设备码登录：网络类错误只请求一次，立即失败。
+const AUTH_RETRY_DEVICE_LOGIN: u32 = 1;
+/// 静默刷新：暂态网络 / 408·429·5xx 最多 3 次，退避 1s → 2s → 4s。
+const AUTH_RETRY_SILENT_REFRESH: u32 = 3;
+
 /// 错误以 String 传递，避免 `Box<dyn Error>` 跨 await 破坏 Tauri command 的 Send。
-async fn retry_on_transient<T, F, Fut>(label: &str, mut op: F) -> Result<T, String>
+async fn retry_on_transient<T, F, Fut>(
+    label: &str,
+    max_attempts: u32,
+    mut op: F,
+) -> Result<T, String>
 where
     F: FnMut() -> Fut,
     Fut: std::future::Future<Output = Result<T, String>>,
 {
-    const MAX_ATTEMPTS: u32 = 3;
+    let max_attempts = max_attempts.max(1);
     let mut attempt = 0u32;
     loop {
         attempt += 1;
         match op().await {
             Ok(v) => return Ok(v),
             Err(msg) => {
-                if !is_retryable_auth_error(&msg) || attempt >= MAX_ATTEMPTS {
+                if !is_retryable_auth_error(&msg) || attempt >= max_attempts {
                     return Err(msg);
                 }
                 let backoff_secs = 1u64 << (attempt - 1);
                 eprintln!(
                     "[正版检测] {} 暂态失败，第{}/{}次，{}s后重试: {}",
-                    label, attempt, MAX_ATTEMPTS, backoff_secs, msg
+                    label, attempt, max_attempts, backoff_secs, msg
                 );
                 sleep(Duration::from_secs(backoff_secs)).await;
             }
@@ -248,12 +263,13 @@ fn map_xsts_http_error(status: reqwest::StatusCode, text: &str) -> String {
 async fn get_device_code(
     client: &Client,
     client_id: &str,
+    max_attempts: u32,
 ) -> Result<DeviceCodeResponse, String> {
     let params = [
         ("client_id", client_id),
         ("scope", "XboxLive.signin offline_access"),
     ];
-    retry_on_transient("设备码请求", || async {
+    retry_on_transient("设备码请求", max_attempts, || async {
         let response = client
             .post("https://login.microsoftonline.com/consumers/oauth2/v2.0/devicecode")
             .form(&params)
@@ -279,6 +295,7 @@ async fn get_device_code(
 async fn authenticate_with_xbox_live(
     client: &Client,
     access_token: &str,
+    max_attempts: u32,
 ) -> Result<XboxLiveTokenResponse, String> {
     let body = serde_json::json!({
         "Properties": {
@@ -289,7 +306,7 @@ async fn authenticate_with_xbox_live(
         "RelyingParty": "http://auth.xboxlive.com",
         "TokenType": "JWT"
     });
-    retry_on_transient("Xbox Live 认证", || async {
+    retry_on_transient("Xbox Live 认证", max_attempts, || async {
         let response = client
             .post("https://user.auth.xboxlive.com/user/authenticate")
             .json(&body)
@@ -315,6 +332,7 @@ async fn authenticate_with_xbox_live(
 async fn get_xsts_token(
     client: &Client,
     xbox_token: &str,
+    max_attempts: u32,
 ) -> Result<XboxLiveTokenResponse, String> {
     let body = serde_json::json!({
         "Properties": {
@@ -324,7 +342,7 @@ async fn get_xsts_token(
         "RelyingParty": "rp://api.minecraftservices.com/",
         "TokenType": "JWT"
     });
-    retry_on_transient("XSTS 认证", || async {
+    retry_on_transient("XSTS 认证", max_attempts, || async {
         let resp = client
             .post("https://xsts.auth.xboxlive.com/xsts/authorize")
             .json(&body)
@@ -349,11 +367,12 @@ async fn authenticate_with_minecraft(
     client: &Client,
     user_hash: &str,
     xsts_token: &str,
+    max_attempts: u32,
 ) -> Result<MinecraftLoginResponse, String> {
     let body = serde_json::json!({
         "identityToken": format!("XBL3.0 x={};{}", user_hash, xsts_token)
     });
-    retry_on_transient("Minecraft 认证", || async {
+    retry_on_transient("Minecraft 认证", max_attempts, || async {
         let response = client
             .post("https://api.minecraftservices.com/authentication/login_with_xbox")
             .json(&body)
@@ -399,8 +418,9 @@ async fn check_mc_purchase(
 async fn get_minecraft_profile(
     client: &Client,
     access_token: &str,
+    max_attempts: u32,
 ) -> Result<MinecraftProfileResponse, String> {
-    retry_on_transient("获取 Minecraft 个人资料", || async {
+    retry_on_transient("获取 Minecraft 个人资料", max_attempts, || async {
         let response = client
             .get("https://api.minecraftservices.com/minecraft/profile")
             .bearer_auth(access_token)
@@ -433,7 +453,7 @@ async fn refresh_access_token(
         ("client_id", client_id),
         ("refresh_token", refresh_token),
     ];
-    retry_on_transient("Microsoft Token 刷新", || async {
+    retry_on_transient("Microsoft Token 刷新", AUTH_RETRY_SILENT_REFRESH, || async {
         let response = client
             .post("https://login.microsoftonline.com/consumers/oauth2/v2.0/token")
             .form(&params)
@@ -1382,15 +1402,40 @@ fn map_silent_refresh_err(context: &str, e: impl std::fmt::Display) -> String {
 #[tauri::command]
 pub async fn ms_request_device_code() -> Result<DeviceCodeInfo, String> {
     eprintln!("[正版检测] 步骤4：⟡ 进入强制重新登录流程！请求设备授权码...");
+    auth_trace(
+        MS_FLOW_DEVICE_CODE,
+        "start",
+        "开始请求微软设备码（网站登录入口）",
+        None,
+    );
     // 重置取消标志（新的一次登录流程开始）
     MS_LOGIN_CANCELLED.store(false, Ordering::SeqCst);
     let client = build_auth_http_client()?;
-    let resp = get_device_code(&client, CLIENT_ID)
+    let resp = get_device_code(&client, CLIENT_ID, AUTH_RETRY_DEVICE_LOGIN)
         .await
-        .map_err(|e| friendly_net_err(e))?;
+        .map_err(|e| {
+            auth_trace_error(
+                MS_FLOW_DEVICE_CODE,
+                "device_code",
+                "请求设备码失败",
+                Some(json!({ "error": e.to_string() })),
+            );
+            friendly_net_err(e)
+        })?;
     eprintln!(
         "[正版检测] 步骤4：✓ 设备码获取成功！user_code={}, verification_uri={}, 有效期={}秒",
         resp.user_code, resp.verification_uri, resp.expires_in
+    );
+    auth_trace(
+        MS_FLOW_DEVICE_CODE,
+        "device_code",
+        "设备码已获取，请在浏览器完成微软网站登录",
+        Some(json!({
+            "userCode": resp.user_code,
+            "verificationUri": resp.verification_uri,
+            "expiresInSec": resp.expires_in,
+            "pollIntervalSec": resp.interval,
+        })),
     );
     // 自动打开浏览器让用户授权
     let _ = webbrowser::open(&resp.verification_uri);
@@ -1407,6 +1452,12 @@ pub async fn ms_request_device_code() -> Result<DeviceCodeInfo, String> {
 #[tauri::command]
 pub async fn ms_poll_and_login(device_code: String, interval: u64) -> Result<AccountInfo, String> {
     eprintln!("[正版检测] 步骤4：开始轮询微软登录授权（间隔={}秒，超时=300秒）", interval);
+    auth_trace(
+        MS_FLOW_DEVICE,
+        "poll_start",
+        "开始轮询：等待用户在网站确认授权",
+        Some(json!({ "pollIntervalSec": interval.max(1) })),
+    );
     let client = build_auth_http_client()?;
     let start_time = Instant::now();
     let timeout = Duration::from_secs(300); // 5 分钟超时
@@ -1417,11 +1468,13 @@ pub async fn ms_poll_and_login(device_code: String, interval: u64) -> Result<Acc
         // 检查用户是否已取消登录
         if MS_LOGIN_CANCELLED.load(Ordering::SeqCst) {
             eprintln!("[正版检测] 步骤4：✗ 用户取消了登录");
+            auth_trace_warn(MS_FLOW_DEVICE, "cancelled", "用户取消微软登录", None);
             return Err("已取消登录".to_string());
         }
 
         if start_time.elapsed() >= timeout {
             eprintln!("[正版检测] 步骤4：✗ 登录超时（超过5分钟）");
+            auth_trace_error(MS_FLOW_DEVICE, "timeout", "设备码登录超时", None);
             return Err("登录超时，请重试".to_string());
         }
 
@@ -1430,6 +1483,7 @@ pub async fn ms_poll_and_login(device_code: String, interval: u64) -> Result<Acc
         // sleep 之后再次检查取消状态
         if MS_LOGIN_CANCELLED.load(Ordering::SeqCst) {
             eprintln!("[正版检测] 步骤4：✗ 用户取消了登录");
+            auth_trace_warn(MS_FLOW_DEVICE, "cancelled", "用户取消微软登录", None);
             return Err("已取消登录".to_string());
         }
 
@@ -1447,7 +1501,7 @@ pub async fn ms_poll_and_login(device_code: String, interval: u64) -> Result<Acc
             ("client_id", CLIENT_ID),
             ("device_code", device_code.as_str()),
         ];
-        let poll_result = retry_on_transient("设备码 Token 轮询", || async {
+        let poll_result = retry_on_transient("设备码 Token 轮询", AUTH_RETRY_DEVICE_LOGIN, || async {
             let response = client
                 .post("https://login.microsoftonline.com/consumers/oauth2/v2.0/token")
                 .form(&params)
@@ -1466,10 +1520,12 @@ pub async fn ms_poll_and_login(device_code: String, interval: u64) -> Result<Acc
         let (status, text) = match poll_result {
             Ok(v) => v,
             Err(msg) => {
-                if is_retryable_auth_error(&msg) {
-                    eprintln!("[正版检测] 步骤4：轮询暂态失败，继续等待: {}", msg);
-                    continue;
-                }
+                auth_trace_error(
+                    MS_FLOW_DEVICE,
+                    "oauth_poll",
+                    "OAuth 轮询失败",
+                    Some(json!({ "error": msg })),
+                );
                 return Err(friendly_net_err(msg));
             }
         };
@@ -1496,9 +1552,11 @@ pub async fn ms_poll_and_login(device_code: String, interval: u64) -> Result<Acc
                     continue;
                 }
                 Some("expired_token") => {
+                    auth_trace_error(MS_FLOW_DEVICE, "oauth_poll", "设备码已过期", None);
                     return Err("设备码已过期，请重新获取验证码".to_string());
                 }
                 Some("authorization_declined") => {
+                    auth_trace_warn(MS_FLOW_DEVICE, "oauth_poll", "用户在网站拒绝了授权", None);
                     return Err("用户拒绝了微软授权".to_string());
                 }
                 Some(other) => {
@@ -1516,16 +1574,29 @@ pub async fn ms_poll_and_login(device_code: String, interval: u64) -> Result<Acc
         }
 
         eprintln!("[正版检测] 步骤4：✓ 用户已授权！Microsoft Token 获取成功（第{}次轮询）", poll_count);
+        auth_trace(
+            MS_FLOW_DEVICE,
+            "oauth_token",
+            "已获取 Microsoft OAuth 令牌",
+            Some(json!({ "pollCount": poll_count })),
+        );
 
         let token: TokenResponse = serde_json::from_str(&text)
             .map_err(|e| format!("解析 Token 失败: {}", e))?;
 
         // Xbox Live 认证
         eprintln!("[正版检测] 步骤4：正在进行 Xbox Live 认证...");
-        let xbox = authenticate_with_xbox_live(&client, &token.access_token)
+        auth_trace(MS_FLOW_DEVICE, "xbox_live", "请求 Xbox Live 用户令牌", None);
+        let xbox = authenticate_with_xbox_live(&client, &token.access_token, AUTH_RETRY_DEVICE_LOGIN)
             .await
             .map_err(|e| {
                 let msg = e.to_string();
+                auth_trace_error(
+                    MS_FLOW_DEVICE,
+                    "xbox_live",
+                    "Xbox Live 认证失败",
+                    Some(json!({ "error": msg })),
+                );
                 if is_network_error_message(&msg) || is_retryable_auth_error(&msg) {
                     friendly_net_err(msg)
                 } else {
@@ -1533,45 +1604,106 @@ pub async fn ms_poll_and_login(device_code: String, interval: u64) -> Result<Acc
                 }
             })?;
         eprintln!("[正版检测] 步骤4：✓ Xbox Live 认证成功");
+        auth_trace(MS_FLOW_DEVICE, "xbox_live", "Xbox Live 认证成功", None);
 
         // XSTS Token
         eprintln!("[正版检测] 步骤4：正在获取 XSTS Token...");
-        let xsts = get_xsts_token(&client, &xbox.token)
+        auth_trace(MS_FLOW_DEVICE, "xsts", "请求 XSTS 令牌（Minecraft 依赖方）", None);
+        let xsts = get_xsts_token(&client, &xbox.token, AUTH_RETRY_DEVICE_LOGIN)
             .await
-            .map_err(|e| format!("XSTS 认证失败: {}", e))?;
+            .map_err(|e| {
+                auth_trace_error(
+                    MS_FLOW_DEVICE,
+                    "xsts",
+                    "获取 XSTS 失败",
+                    Some(json!({ "error": e })),
+                );
+                format!("XSTS 认证失败: {}", e)
+            })?;
         eprintln!("[正版检测] 步骤4：✓ XSTS Token 获取成功");
+        auth_trace(MS_FLOW_DEVICE, "xsts", "XSTS 获取成功", None);
 
         // Minecraft 认证
         let uhs = xbox.display_claims.xui.first()
             .map(|x| x.uhs.clone())
             .ok_or_else(|| "Xbox Live 认证返回的 xui 为空".to_string())?;
         eprintln!("[正版检测] 步骤4：正在进行 Minecraft 服务端认证...");
+        auth_trace(
+            MS_FLOW_DEVICE,
+            "minecraft_token",
+            "请求 Minecraft 服务令牌（login_with_xbox）",
+            None,
+        );
         let mc_login = authenticate_with_minecraft(
             &client,
             &uhs,
             &xsts.token,
+            AUTH_RETRY_DEVICE_LOGIN,
         )
         .await
-        .map_err(|e| format!("Minecraft 认证失败: {}", e))?;
+        .map_err(|e| {
+            auth_trace_error(
+                MS_FLOW_DEVICE,
+                "minecraft_token",
+                "Minecraft 令牌请求失败",
+                Some(json!({ "error": e })),
+            );
+            format!("Minecraft 认证失败: {}", e)
+        })?;
         eprintln!("[正版检测] 步骤4：✓ Minecraft 认证成功");
+        auth_trace(
+            MS_FLOW_DEVICE,
+            "minecraft_token",
+            "Minecraft 访问令牌已获取",
+            Some(json!({ "expiresInSec": mc_login.expires_in })),
+        );
 
         // 检查是否拥有 Minecraft
         eprintln!("[正版检测] 步骤4：正在检查 Minecraft 购买状态...");
+        auth_trace(MS_FLOW_DEVICE, "entitlements", "查询 Minecraft 购买资格", None);
         let purchase = check_mc_purchase(&client, &mc_login.access_token)
             .await
-            .map_err(|e| format!("检查购买状态失败: {}", e))?;
+            .map_err(|e| {
+                auth_trace_error(
+                    MS_FLOW_DEVICE,
+                    "entitlements",
+                    "购买资格查询失败",
+                    Some(json!({ "error": e })),
+                );
+                format!("检查购买状态失败: {}", e)
+            })?;
         if purchase.contains("还没有购买") {
             eprintln!("[正版检测] 步骤4：✗ 该微软账号尚未购买 Minecraft");
+            auth_trace_warn(MS_FLOW_DEVICE, "entitlements", "账号未拥有 Minecraft", None);
             return Err(purchase);
         }
         eprintln!("[正版检测] 步骤4：✓ 购买状态正常");
+        auth_trace(MS_FLOW_DEVICE, "entitlements", "购买资格验证通过", None);
 
         // 获取 Minecraft 个人资料
         eprintln!("[正版检测] 步骤4：正在获取 Minecraft 个人资料...");
-        let profile = get_minecraft_profile(&client, &mc_login.access_token)
+        auth_trace(MS_FLOW_DEVICE, "profile", "请求玩家资料（名称 / UUID）", None);
+        let profile = get_minecraft_profile(&client, &mc_login.access_token, AUTH_RETRY_DEVICE_LOGIN)
             .await
-            .map_err(|e| format!("获取 Minecraft 资料失败: {}", e))?;
+            .map_err(|e| {
+                auth_trace_error(
+                    MS_FLOW_DEVICE,
+                    "profile",
+                    "获取玩家资料失败",
+                    Some(json!({ "error": e })),
+                );
+                format!("获取 Minecraft 资料失败: {}", e)
+            })?;
         eprintln!("[正版检测] 步骤4：✓ 获取个人资料成功！玩家名={}, UUID={}", profile.name, profile.id);
+        auth_trace(
+            MS_FLOW_DEVICE,
+            "profile",
+            "玩家资料获取成功",
+            Some(json!({
+                "playerName": profile.name,
+                "uuid": profile.id,
+            })),
+        );
 
         // 构造返回值（先于数据库/皮肤操作，确保即使后续失败也能返回）
         let skin_variant = active_skin_variant_from_ms(&profile.skins);
@@ -1598,18 +1730,60 @@ pub async fn ms_poll_and_login(device_code: String, interval: u64) -> Result<Acc
         })
         .await;
         match db_result {
-            Ok(Ok(())) => eprintln!("[正版检测] 步骤4：✓ 账号信息已保存到数据库"),
-            Ok(Err(e)) => eprintln!("[MS登录] 数据库保存失败(非致命): {}", e),
-            Err(e) => eprintln!("[MS登录] 数据库任务崩溃(非致命): {}", e),
+            Ok(Ok(())) => {
+                eprintln!("[正版检测] 步骤4：✓ 账号信息已保存到数据库");
+                auth_trace(MS_FLOW_DEVICE, "db_save", "账号凭据已写入本地数据库", None);
+            }
+            Ok(Err(e)) => {
+                eprintln!("[MS登录] 数据库保存失败(非致命): {}", e);
+                auth_trace_warn(
+                    MS_FLOW_DEVICE,
+                    "db_save",
+                    "数据库保存失败（非致命）",
+                    Some(json!({ "error": e })),
+                );
+            }
+            Err(e) => {
+                eprintln!("[MS登录] 数据库任务崩溃(非致命): {}", e);
+                auth_trace_warn(
+                    MS_FLOW_DEVICE,
+                    "db_save",
+                    "数据库任务异常（非致命）",
+                    Some(json!({ "error": e.to_string() })),
+                );
+            }
         }
 
         // 下载皮肤（非致命）
+        auth_trace(
+            MS_FLOW_DEVICE,
+            "skin_download",
+            "开始下载玩家皮肤",
+            Some(json!({ "uuid": profile.id })),
+        );
         match download_player_skin(&client, &profile.id).await {
-            Ok(()) => eprintln!("[正版检测] 步骤4：✓ 玩家皮肤下载完成"),
-            Err(e) => eprintln!("[MS登录] 皮肤下载失败(非致命): {}", e),
+            Ok(()) => {
+                eprintln!("[正版检测] 步骤4：✓ 玩家皮肤下载完成");
+                auth_trace(MS_FLOW_DEVICE, "skin_download", "玩家皮肤下载完成", None);
+            }
+            Err(e) => {
+                eprintln!("[MS登录] 皮肤下载失败(非致命): {}", e);
+                auth_trace_warn(
+                    MS_FLOW_DEVICE,
+                    "skin_download",
+                    "玩家皮肤下载失败（非致命）",
+                    Some(json!({ "error": e.to_string() })),
+                );
+            }
         }
 
         eprintln!("[正版检测] 步骤4：✅ 强制重新登录流程完成！玩家={} 登录成功", profile.name);
+        auth_trace(
+            MS_FLOW_DEVICE,
+            "complete",
+            "微软设备码登录流程完成",
+            Some(json!({ "playerName": profile.name })),
+        );
         return Ok(account_info);
     }
 }
@@ -1619,6 +1793,7 @@ pub async fn ms_poll_and_login(device_code: String, interval: u64) -> Result<Acc
 pub fn ms_cancel_login() -> Result<(), String> {
     MS_LOGIN_CANCELLED.store(true, Ordering::SeqCst);
     MS_AUTH_CANCEL_GEN.fetch_add(1, Ordering::SeqCst);
+    auth_trace_warn("microsoft", "cancel", "已请求取消微软登录/刷新", None);
     Ok(())
 }
 
@@ -1977,6 +2152,12 @@ pub async fn ms_set_active_cape(access_token: String, cape_id: String) -> Result
 #[tauri::command]
 pub async fn ms_silent_refresh_account(uuid: String) -> Result<AccountInfo, String> {
     eprintln!("[正版检测] 步骤3：尝试用 refresh_token 静默刷新账号 UUID={}", uuid);
+    auth_trace(
+        MS_FLOW_SILENT,
+        "start",
+        "开始静默刷新 Microsoft 账号",
+        Some(json!({ "uuid": uuid })),
+    );
     // 用代际比对取消：不在此处清 bool，避免与 ms_cancel_login 竞态把刚置的取消冲掉
     let cancel_gen = capture_ms_auth_cancel_gen();
 
@@ -1995,12 +2176,20 @@ pub async fn ms_silent_refresh_account(uuid: String) -> Result<AccountInfo, Stri
             let rt: String = stmt.read::<String, _>(2).map_err(|e| e.to_string())?;
             if rt.trim().is_empty() {
                 eprintln!("[正版检测] 步骤3：✗ 数据库中 refresh_token 为空，无法静默刷新");
+                auth_trace_error(MS_FLOW_SILENT, "db_load", "refresh_token 为空", None);
                 return Err("NO_REFRESH_TOKEN".to_string());
             }
             eprintln!("[正版检测] 步骤3：从数据库读取到玩家名={}, refresh_token 存在 (长度={})", n, rt.len());
+            auth_trace(
+                MS_FLOW_SILENT,
+                "db_load",
+                "已从本地数据库读取 refresh_token",
+                Some(json!({ "playerName": n, "refreshTokenLen": rt.len() })),
+            );
             (u, rt)
         } else {
             eprintln!("[正版检测] 步骤3：✗ 数据库中没有该 UUID 的账号记录，无法静默刷新");
+            auth_trace_error(MS_FLOW_SILENT, "db_load", "数据库无此账号", Some(json!({ "uuid": uuid })));
             return Err("NO_REFRESH_TOKEN".to_string());
         }
         // stmt、connection 在这里离开作用域被 drop，不会保留到 await 之后
@@ -2012,43 +2201,69 @@ pub async fn ms_silent_refresh_account(uuid: String) -> Result<AccountInfo, Stri
     let client = build_auth_http_client().map_err(|e| e.to_string())?;
 
     eprintln!("[正版检测] 步骤3：正在请求 Microsoft Token 刷新接口...");
+    auth_trace(MS_FLOW_SILENT, "oauth_refresh", "请求 Microsoft OAuth 刷新令牌", None);
     // 2) 调用 Microsoft token endpoint 刷新 access_token
     let refreshed = refresh_access_token(&client, CLIENT_ID, &db_refresh_token)
         .await
         .map_err(|e| map_silent_refresh_err("Microsoft Token 刷新失败", e))?;
     ensure_ms_auth_not_cancelled(cancel_gen)?;
     eprintln!("[正版检测] 步骤3：✓ Microsoft Token 刷新成功，新 access_token 长度={}", refreshed.access_token.len());
+    auth_trace(
+        MS_FLOW_SILENT,
+        "oauth_refresh",
+        "OAuth 刷新成功",
+        Some(json!({ "accessTokenLen": refreshed.access_token.len() })),
+    );
 
     eprintln!("[正版检测] 步骤3：正在走 Xbox Live / XSTS / Minecraft 完整认证链...");
+    auth_trace(MS_FLOW_SILENT, "xbox_live", "请求 Xbox Live 用户令牌", None);
     // 3) 走一遍 Xbox Live / XSTS / Minecraft 登录链条，拿到 Minecraft access_token
-    let xbox_token = authenticate_with_xbox_live(&client, &refreshed.access_token)
+    let xbox_token = authenticate_with_xbox_live(&client, &refreshed.access_token, AUTH_RETRY_SILENT_REFRESH)
         .await
         .map_err(|e| map_silent_refresh_err("Xbox Live 认证失败", e))?;
     ensure_ms_auth_not_cancelled(cancel_gen)?;
     eprintln!("[正版检测] 步骤3：✓ Xbox Live 认证成功");
+    auth_trace(MS_FLOW_SILENT, "xbox_live", "Xbox Live 认证成功", None);
 
-    let xsts_token = get_xsts_token(&client, &xbox_token.token)
+    auth_trace(MS_FLOW_SILENT, "xsts", "请求 XSTS 令牌", None);
+    let xsts_token = get_xsts_token(&client, &xbox_token.token, AUTH_RETRY_SILENT_REFRESH)
         .await
         .map_err(|e| map_silent_refresh_err("XSTS 认证失败", e))?;
     ensure_ms_auth_not_cancelled(cancel_gen)?;
     eprintln!("[正版检测] 步骤3：✓ XSTS 认证成功");
+    auth_trace(MS_FLOW_SILENT, "xsts", "XSTS 获取成功", None);
 
+    auth_trace(
+        MS_FLOW_SILENT,
+        "minecraft_token",
+        "请求 Minecraft 服务令牌",
+        None,
+    );
     let mc_login = authenticate_with_minecraft(
         &client,
         &xsts_token.display_claims.xui[0].uhs,
         &xsts_token.token,
+        AUTH_RETRY_SILENT_REFRESH,
     )
     .await
     .map_err(|e| map_silent_refresh_err("Minecraft 认证失败", e))?;
     ensure_ms_auth_not_cancelled(cancel_gen)?;
     eprintln!("[正版检测] 步骤3：✓ Minecraft 认证成功，新 Minecraft access_token 长度={}", mc_login.access_token.len());
+    auth_trace(MS_FLOW_SILENT, "minecraft_token", "Minecraft 访问令牌已获取", None);
 
     // 4) 取得玩家资料（玩家名、皮肤等）
-    let mc_profile = get_minecraft_profile(&client, &mc_login.access_token)
+    auth_trace(MS_FLOW_SILENT, "profile", "请求玩家资料", None);
+    let mc_profile = get_minecraft_profile(&client, &mc_login.access_token, AUTH_RETRY_SILENT_REFRESH)
         .await
         .map_err(|e| map_silent_refresh_err("获取 Minecraft 个人资料失败", e))?;
     ensure_ms_auth_not_cancelled(cancel_gen)?;
     eprintln!("[正版检测] 步骤3：✓ 获取个人资料成功，玩家名={}", mc_profile.name);
+    auth_trace(
+        MS_FLOW_SILENT,
+        "profile",
+        "玩家资料获取成功",
+        Some(json!({ "playerName": mc_profile.name })),
+    );
 
     // 5) 把新 token 存回数据库（再次单独开连接，同步块，不跨 await）
     {
@@ -2062,14 +2277,30 @@ pub async fn ms_silent_refresh_account(uuid: String) -> Result<AccountInfo, Stri
         )
         .map_err(|e| format!("保存账号信息失败: {}", e))?;
         eprintln!("[正版检测] 步骤3：✓ 新凭据已保存到数据库");
+        auth_trace(MS_FLOW_SILENT, "db_save", "新凭据已写入数据库", None);
     }
 
     ensure_ms_auth_not_cancelled(cancel_gen)?;
 
     // 6) 同步下载皮肤（如果需要）
-    let _ = download_player_skin(&client, &db_uuid).await;
+    auth_trace(
+        MS_FLOW_SILENT,
+        "skin_download",
+        "开始下载玩家皮肤",
+        Some(json!({ "uuid": db_uuid })),
+    );
+    match download_player_skin(&client, &db_uuid).await {
+        Ok(()) => auth_trace(MS_FLOW_SILENT, "skin_download", "玩家皮肤下载完成", None),
+        Err(e) => auth_trace_warn(
+            MS_FLOW_SILENT,
+            "skin_download",
+            "玩家皮肤下载失败（非致命）",
+            Some(json!({ "error": e.to_string() })),
+        ),
+    }
     ensure_ms_auth_not_cancelled(cancel_gen)?;
     eprintln!("[正版检测] 步骤3：✅ 静默刷新账号成功！一切正常");
+    auth_trace(MS_FLOW_SILENT, "complete", "静默刷新完成", None);
 
     let skin_variant = active_skin_variant_from_ms(&mc_profile.skins);
     Ok(AccountInfo {

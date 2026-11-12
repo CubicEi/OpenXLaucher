@@ -187,6 +187,12 @@ impl LittleSkinClient {
 
     pub fn authenticate_and_return(&mut self) -> Result<super::AccountInfo, String> {
         check_network_connection()?;
+        crate::handler::auth_trace_log::auth_trace(
+            "littleskin_oauth",
+            "start",
+            "开始 LittleSkin 浏览器 OAuth 登录",
+            None,
+        );
 
         let authorize_url = format!(
             "https://littleskin.cn/oauth/authorize?client_id={}&redirect_uri={}&response_type=code&scope=Player.ReadWrite",
@@ -232,7 +238,19 @@ impl LittleSkinClient {
         loop {
             if let Some(code) = self.code.lock().unwrap().take() {
                 let _ = handle.join();
+                crate::handler::auth_trace_log::auth_trace(
+                    "littleskin_oauth",
+                    "oauth_code",
+                    "已收到 LittleSkin 授权码，请求令牌",
+                    None,
+                );
                 let token_response = self.request_token(&code)?;
+                crate::handler::auth_trace_log::auth_trace(
+                    "littleskin_oauth",
+                    "oauth_token",
+                    "LittleSkin 访问令牌已获取",
+                    None,
+                );
                 let player_info = self.get_player_info(&token_response.access_token);
                 let player_data: Value = serde_json::from_str(&player_info).unwrap_or(Value::Null);
 
@@ -260,10 +278,29 @@ impl LittleSkinClient {
                         );
 
                         // 下载真实皮肤 PNG 到本地 (供 3D 展示)
+                        crate::handler::auth_trace_log::auth_trace(
+                            "littleskin_oauth",
+                            "skin_download",
+                            "开始下载 LittleSkin 玩家皮肤",
+                            Some(serde_json::json!({ "uuid": uuid, "playerName": name })),
+                        );
                         if let Err(e) =
                             crate::auth::official::download_littleskin_skin_with_name(&uuid, &name)
                         {
                             eprintln!("[LittleSkin OAuth] 皮肤下载失败（非致命）: {}", e);
+                            crate::handler::auth_trace_log::auth_trace_warn(
+                                "littleskin_oauth",
+                                "skin_download",
+                                "LittleSkin 皮肤下载失败（非致命）",
+                                Some(serde_json::json!({ "error": e.to_string() })),
+                            );
+                        } else {
+                            crate::handler::auth_trace_log::auth_trace(
+                                "littleskin_oauth",
+                                "skin_download",
+                                "LittleSkin 皮肤下载完成",
+                                None,
+                            );
                         }
 
                         upsert_player(
@@ -363,6 +400,12 @@ pub fn authenticate_with_credentials(
     password: &str,
 ) -> Result<Vec<LittleSkinAccountResult>, String> {
     check_network_connection().map_err(|_| "网络连接异常，请检查网络".to_string())?;
+    crate::handler::auth_trace_log::auth_trace(
+        "littleskin_password",
+        "authenticate",
+        "请求 LittleSkin Yggdrasil 登录",
+        Some(json!({ "username": username })),
+    );
 
     let client = Client::builder()
         .timeout(Duration::from_secs(30))
@@ -498,6 +541,13 @@ pub fn authenticate_with_credentials(
     for r in &results {
         upsert_player(&conn, &r.uuid, &r.name, &r.access_token, None, None)?;
     }
+
+    crate::handler::auth_trace_log::auth_trace(
+        "littleskin_password",
+        "complete",
+        "LittleSkin 密码登录完成",
+        Some(json!({ "profileCount": results.len() })),
+    );
 
     Ok(results)
 }

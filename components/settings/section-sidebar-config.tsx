@@ -7,6 +7,7 @@ import { useUIConfigContext } from "@/components/ui-config/ui-config-provider";
 import { Home, Gamepad2, Rocket, Download, Globe, Wrench, Settings, RotateCcw } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useI18n } from "@/components/i18n/use-i18n";
+import { useConfirmDialog } from "@/components/confirm-dialog";
 
 const TAB_ICONS: Record<string, React.ReactNode> = {
   home: <Home className="size-4" />,
@@ -31,11 +32,17 @@ const TAB_NAMES_EN: Record<string, string> = {
 export function SidebarConfigSection() {
   const { config, updateTabVisibility, resetConfig } = useUIConfigContext();
   const { isEnglish, t } = useI18n();
+  const { confirm } = useConfirmDialog();
 
   const handleReset = () => {
-    if (confirm(t("settings.sidebarConfig.resetAllSidebarTabsToTheirDefaultVisibility"))) {
-      resetConfig();
-    }
+    void confirm({
+      title: t("settings.sidebarConfig.sidebarTabs"),
+      description: t("settings.sidebarConfig.resetAllSidebarTabsToTheirDefaultVisibility"),
+      confirmLabel: t("common.confirm"),
+      cancelLabel: t("common.cancel"),
+    }).then((ok) => {
+      if (ok) resetConfig();
+    });
   };
 
   return (

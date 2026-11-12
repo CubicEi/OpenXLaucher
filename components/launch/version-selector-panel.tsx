@@ -21,7 +21,10 @@ import { useDownloadManager } from "@/components/download/download-provider";
 import { shouldHideVersionDuringInstall } from "@/lib/installing-version-filter";
 import { LoaderIcon, inferLoaderKind, type LoaderKind } from "@/components/launch/loader-icon";
 import { fadeSlideUp } from "@/lib/motion";
-import { navigateWithMainTransition } from "@/lib/main-navigation-transition";
+import {
+  navigateBackWithMainTransition,
+  navigateWithMainTransition,
+} from "@/lib/main-navigation-transition";
 import {
   parsedVersionFromInstance,
   versionToLaunchConfig,
@@ -136,11 +139,7 @@ export function VersionSelectorPanel({ onAfterSelect }: VersionSelectorPanelProp
       onAfterSelect();
       return;
     }
-    if (typeof window !== "undefined" && window.history.length > 1) {
-      router.back();
-    } else {
-      navigateWithMainTransition(router, "/");
-    }
+    navigateBackWithMainTransition(router);
   };
 
   const handleSelectVersion = (version: ParsedVersion) => {
@@ -155,11 +154,7 @@ export function VersionSelectorPanel({ onAfterSelect }: VersionSelectorPanelProp
   };
 
   const handleBack = () => {
-    if (typeof window !== "undefined" && window.history.length > 1) {
-      router.back();
-    } else {
-      navigateWithMainTransition(router, "/");
-    }
+    navigateBackWithMainTransition(router);
   };
 
   return (

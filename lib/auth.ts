@@ -355,6 +355,21 @@ export function isMicrosoftAuthCancelled(message: string): boolean {
 /**
  * 启动时刷新 Minecraft 令牌失败：是否为网络/限流等暂态问题（仍应弹出强制登录，仅用于文案区分）。
  */
+/** 微软设备码 / 轮询登录因网络或超时失败时的用户提示 */
+export const MS_LOGIN_TIMEOUT_MESSAGE =
+  "网络连接超时，请检查网络连接后重试。";
+
+/**
+ * 是否为微软登录流程中的网络超时或连通性问题（应关闭登录窗，仅提示警告）。
+ */
+export function isMicrosoftLoginNetworkOrTimeout(message: string): boolean {
+  if (!message) return false;
+  if (message.includes("_TIMEOUT") || message === "DEVICE_CODE_REQUEST_TIMEOUT") {
+    return true;
+  }
+  return isMicrosoftTokenTransientError(message);
+}
+
 export function isMicrosoftTokenTransientError(message: string): boolean {
   if (!message) return false;
   const lower = message.toLowerCase();

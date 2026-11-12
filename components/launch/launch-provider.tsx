@@ -15,6 +15,11 @@ import { useAccountContext } from "@/components/accounts/account-provider";
 import { isTauriRuntime } from "@/lib/tauri-runtime";
 import { isAutoJavaSelection, JAVA_AUTO_SELECT_PATH } from "@/lib/java-paths";
 import { appLog } from "@/lib/runtime-log";
+import {
+  launchTrace,
+  launchTraceError,
+  launchTraceWarn,
+} from "@/lib/launch-trace-log";
 import { readMigratedLocalStorage } from "@/lib/storage-migrate";
 import { log4jParser } from "@/components/launch/log4j-progress-parser";
 import { useI18n } from "@/components/i18n/use-i18n";
@@ -670,16 +675,20 @@ export function LaunchProvider({ children }: { children: React.ReactNode }) {
   const launchGame = useCallback(
     async (overrides?: Partial<LaunchConfig>) => {
       const merged = { ...config, ...overrides };
+      launchTrace("ui.click", "用户触发启动游戏");
 
       if (!merged.minecraftPath) {
+        launchTraceWarn("ui.validate", "启动校验失败：未设置游戏目录");
         setErrorMessage(t("launch.provider.setTheMinecraftGameDirectory"));
         return;
       }
       if (!isAutoJavaSelection(merged.javaPath) && !merged.javaPath) {
+        launchTraceWarn("ui.validate", "启动校验失败：未设置 Java");
         setErrorMessage(t("launch.provider.setAJavaPath"));
         return;
       }
       if (!merged.versionName) {
+        launchTraceWarn("ui.validate", "启动校验失败：未选择实例");
         setErrorMessage(t("launch.provider.selectAGameVersion"));
         return;
       }
@@ -692,12 +701,24 @@ export function LaunchProvider({ children }: { children: React.ReactNode }) {
         versionFolder,
       );
       if (!launchProfile) {
+        launchTraceWarn("ui.validate", "启动校验失败：未选择档案");
         setErrorMessage(t("launch.provider.selectAPlayerAccountFirst"));
         return;
       }
 
+      launchTrace("ui.validate", "启动前校验通过", {
+        versionName: merged.versionName,
+        minecraftVersion: merged.minecraftVersion,
+        loadType: merged.loadType,
+        loadName: merged.loadName,
+        authType: launchProfile.authType,
+        playerName: launchProfile.name,
+        javaAuto: isAutoJavaSelection(merged.javaPath),
+      });
+
       // 校验通过后立刻进入「正在启动」，再做微软刷新 / 内存探测等耗时步骤
       beginLaunchUi();
+      launchTrace("ui.preparing", "进入准备阶段 UI");
       const launchGen = launchGenerationRef.current;
       const sessionAborted = () => launchGenerationRef.current !== launchGen;
 
@@ -705,8 +726,12 @@ export function LaunchProvider({ children }: { children: React.ReactNode }) {
 
       let microsoftAccessToken: string | null = null;
       if (launchProfile.authType === "microsoft") {
+        launchTrace("ui.ms_prep", "开始准备微软正版令牌", {
+          uuid: launchProfile.uuid,
+        });
         const prep = await prepareMicrosoftAccountForLaunch(launchProfile);
         if (sessionAborted()) {
+          launchTraceWarn("ui.cancelled", "启动会话已取消（微软准备后）");
           return;
         }
         if (!prep.ok) {
@@ -718,6 +743,10 @@ export function LaunchProvider({ children }: { children: React.ReactNode }) {
                 : prep.reason === "cancelled"
                   ? "已取消微软登录，游戏未启动。"
                   : "微软账号准备失败，游戏未启动。";
+          launchTraceError("ui.ms_prep", "微软令牌准备失败", {
+            reason: prep.reason,
+            message: msg,
+          });
           if (prep.reason === "cancelled" || sessionAborted()) {
             abortLaunchUi(
               sessionAborted()
@@ -731,6 +760,9 @@ export function LaunchProvider({ children }: { children: React.ReactNode }) {
           return;
         }
         microsoftAccessToken = prep.accessToken;
+        launchTrace("ui.ms_prep", "微软令牌准备完成", {
+          tokenLen: microsoftAccessToken.length,
+        });
       }
 
       if (sessionAborted()) {
@@ -741,6 +773,7 @@ export function LaunchProvider({ children }: { children: React.ReactNode }) {
         let launchMaxMemory = merged.maxMemory;
         if (merged.autoMemory !== false && isTauriRuntime()) {
           try {
+            launchTrace("ui.memory", "查询系统推荐内存");
             const mem = await invoke<{ recommended_mb: number }>("get_system_memory");
             if (sessionAborted()) {
               return;
@@ -748,9 +781,14 @@ export function LaunchProvider({ children }: { children: React.ReactNode }) {
             if (mem.recommended_mb > 0) {
               launchMaxMemory = String(mem.recommended_mb);
               updateConfig({ maxMemory: launchMaxMemory, autoMemory: true });
+              launchTrace("ui.memory", "已应用自动内存", {
+                recommendedMb: mem.recommended_mb,
+              });
             }
           } catch {
-            /* keep saved maxMemory */
+            launchTraceWarn("ui.memory", "自动内存查询失败，使用已保存值", {
+              maxMemory: launchMaxMemory,
+            });
           }
         }
 
@@ -792,6 +830,21 @@ export function LaunchProvider({ children }: { children: React.ReactNode }) {
           ? launchProfile.yggdrasilUrl || merged.yggdrasilApi || ""
           : "";
 
+        launchTrace("ui.invoke", "调用 launch_game", {
+          minecraftPath: merged.minecraftPath,
+          javaPath: merged.javaPath,
+          javaAuto: isAutoJavaSelection(merged.javaPath),
+          versionName: merged.versionName,
+          maxMemory: launchMaxMemory,
+          loadType: merged.loadType,
+          loadName: merged.loadName,
+          authType: launchProfile.authType,
+          hasAuthToken: accountAuthToken.length > 0,
+          authTokenLen: accountAuthToken.length,
+          hasYggdrasil: accountYggdrasilApi.length > 0,
+          processPriority: merged.processPriority || "medium",
+        });
+
         const result = await invoke<string>("launch_game", {
           minecraftPath: merged.minecraftPath,
           javaPath: merged.javaPath,
@@ -811,6 +864,10 @@ export function LaunchProvider({ children }: { children: React.ReactNode }) {
           windowHeight: merged.windowHeight || "486",
           customJvmArgs: merged.customJvmArgs || "",
           processPriority: merged.processPriority || "medium",
+        });
+
+        launchTrace("ui.invoke", "launch_game 返回成功", {
+          commandPreviewLen: result.length,
         });
 
         if (sessionAborted()) {
@@ -836,6 +893,7 @@ export function LaunchProvider({ children }: { children: React.ReactNode }) {
         const msg = raw.includes("模组正在更新")
           ? t("launch.provider.modUpdateInProgress")
           : raw;
+        launchTraceError("ui.invoke", "launch_game 失败", { error: msg });
         failLaunchUi(msg);
         addPendingOrSelectedLog("error", `${t("launch.provider.launchFailed")}: ${msg}`);
       }

@@ -32,7 +32,7 @@ import {
 } from "@/lib/auth";
 import { useI18n } from "@/components/i18n/use-i18n";
 import { useRouter } from "next/navigation";
-import { navigateWithMainTransition } from "@/lib/main-navigation-transition";
+import { navigateBackWithMainTransition } from "@/lib/main-navigation-transition";
 
 function normalizeTextureUrl(url?: string | null): string | null {
   if (!url) return null;
@@ -290,7 +290,7 @@ export function ProfileManager() {
               variant="ghost"
               size="icon-sm"
               className="shrink-0 touch-manipulation"
-              onClick={() => navigateWithMainTransition(router, "/")}
+              onClick={() => navigateBackWithMainTransition(router)}
               aria-label={t("common.back")}
             >
               <ArrowLeft className="size-4" />

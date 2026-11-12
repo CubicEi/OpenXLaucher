@@ -4,13 +4,7 @@ import { useState, useEffect, useRef } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Input } from "@/components/ui/input";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+import { InputDialog } from "@/components/input-dialog";
 import { LoaderVersionList } from "@/components/download/loader-version-list";
 import { ArrowLeft, Download } from "lucide-react";
 import { slideInFromRight, fadeIn } from "@/lib/motion";
@@ -33,7 +27,6 @@ export function QuiltApiDetail({ mcVersion, onBack }: QuiltApiDetailProps) {
   const [showNameDialog, setShowNameDialog] = useState(false);
   const [pendingApi, setPendingApi] = useState<LoaderVersion | null>(null);
   const [instanceNameInput, setInstanceNameInput] = useState("");
-  const inputRef = useRef<HTMLInputElement>(null);
   const { startQuiltDownload, pushNotice, dismissNotice } = useDownloadManager();
   const loadingNoticeActiveRef = useRef(false);
 
@@ -105,10 +98,6 @@ export function QuiltApiDetail({ mcVersion, onBack }: QuiltApiDetailProps) {
     setPendingApi(apiVersion);
     setInstanceNameInput(defaultName(apiVersion.version));
     setShowNameDialog(true);
-    setTimeout(() => {
-      inputRef.current?.focus();
-      inputRef.current?.select();
-    }, 50);
   };
 
   return (
@@ -166,44 +155,31 @@ export function QuiltApiDetail({ mcVersion, onBack }: QuiltApiDetailProps) {
       </div>
     </div>
 
-    <Dialog open={showNameDialog} onOpenChange={setShowNameDialog}>
-      <DialogContent className="!max-w-lg p-0">
-        <DialogHeader>
-          <DialogTitle>{t("download.instanceName")}</DialogTitle>
-        </DialogHeader>
-        <div className="p-5 space-y-4">
-          <div className="space-y-2">
-            <p className="text-sm text-muted-foreground">
-              {t("download.instanceNameHintApi")}
-              <code className="mx-1 px-1.5 py-0.5 rounded bg-muted text-xs">
-                {pendingApi ? defaultName(pendingApi.version) : ""}
-              </code>
-            </p>
-            <Input
-              ref={inputRef}
-              placeholder={pendingApi ? defaultName(pendingApi.version) : ""}
-              value={instanceNameInput}
-              onChange={(e) => setInstanceNameInput(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") confirmDownload();
-              }}
-            />
-          </div>
-          <div className="flex items-center justify-end gap-2">
-            <Button
-              variant="outline"
-              onClick={() => {
-                setShowNameDialog(false);
-                setPendingApi(null);
-              }}
-            >
-              {t("download.cancel")}
-            </Button>
-            <Button onClick={confirmDownload}>{t("download.startDownload")}</Button>
-          </div>
-        </div>
-      </DialogContent>
-    </Dialog>
+    <InputDialog
+      open={showNameDialog}
+      onOpenChange={(open) => {
+        setShowNameDialog(open);
+        if (!open) setPendingApi(null);
+      }}
+      title={t("download.instanceName")}
+      value={instanceNameInput}
+      onValueChange={setInstanceNameInput}
+      inputId="quilt-api-instance-name"
+      placeholder={pendingApi ? defaultName(pendingApi.version) : ""}
+      confirmLabel={t("download.startDownload")}
+      cancelLabel={t("download.cancel")}
+      onConfirm={confirmDownload}
+      onInputKeyDown={(e) => {
+        if (e.key === "Enter") confirmDownload();
+      }}
+    >
+      <p>
+        {t("download.instanceNameHintApi")}
+        <code className="mx-1 px-1.5 py-0.5 rounded bg-muted text-xs">
+          {pendingApi ? defaultName(pendingApi.version) : ""}
+        </code>
+      </p>
+    </InputDialog>
     </>
   );
 }

@@ -1,6 +1,6 @@
 {
   "name": "openxlauncher",
-  "version": "1.0.0-pre.7",
+  "version": "1.0.0-pre.8",
   "private": true,
   "scripts": {
     "verify-version": "node scripts/sync-app-version.mjs",

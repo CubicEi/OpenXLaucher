@@ -29,15 +29,7 @@ import { useI18n } from "@/components/i18n/use-i18n";
 import { CheckCircle2, Loader2, TriangleAlert, Puzzle, X } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import type { LoaderType, LoaderVersion, MinecraftVersion } from "@/types";
-import {
-  AlertDialog,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
+import { ConfirmDialog } from "@/components/confirm-dialog";
 import { useLaunchContext } from "@/components/launch/launch-provider";
 import {
   assertTargetInstanceFolderAvailable,
@@ -562,25 +554,28 @@ export function RetargetCombinedInstall({
         excludeFolderName={retargetContext.sourceFolderName}
       />
 
-      <AlertDialog open={showRetargetWarning} onOpenChange={setShowRetargetWarning}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>{t("gameSettings.retargetWarningTitle")}</AlertDialogTitle>
-            <AlertDialogDescription>{warningBody}</AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
-            <Button
-              onClick={() => {
-                setShowRetargetWarning(false);
-                setShowNameDialog(true);
-              }}
-            >
-              {t("gameSettings.retargetWarningContinue")}
-            </Button>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      <ConfirmDialog
+        open={showRetargetWarning}
+        onOpenChange={setShowRetargetWarning}
+        title={t("gameSettings.retargetWarningTitle")}
+        actions={[
+          {
+            label: t("common.cancel"),
+            variant: "outline",
+            onClick: () => setShowRetargetWarning(false),
+          },
+          {
+            label: t("gameSettings.retargetWarningContinue"),
+            variant: "primary",
+            onClick: () => {
+              setShowRetargetWarning(false);
+              setShowNameDialog(true);
+            },
+          },
+        ]}
+      >
+        {warningBody}
+      </ConfirmDialog>
     </>
   );
 }
