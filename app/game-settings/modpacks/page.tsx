@@ -20,15 +20,7 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import {
-  AlertDialog,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
+import { ConfirmDialog } from "@/components/confirm-dialog";
 import { fadeSlideUp } from "@/lib/motion";
 import { useDownloadManager } from "@/components/download/download-provider";
 
@@ -652,32 +644,31 @@ export default function ModpackManagementPage() {
         )}
       </div>
 
-      <AlertDialog
+      <ConfirmDialog
         open={pendingDeleteEntry !== null}
         onOpenChange={(open) => !deletingCached && !open && setPendingDeleteEntry(null)}
+        title="确认删除"
+        lockDismiss={deletingCached}
+        actions={[
+          {
+            label: "取消",
+            variant: "outline",
+            disabled: deletingCached,
+            onClick: () => setPendingDeleteEntry(null),
+          },
+          {
+            label: "删除",
+            variant: "destructive",
+            disabled: deletingCached,
+            loading: deletingCached,
+            onClick: () => void handleConfirmDeleteCached(),
+          },
+        ]}
       >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>确认删除</AlertDialogTitle>
-            <AlertDialogDescription>
-              {pendingDeleteEntry
-                ? `确认将缓存整合包「${pendingDeleteEntry.file_name}」移入回收站？\n\n可从系统回收站恢复。`
-                : ""}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={deletingCached}>取消</AlertDialogCancel>
-            <Button
-              variant="destructive"
-              disabled={deletingCached}
-              onClick={() => void handleConfirmDeleteCached()}
-            >
-              {deletingCached ? <Loader2 className="size-3.5 animate-spin" /> : null}
-              删除
-            </Button>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+        {pendingDeleteEntry
+          ? `确认将缓存整合包「${pendingDeleteEntry.file_name}」移入回收站？可从系统回收站恢复。`
+          : ""}
+      </ConfirmDialog>
     </motion.div>
   );
 }

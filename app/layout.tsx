@@ -8,6 +8,7 @@ import { DownloadProvider } from "@/components/download/download-provider";
 import { RetargetInstallListener } from "@/components/download/retarget-install-listener";
 import { FlyToProcessListOverlay } from "@/components/process-list/fly-to-process-list";
 import { LaunchProvider } from "@/components/launch/launch-provider";
+import { MultiplayerExitGuard } from "@/components/multiplayer/multiplayer-exit-guard";
 import { MultiplayerProvider } from "@/components/multiplayer/multiplayer-provider";
 import { DeferredGlobalFeatures } from "@/components/global/deferred-global-features";
 import { StartupRuntimeDependencyNotifier } from "@/components/settings/startup-runtime-dependency-notifier";
@@ -19,6 +20,7 @@ import { StartupJavaScan } from "@/components/settings/startup-java-scan";
 import { JavaIncompatibleDialog } from "@/components/launch/java-incompatible-dialog";
 import { GameExitErrorDialog } from "@/components/launch/game-exit-error-dialog";
 import { StartupOnboardingHost } from "@/components/onboarding/startup-onboarding-host";
+import { ConfirmDialogProvider } from "@/components/confirm-dialog";
 import { CornerNoticeProvider } from "@/components/global/corner-notice";
 import { ScrollbarProximity } from "@/components/global/scrollbar-proximity";
 import { APPEARANCE_BOOTSTRAP_SCRIPT } from "@/lib/appearance-bootstrap-script";
@@ -63,8 +65,10 @@ export default function RootLayout({
                       <DownloadProvider>
                         <RetargetInstallListener />
                         <TooltipProvider>
+                          <ConfirmDialogProvider>
                           <ThemeRuntimeProvider>
                             <DeferredGlobalFeatures />
+                            <MultiplayerExitGuard />
                             <ScrollbarProximity />
                             <StartupRuntimeDependencyNotifier />
                             <StartupUpdateNotifier />
@@ -75,6 +79,7 @@ export default function RootLayout({
                             <ThemeShell>{children}</ThemeShell>
                             <FlyToProcessListOverlay />
                           </ThemeRuntimeProvider>
+                          </ConfirmDialogProvider>
                         </TooltipProvider>
                       </DownloadProvider>
                     </MultiplayerProvider>

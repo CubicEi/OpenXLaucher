@@ -1,19 +1,19 @@
 "use client";
 
-import { useEffect, useState, useRef } from "react";
+import { useCallback, useEffect, useState, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import {
   X,
   UploadCloud,
   Loader2,
   CheckCircle2,
-  AlertCircle,
   Package,
   FolderOpen,
   FileArchive,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
+import { useCornerNotice } from "@/components/global/corner-notice";
 
 // --------------------------------------------------------------------------
 // 后端类型映射
@@ -63,8 +63,8 @@ type Props = {
 };
 
 export function ModpackInstallerDialog({ open, onClose }: Props) {
+  const { pushNotice } = useCornerNotice();
   const [status, setStatus] = useState<DialogStatus>("idle");
-  const [errorMsg, setErrorMsg] = useState<string>("");
   const [zipPath, setZipPath] = useState<string>("");
   const [zipName, setZipName] = useState<string>("");
   const [format, setFormat] = useState<string>("");
@@ -80,11 +80,18 @@ export function ModpackInstallerDialog({ open, onClose }: Props) {
   const dropRef = useRef<HTMLDivElement>(null);
   const [dragOver, setDragOver] = useState(false);
 
+  const failInstall = useCallback(
+    (message: string) => {
+      setStatus("error");
+      pushNotice({ variant: "error", message });
+    },
+    [pushNotice]
+  );
+
   // 每次打开重置
   useEffect(() => {
     if (open) {
       setStatus("idle");
-      setErrorMsg("");
       setZipPath("");
       setZipName("");
       setFormat("");
@@ -133,8 +140,7 @@ export function ModpackInstallerDialog({ open, onClose }: Props) {
         // File 对象没有真实路径，我们只能靠名字识别扩展名，
         // 再让用户用文件选择器（无法通过拖放拿到绝对路径）
         if (!/\.(zip|mrpack|jar)$/i.test(name)) {
-          setStatus("error");
-          setErrorMsg(`无法识别的文件：${name}（请拖入 .zip / .mrpack 整合包）`);
+          failInstall(`无法识别的文件：${name}（请拖入 .zip / .mrpack 整合包）`);
           return;
         }
         // 在 Tauri 环境下，尝试读取 dragged file 的真实路径
@@ -146,8 +152,9 @@ export function ModpackInstallerDialog({ open, onClose }: Props) {
         //
         // 策略：先尝试从 Tauri 原生事件里拿路径（见下方 webviewDragHandler）；
         // 如果拿不到但有文件名，则提示用户改用"选择文件"按钮。
-        setStatus("error");
-        setErrorMsg(`已识别文件名：${name}，请改用下方"选择文件"按钮选择（浏览器拖放不提供真实路径）。`);
+        failInstall(
+          `已识别文件名：${name}，请改用下方"选择文件"按钮选择（浏览器拖放不提供真实路径）。`
+        );
         return;
       }
 
@@ -170,7 +177,7 @@ export function ModpackInstallerDialog({ open, onClose }: Props) {
       node.removeEventListener("dragover", onOver);
       node.removeEventListener("drop", onDrop);
     };
-  }, [open, status]);
+  }, [open, status, failInstall]);
 
   // --- Tauri 原生 drag & drop：拿到真实文件路径 ---
   useEffect(() => {
@@ -245,9 +252,10 @@ export function ModpackInstallerDialog({ open, onClose }: Props) {
           (event) => {
             const p = event.payload;
             setResult(p);
-            setStatus(p.success ? "success" : "error");
-            if (!p.success) {
-              setErrorMsg(p.message ?? "未知错误");
+            if (p.success) {
+              setStatus("success");
+            } else {
+              failInstall(p.message ?? "未知错误");
             }
           },
         );
@@ -260,7 +268,7 @@ export function ModpackInstallerDialog({ open, onClose }: Props) {
       unlistenProgress?.();
       unlistenFinished?.();
     };
-  }, [open, taskId]);
+  }, [open, taskId, failInstall]);
 
   // --- 用原生 input file 选择（兜底方案）---
   const pickFileManually = () => {
@@ -276,8 +284,7 @@ export function ModpackInstallerDialog({ open, onClose }: Props) {
       if (p) {
         await acceptFilePath(p);
       } else {
-        setStatus("error");
-        setErrorMsg("无法获取文件真实路径，请尝试从启动器外部拖入或改用其他方式。");
+        failInstall("无法获取文件真实路径，请尝试从启动器外部拖入或改用其他方式。");
       }
     };
     input.click();
@@ -289,7 +296,6 @@ export function ModpackInstallerDialog({ open, onClose }: Props) {
     setZipPath(path);
     setZipName(name);
     setStatus("detecting");
-    setErrorMsg("");
     try {
       const r = await invoke<ModpackDetectResult>("detect_modpack_format_cmd", {
         path,
@@ -298,12 +304,10 @@ export function ModpackInstallerDialog({ open, onClose }: Props) {
         setFormat(r.format);
         setStatus("ready");
       } else {
-        setStatus("error");
-        setErrorMsg(`无法识别的整合包：${name}`);
+        failInstall(`无法识别的整合包：${name}`);
       }
     } catch (e) {
-      setStatus("error");
-      setErrorMsg(`检测失败：${String(e)}`);
+      failInstall(`检测失败：${String(e)}`);
     }
   };
 
@@ -320,8 +324,7 @@ export function ModpackInstallerDialog({ open, onClose }: Props) {
       setTaskId(tid);
     } catch (e) {
       console.error("[ModpackInstaller] install invoke error:", e);
-      setStatus("error");
-      setErrorMsg(`安装调用失败：${String(e)}`);
+      failInstall(`安装调用失败：${String(e)}`);
     }
   };
 
@@ -474,13 +477,6 @@ export function ModpackInstallerDialog({ open, onClose }: Props) {
               <Button size="sm" className="shrink-0" onClick={startInstall}>
                 开始安装
               </Button>
-            </div>
-          )}
-
-          {status === "error" && (
-            <div className="flex items-start gap-2 rounded-xl bg-destructive/10 p-3">
-              <AlertCircle className="size-4 shrink-0 text-destructive mt-0.5" />
-              <p className="text-xs text-destructive break-all">{errorMsg}</p>
             </div>
           )}
 

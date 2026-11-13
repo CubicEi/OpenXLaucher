@@ -15,9 +15,15 @@ import { useAccountContext } from "@/components/accounts/account-provider";
 import { isTauriRuntime } from "@/lib/tauri-runtime";
 import { isAutoJavaSelection, JAVA_AUTO_SELECT_PATH } from "@/lib/java-paths";
 import { appLog } from "@/lib/runtime-log";
+import {
+  launchTrace,
+  launchTraceError,
+  launchTraceWarn,
+} from "@/lib/launch-trace-log";
 import { readMigratedLocalStorage } from "@/lib/storage-migrate";
 import { log4jParser } from "@/components/launch/log4j-progress-parser";
 import { useI18n } from "@/components/i18n/use-i18n";
+import { useCornerNotice } from "@/components/global/corner-notice";
 import { analyzeLaunchLogs } from "@/components/launch/launch-analyzer";
 import { setLaunchInFlight } from "@/lib/launch-in-flight";
 import {
@@ -136,6 +142,7 @@ function deriveStatus(options: {
 
 export function LaunchProvider({ children }: { children: React.ReactNode }) {
   const { t, language } = useI18n();
+  const { pushNotice } = useCornerNotice();
   const [config, setConfig] = useState<LaunchConfig>(DEFAULT_LAUNCH_CONFIG);
   const [configLoaded, setConfigLoaded] = useState(false);
   const [status, setStatus] = useState<LaunchStatus>("idle");
@@ -154,7 +161,11 @@ export function LaunchProvider({ children }: { children: React.ReactNode }) {
   const launchInFlightRef = useRef(false);
   /** Bumped on each launch start and on cancel; stale launchGame loops exit when mismatched. */
   const launchGenerationRef = useRef(0);
+  const launchCancelledRef = useRef(false);
   const statusHintRef = useRef<LaunchStatus | null>(null);
+  const [lastLaunchOutcome, setLastLaunchOutcome] = useState<
+    "cancelled" | "failed" | null
+  >(null);
   const fullyStartedPidsRef = useRef<Set<number>>(new Set());
   const instancesRef = useRef<RunningLaunchInstance[]>([]);
   const selectedLogPidRef = useRef<number | null>(null);
@@ -447,10 +458,13 @@ export function LaunchProvider({ children }: { children: React.ReactNode }) {
     if (!isTauriRuntime()) return;
 
     let unlisten: (() => void) | null = null;
-    listen<{ pid: number; exitCode: number; gameDir?: string } | number>("game-exited", (event) => {
+    listen<{ pid: number; exitCode: number; gameDir?: string; terminationRequested?: boolean } | number>("game-exited", (event) => {
       const payload = event.payload;
       const exitCode = typeof payload === "number" ? payload : payload.exitCode;
       const pid = typeof payload === "number" ? null : payload.pid;
+      const userCancelledExit =
+        launchCancelledRef.current ||
+        (typeof payload !== "number" && payload.terminationRequested === true);
       const hadFullyStarted =
         pid != null
           ? fullyStartedPidsRef.current.has(pid)
@@ -461,19 +475,26 @@ export function LaunchProvider({ children }: { children: React.ReactNode }) {
       const timeStr = new Date(now).toLocaleString();
       setLastLaunchTime(timeStr);
       setLaunchEndedAt(now);
-      setLastExitCode(exitCode);
+      if (userCancelledExit) {
+        launchCancelledRef.current = false;
+        setLastExitCode(null);
+      } else {
+        setLastExitCode(exitCode);
+      }
       try { localStorage.setItem("openx-last-launch-time", timeStr); } catch { /* ignore */ }
 
-      const exitEntry: LaunchLogEntry = {
-        id: ++logIdRef.current,
-        timestamp: new Date(now).toLocaleTimeString(),
-        level: exitCode === 0 || hadFullyStarted ? "info" : "warn",
-        message: t("launch.provider.gameExitedWithCodeExitCode", { exitCode }),
-      };
-      if (pid != null) {
-        pushLogToPid(pid, exitEntry);
-      } else {
-        pendingLogsRef.current = appendLogEntry(pendingLogsRef.current, exitEntry);
+      if (!userCancelledExit) {
+        const exitEntry: LaunchLogEntry = {
+          id: ++logIdRef.current,
+          timestamp: new Date(now).toLocaleTimeString(),
+          level: exitCode === 0 || hadFullyStarted ? "info" : "warn",
+          message: t("launch.provider.gameExitedWithCodeExitCode", { exitCode }),
+        };
+        if (pid != null) {
+          pushLogToPid(pid, exitEntry);
+        } else {
+          pendingLogsRef.current = appendLogEntry(pendingLogsRef.current, exitEntry);
+        }
       }
 
       setRunningInstances((prev) => {
@@ -481,8 +502,12 @@ export function LaunchProvider({ children }: { children: React.ReactNode }) {
         if (next.length === 0) {
           setProgress(null);
           log4jParser.reset();
-          statusHintRef.current =
-            exitCode === 0 || hadFullyStarted ? "stopped" : "error";
+          if (userCancelledExit) {
+            statusHintRef.current = null;
+          } else {
+            statusHintRef.current =
+              exitCode === 0 || hadFullyStarted ? "stopped" : "error";
+          }
         }
         syncStatus(next);
         setSelectedLogPid((current) => {
@@ -549,15 +574,13 @@ export function LaunchProvider({ children }: { children: React.ReactNode }) {
       if (logMessage) {
         addPendingOrSelectedLog("warn", logMessage);
       }
+      setErrorMessage(null);
+      setLastExitCode(null);
+      setLastLaunchOutcome("cancelled");
       setLaunchEndedAt(now);
       syncLaunchInFlight(false);
-      statusHintRef.current =
-        instancesRef.current.length > 0 ? null : "stopped";
-      if (instancesRef.current.length === 0) {
-        setStatus("stopped");
-      } else {
-        syncStatus(instancesRef.current);
-      }
+      statusHintRef.current = null;
+      syncStatus(instancesRef.current);
       setProgress(null);
     },
     [addPendingOrSelectedLog, syncLaunchInFlight, syncStatus],
@@ -581,6 +604,7 @@ export function LaunchProvider({ children }: { children: React.ReactNode }) {
 
       // Invalidate in-flight launchGame and stop Microsoft prep immediately.
       launchGenerationRef.current += 1;
+      launchCancelledRef.current = true;
       if (inLaunchSession) {
         cancelMicrosoftLogin();
       }
@@ -637,6 +661,8 @@ export function LaunchProvider({ children }: { children: React.ReactNode }) {
 
   const beginLaunchUi = useCallback(() => {
     launchGenerationRef.current += 1;
+    launchCancelledRef.current = false;
+    setLastLaunchOutcome(null);
     setErrorMessage(null);
     setProgress(null);
     log4jParser.reset();
@@ -652,6 +678,7 @@ export function LaunchProvider({ children }: { children: React.ReactNode }) {
 
   const failLaunchUi = useCallback(
     (msg: string) => {
+      setLastLaunchOutcome("failed");
       setLaunchEndedAt(Date.now());
       syncLaunchInFlight(false);
       statusHintRef.current =
@@ -661,26 +688,39 @@ export function LaunchProvider({ children }: { children: React.ReactNode }) {
       } else {
         syncStatus(instancesRef.current);
       }
-      setErrorMessage(msg);
+      setErrorMessage(null);
+      pushNotice({ variant: "error", message: msg });
       setProgress(null);
     },
-    [syncStatus, syncLaunchInFlight],
+    [syncStatus, syncLaunchInFlight, pushNotice],
+  );
+
+  const showLaunchValidationNotice = useCallback(
+    (message: string) => {
+      setErrorMessage(null);
+      pushNotice({ variant: "error", message });
+    },
+    [pushNotice]
   );
 
   const launchGame = useCallback(
     async (overrides?: Partial<LaunchConfig>) => {
       const merged = { ...config, ...overrides };
+      launchTrace("ui.click", "用户触发启动游戏");
 
       if (!merged.minecraftPath) {
-        setErrorMessage(t("launch.provider.setTheMinecraftGameDirectory"));
+        launchTraceWarn("ui.validate", "启动校验失败：未设置游戏目录");
+        showLaunchValidationNotice(t("launch.provider.setTheMinecraftGameDirectory"));
         return;
       }
       if (!isAutoJavaSelection(merged.javaPath) && !merged.javaPath) {
-        setErrorMessage(t("launch.provider.setAJavaPath"));
+        launchTraceWarn("ui.validate", "启动校验失败：未设置 Java");
+        showLaunchValidationNotice(t("launch.provider.setAJavaPath"));
         return;
       }
       if (!merged.versionName) {
-        setErrorMessage(t("launch.provider.selectAGameVersion"));
+        launchTraceWarn("ui.validate", "启动校验失败：未选择实例");
+        showLaunchValidationNotice(t("launch.provider.selectAGameVersion"));
         return;
       }
 
@@ -692,12 +732,24 @@ export function LaunchProvider({ children }: { children: React.ReactNode }) {
         versionFolder,
       );
       if (!launchProfile) {
-        setErrorMessage(t("launch.provider.selectAPlayerAccountFirst"));
+        launchTraceWarn("ui.validate", "启动校验失败：未选择档案");
+        showLaunchValidationNotice(t("launch.provider.selectAPlayerAccountFirst"));
         return;
       }
 
+      launchTrace("ui.validate", "启动前校验通过", {
+        versionName: merged.versionName,
+        minecraftVersion: merged.minecraftVersion,
+        loadType: merged.loadType,
+        loadName: merged.loadName,
+        authType: launchProfile.authType,
+        playerName: launchProfile.name,
+        javaAuto: isAutoJavaSelection(merged.javaPath),
+      });
+
       // 校验通过后立刻进入「正在启动」，再做微软刷新 / 内存探测等耗时步骤
       beginLaunchUi();
+      launchTrace("ui.preparing", "进入准备阶段 UI");
       const launchGen = launchGenerationRef.current;
       const sessionAborted = () => launchGenerationRef.current !== launchGen;
 
@@ -705,8 +757,12 @@ export function LaunchProvider({ children }: { children: React.ReactNode }) {
 
       let microsoftAccessToken: string | null = null;
       if (launchProfile.authType === "microsoft") {
+        launchTrace("ui.ms_prep", "开始准备微软正版令牌", {
+          uuid: launchProfile.uuid,
+        });
         const prep = await prepareMicrosoftAccountForLaunch(launchProfile);
         if (sessionAborted()) {
+          launchTraceWarn("ui.cancelled", "启动会话已取消（微软准备后）");
           return;
         }
         if (!prep.ok) {
@@ -719,18 +775,28 @@ export function LaunchProvider({ children }: { children: React.ReactNode }) {
                   ? "已取消微软登录，游戏未启动。"
                   : "微软账号准备失败，游戏未启动。";
           if (prep.reason === "cancelled" || sessionAborted()) {
+            launchTraceWarn("ui.ms_prep", "用户取消启动准备", {
+              reason: prep.reason,
+            });
             abortLaunchUi(
               sessionAborted()
                 ? t("launch.provider.launchCancelledByUser")
                 : msg,
             );
           } else {
+            launchTraceError("ui.ms_prep", "微软令牌准备失败", {
+              reason: prep.reason,
+              message: msg,
+            });
             failLaunchUi(msg);
             addPendingOrSelectedLog("error", `${t("launch.provider.launchFailed")}: ${msg}`);
           }
           return;
         }
         microsoftAccessToken = prep.accessToken;
+        launchTrace("ui.ms_prep", "微软令牌准备完成", {
+          tokenLen: microsoftAccessToken.length,
+        });
       }
 
       if (sessionAborted()) {
@@ -741,6 +807,7 @@ export function LaunchProvider({ children }: { children: React.ReactNode }) {
         let launchMaxMemory = merged.maxMemory;
         if (merged.autoMemory !== false && isTauriRuntime()) {
           try {
+            launchTrace("ui.memory", "查询系统推荐内存");
             const mem = await invoke<{ recommended_mb: number }>("get_system_memory");
             if (sessionAborted()) {
               return;
@@ -748,9 +815,14 @@ export function LaunchProvider({ children }: { children: React.ReactNode }) {
             if (mem.recommended_mb > 0) {
               launchMaxMemory = String(mem.recommended_mb);
               updateConfig({ maxMemory: launchMaxMemory, autoMemory: true });
+              launchTrace("ui.memory", "已应用自动内存", {
+                recommendedMb: mem.recommended_mb,
+              });
             }
           } catch {
-            /* keep saved maxMemory */
+            launchTraceWarn("ui.memory", "自动内存查询失败，使用已保存值", {
+              maxMemory: launchMaxMemory,
+            });
           }
         }
 
@@ -792,6 +864,21 @@ export function LaunchProvider({ children }: { children: React.ReactNode }) {
           ? launchProfile.yggdrasilUrl || merged.yggdrasilApi || ""
           : "";
 
+        launchTrace("ui.invoke", "调用 launch_game", {
+          minecraftPath: merged.minecraftPath,
+          javaPath: merged.javaPath,
+          javaAuto: isAutoJavaSelection(merged.javaPath),
+          versionName: merged.versionName,
+          maxMemory: launchMaxMemory,
+          loadType: merged.loadType,
+          loadName: merged.loadName,
+          authType: launchProfile.authType,
+          hasAuthToken: accountAuthToken.length > 0,
+          authTokenLen: accountAuthToken.length,
+          hasYggdrasil: accountYggdrasilApi.length > 0,
+          processPriority: merged.processPriority || "medium",
+        });
+
         const result = await invoke<string>("launch_game", {
           minecraftPath: merged.minecraftPath,
           javaPath: merged.javaPath,
@@ -811,6 +898,10 @@ export function LaunchProvider({ children }: { children: React.ReactNode }) {
           windowHeight: merged.windowHeight || "486",
           customJvmArgs: merged.customJvmArgs || "",
           processPriority: merged.processPriority || "medium",
+        });
+
+        launchTrace("ui.invoke", "launch_game 返回成功", {
+          commandPreviewLen: result.length,
         });
 
         if (sessionAborted()) {
@@ -836,6 +927,7 @@ export function LaunchProvider({ children }: { children: React.ReactNode }) {
         const msg = raw.includes("模组正在更新")
           ? t("launch.provider.modUpdateInProgress")
           : raw;
+        launchTraceError("ui.invoke", "launch_game 失败", { error: msg });
         failLaunchUi(msg);
         addPendingOrSelectedLog("error", `${t("launch.provider.launchFailed")}: ${msg}`);
       }
@@ -852,26 +944,29 @@ export function LaunchProvider({ children }: { children: React.ReactNode }) {
       syncStatus,
       prepareMicrosoftAccountForLaunch,
       abortLaunchUi,
+      showLaunchValidationNotice,
     ],
   );
 
   const generateReport = useCallback<() => LaunchAnalysisReport>(
     () => {
       const finalStatus: LaunchAnalysisReport["finalStatus"] =
-        status === "running"
-          ? "running"
-          : status === "stopped"
-            ? "stopped"
-            : status === "error"
-              ? "error"
-              : status === "launching" || status === "preparing"
-                ? "in_progress"
-                : "idle";
+        lastLaunchOutcome === "cancelled"
+          ? "cancelled"
+          : status === "running"
+            ? "running"
+            : status === "stopped"
+              ? "stopped"
+              : status === "error"
+                ? "error"
+                : status === "launching" || status === "preparing"
+                  ? "in_progress"
+                  : "idle";
       const report = analyzeLaunchLogs(logs, {
         language,
         startedAt: launchStartedAt,
         endedAt: launchEndedAt,
-        exitCode: lastExitCode,
+        exitCode: lastLaunchOutcome === "cancelled" ? null : lastExitCode,
         finalStatus,
         accountType: selectedProfile?.authType,
       });
@@ -880,7 +975,17 @@ export function LaunchProvider({ children }: { children: React.ReactNode }) {
         launchParameters: lastCommandArgs ?? undefined,
       };
     },
-    [logs, language, launchStartedAt, launchEndedAt, lastExitCode, status, selectedProfile, lastCommandArgs],
+    [
+      logs,
+      language,
+      launchStartedAt,
+      launchEndedAt,
+      lastExitCode,
+      lastLaunchOutcome,
+      status,
+      selectedProfile,
+      lastCommandArgs,
+    ],
   );
 
   const exportLaunchReport = useCallback(async () => {

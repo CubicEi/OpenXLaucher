@@ -22,14 +22,15 @@ import {
 } from "@/components/download/download-provider";
 import { useI18n, type TranslationKey } from "@/components/i18n/use-i18n";
 import { fadeSlideUp, staggerContainer, staggerItem } from "@/lib/motion";
+import { navigateBackWithMainTransition } from "@/lib/main-navigation-transition";
 import {
   averageActiveProgress,
   formatSpeedBps,
   isInstallTask,
-  isInstallTaskActive,
   resolveTaskStage,
   sumDownloadSpeeds,
   taskShowsDownloadSpeed,
+  taskShowsIndeterminateProgress,
 } from "./task-utils";
 
 function stageLabel(
@@ -66,9 +67,8 @@ function stageLabel(
 
 /**
  * Install-task indeterminate bar.
- * Pure CSS — do NOT use framer-motion here: parent TaskCard is a motion node with
- * staggerItem variants (`animate="animate"`), which inherits into child motion.div
- * and silently kills left/width keyframe animations.
+ * Pure CSS — do NOT wrap in framer-motion: parent TaskCard uses staggerItem;
+ * nested motion nodes can inherit opacity/transform and break keyframes.
  */
 function IndeterminateProgressBar({ className }: { className?: string }) {
   return (
@@ -112,23 +112,24 @@ function TaskCard({
 }) {
   const { t } = useI18n();
   // Progress branch (strict order):
-  // 1) install waiting/running → sliding indeterminate bar (never Progress)
+  // 1) install active / running at 0% → sliding indeterminate (multiplayer prep look)
   // 2) install terminal → full (success/warning) or empty (error/cancelled)
   // 3) download / other → percent Progress
   const install = isInstallTask(task);
-  const installActive = isInstallTaskActive(task);
+  const indeterminate = taskShowsIndeterminateProgress(task);
   const showSpeed = !install && taskShowsDownloadSpeed(task);
   const speedText = showSpeed ? formatSpeedBps(task.speedBps) : null;
-  const percentText = install
-    ? null
-    : task.progress !== undefined
-      ? `${task.progress.toFixed(1)}%`
-      : "—";
+  const percentText =
+    install || indeterminate
+      ? null
+      : task.progress !== undefined
+        ? `${task.progress.toFixed(1)}%`
+        : "—";
   const canCancel = task.status === "queued" || task.status === "downloading";
   const canRemove = !canCancel;
 
   let progressRow: ReactNode;
-  if (install && installActive) {
+  if (indeterminate) {
     progressRow = <IndeterminateProgressBar />;
   } else if (install) {
     progressRow = (
@@ -224,7 +225,7 @@ export function ProcessListView() {
       <aside className="relative flex w-1/4 min-w-[200px] max-w-xs shrink-0 flex-col overflow-hidden border-r border-border">
         <div
           aria-hidden
-          className="pointer-events-none absolute inset-x-0 bottom-0 bg-[color-mix(in_oklab,var(--primary)_16%,white)] transition-[height] duration-500 ease-out dark:bg-[color-mix(in_oklab,var(--primary)_20%,black)]"
+          className="process-list-overall-fill pointer-events-none absolute inset-x-0 bottom-0 transition-[height] duration-500 ease-out"
           style={{ height: `${overallProgress}%` }}
         />
 
@@ -235,7 +236,7 @@ export function ProcessListView() {
               variant="ghost"
               size="icon-sm"
               className="mt-0.5 shrink-0"
-              onClick={() => router.back()}
+              onClick={() => navigateBackWithMainTransition(router)}
               aria-label={t("common.back")}
               title={t("common.back")}
             >
@@ -266,10 +267,20 @@ export function ProcessListView() {
                   {t("processList.overallProgress")}
                 </p>
                 <p className="text-sm font-medium tabular-nums">
-                  {overallProgress.toFixed(1)}%
+                  {activeCount > 0 && overallProgress <= 0
+                    ? "—"
+                    : `${overallProgress.toFixed(1)}%`}
                 </p>
               </div>
-              <Progress value={overallProgress} className="mt-2 h-2" />
+              <Progress
+                value={
+                  activeCount > 0 && overallProgress <= 0
+                    ? undefined
+                    : overallProgress
+                }
+                trackClassName="process-list-overall-progress-track"
+                className="mt-2 h-2"
+              />
             </div>
             <p className="text-xs text-muted-foreground">
               {activeCount > 0

@@ -3023,7 +3023,9 @@ dependencies = [
  "urlencoding",
  "uuid",
  "webbrowser",
+ "webview2-com",
  "winapi",
+ "windows 0.61.3",
  "winreg 0.52.0",
  "zip",
 ]

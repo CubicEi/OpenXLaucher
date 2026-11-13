@@ -6,7 +6,10 @@ use std::{
     collections::{HashMap, HashSet},
     path::PathBuf,
 };
+use serde_json::json;
 use tauri::Emitter;
+
+use crate::handler::launch_trace_log::launch_trace;
 
 use super::{
     identity::{is_valid_uuid, launch_auth_identity, offline_uuid},
@@ -2517,6 +2520,21 @@ pub(super) fn build_jvm_arguments_inner(
         debug!("  [{}] {}", i, a);
     }
     debug!("=== 参数列表结束 ===");
+
+    launch_trace(
+        "rust.build_args",
+        "JVM 参数列表已生成",
+        Some(json!({
+            "mainClass": version_json.main_class,
+            "gameDirectory": game_directory.display().to_string(),
+            "versionJson": version_path.display().to_string(),
+            "heapMb": effective_max_memory_mb,
+            "argCount": args.len(),
+            "playerName": player_name,
+            "loadType": loadType,
+            "loadName": loadName,
+        })),
+    );
 
     println!("{}", args.join(" "));
     Ok(args)

@@ -7,6 +7,9 @@ mod process;
 
 use std::path::PathBuf;
 
+use serde_json::json;
+
+use crate::handler::launch_trace_log::{launch_trace, launch_trace_error, launch_trace_warn};
 use arguments::{build_jvm_arguments_inner, VersionJson};
 use java_runtime::{get_java_major_version, required_java_major_from_jar};
 use crate::downloader::mod_loader_installer_shared::pick_java_executable;
@@ -44,17 +47,45 @@ pub fn launch_game(
 ) -> Result<String, String> {
     crate::handler::system::schedule_launcher_profiles_check();
 
+    launch_trace(
+        "rust.entry",
+        "launch_game 开始",
+        Some(json!({
+            "versionName": version_name,
+            "minecraftVersion": minecraft_version,
+            "playerName": player_name,
+            "loadType": loadType,
+            "loadName": loadName,
+            "javaPath": java_path,
+            "autoJava": is_auto_java_selection(java_path),
+            "maxMemory": max_memory,
+            "hasAuthToken": !auth_token.is_empty(),
+            "authTokenLen": auth_token.len(),
+            "uuidLen": uuid.len(),
+            "hasYggdrasil": !yggdrasil_api.is_empty(),
+            "processPriority": process_priority,
+        })),
+    );
+
     let mut resolved_java_path = if is_auto_java_selection(java_path) {
         let picked = pick_java_executable(minecraft_version);
         if picked.is_empty() {
+            launch_trace_error(
+                "rust.java",
+                "自动选择 Java 失败：无可用安装",
+                Some(json!({ "minecraftVersion": minecraft_version })),
+            );
             return Err(
                 "未配置可用的 Java：请先扫描或添加 Java，或下载对应版本的 Java 运行时".to_string(),
             );
         }
-        println!(
-            "[启动器] 自动选择 Java（游戏版本 {}）: {}",
-            minecraft_version,
-            picked
+        launch_trace(
+            "rust.java",
+            "自动选择 Java",
+            Some(json!({
+                "minecraftVersion": minecraft_version,
+                "resolvedJavaPath": picked,
+            })),
         );
         picked
     } else {
@@ -127,11 +158,25 @@ pub fn launch_game(
                     "[启动器] 已自动切换到匹配的 Java: {} (版本 {})",
                     matched.path, matched.version
                 );
-                resolved_java_path = matched.path;
+                resolved_java_path = matched.path.clone();
+                launch_trace(
+                    "rust.java",
+                    "已按版本要求切换 Java",
+                    Some(json!({
+                        "requiredMajor": major,
+                        "javaPath": matched.path,
+                        "javaVersion": matched.version,
+                    })),
+                );
             } else {
-                println!(
-                    "[启动器] 未找到匹配的 Java {}，中止启动并通知前端",
-                    major
+                launch_trace_error(
+                    "rust.java",
+                    "未找到匹配的大版本 Java，中止启动",
+                    Some(json!({
+                        "requiredMajor": major,
+                        "currentJavaPath": resolved_java_path,
+                        "versionName": version_name,
+                    })),
                 );
                 let _ = app.emit(
                     "java-incompatible",
@@ -159,6 +204,15 @@ pub fn launch_game(
         );
     }
 
+    launch_trace(
+        "rust.build_args",
+        "开始拼装 JVM 启动参数",
+        Some(json!({
+            "resolvedJavaPath": resolved_java_path,
+            "versionName": version_name,
+        })),
+    );
+
     // 先构建参数
     let args = build_jvm_arguments_inner(
         app.clone(),
@@ -180,7 +234,22 @@ pub fn launch_game(
         window_height,
         custom_jvm_args,
     )
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| {
+        launch_trace_error(
+            "rust.build_args",
+            "拼装 JVM 参数失败",
+            Some(json!({ "error": e.to_string() })),
+        );
+        e.to_string()
+    })?;
+
+    launch_trace(
+        "rust.build_args",
+        "JVM 参数拼装完成",
+        Some(json!({
+            "argCount": args.len(),
+        })),
+    );
 
     let game_directory = compute_game_directory(minecraft_path, loadType, loadName);
 
@@ -188,6 +257,18 @@ pub fn launch_game(
         .as_deref()
         .unwrap_or("medium")
         .to_string();
+
+    launch_trace(
+        "rust.spawn",
+        "准备启动 Java 进程",
+        Some(json!({
+            "javaPath": resolved_java_path,
+            "gameDirectory": game_directory.to_string_lossy(),
+            "minecraftPath": minecraft_path,
+            "priority": priority,
+            "displayName": version_name,
+        })),
+    );
 
     // 再启动游戏
     run_command(
@@ -200,7 +281,23 @@ pub fn launch_game(
         version_name.to_string(),
         priority,
     )
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| {
+        let msg = e.to_string();
+        launch_trace_error(
+            "rust.spawn",
+            "Java 进程启动失败",
+            Some(json!({ "error": msg })),
+        );
+        msg
+    })?;
+
+    launch_trace(
+        "rust.spawn",
+        "Java 进程已 spawn，启动参数已交予系统",
+        Some(json!({
+            "argCount": args.len(),
+        })),
+    );
 
     Ok(args.join(" "))
 }

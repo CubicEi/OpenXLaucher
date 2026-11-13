@@ -27,7 +27,8 @@
         "fullscreen": false,
         "decorations": false,
         "transparent": false,
-        "center": true
+        "center": true,
+        "additionalBrowserArgs": "--disable-features=AutofillServerCommunication,PasswordManagerOnboarding,msPasswordBreachDetection"
       }
     ]
   },

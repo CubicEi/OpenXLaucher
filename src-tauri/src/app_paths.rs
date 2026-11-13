@@ -187,6 +187,32 @@ pub fn portable_game_minecraft_dir() -> PathBuf {
     launcher_exe_dir().join(".minecraft")
 }
 
+/// macOS 标准游戏目录：`~/Library/Application Support/minecraft`（与官方启动器一致）。
+#[cfg(target_os = "macos")]
+pub fn macos_standard_minecraft_dir() -> PathBuf {
+    std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .filter(|home| home.is_absolute())
+        .map(|home| {
+            home.join("Library")
+                .join("Application Support")
+                .join("minecraft")
+        })
+        .unwrap_or_else(|| PathBuf::from("./Library/Application Support/minecraft"))
+}
+
+/// 旧版 macOS 默认（exe 旁 `.minecraft` 或 `OpenXLauncher/version`），不再迁移数据。
+#[cfg(target_os = "macos")]
+pub fn is_macos_legacy_game_minecraft_path(path: &std::path::Path) -> bool {
+    if path == portable_game_minecraft_dir() {
+        return true;
+    }
+    let lossy = path.to_string_lossy();
+    lossy.contains("/OpenXLauncher/version")
+        || lossy.ends_with("/OpenXLauncher/version")
+        || lossy.contains("\\OpenXLauncher\\version")
+}
+
 fn rename_or_copy_dir(src: &std::path::Path, dest: &std::path::Path) {
     if dest.exists() || !src.exists() {
         return;

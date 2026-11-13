@@ -179,7 +179,7 @@ function defaultLabelForEvent(eventName: string): string {
   switch (eventName) {
     case "java-download-progress":
     case "java-download-finished":
-      return "Java JDK";
+      return "下载 Java JDK";
     case "download-progress":
     case "download-finished":
       return "Minecraft";
@@ -207,6 +207,9 @@ function defaultLabelForEvent(eventName: string): string {
     case "custom-download-progress":
     case "custom-download-finished":
       return "自定义下载";
+    case "launcher-update-progress":
+    case "launcher-update-finished":
+      return "下载启动器更新";
     case "combined-download-progress":
     case "combined-download-finished":
       return "组合安装";
@@ -364,6 +367,8 @@ function makeProgressHandler(
     const payload = event.payload;
     const { task_id, percent, label: payloadLabel } = payload;
     if (typeof percent !== "number" || Number.isNaN(percent)) return;
+    // 缺少合法 task_id 的进度（旧版重复 emit）一律忽略，避免凭空多出一条任务。
+    if (typeof task_id !== "number" || !Number.isFinite(task_id)) return;
     if (isTaskDismissed(task_id)) {
       clearSpeedSample(task_id);
       return;
@@ -495,6 +500,18 @@ function makeProgressHandler(
   };
 }
 
+function isEasyTierZipDownloadFinished(
+  eventName: string,
+  success: boolean,
+  label?: string | null
+): boolean {
+  return (
+    eventName === "custom-download-finished" &&
+    success &&
+    (label?.trim() ?? "").startsWith("下载Easytier联机模块")
+  );
+}
+
 function makeFinishedHandler(
   setTasks: Dispatch<SetStateAction<DownloadTask[]>>,
   cancelledRef: { current: boolean },
@@ -504,6 +521,7 @@ function makeFinishedHandler(
   return (event: { payload: FinishedPayload }) => {
     if (cancelledRef.current) return;
     const { task_id, success, error, failed_count = 0, label: payloadLabel } = event.payload;
+    if (typeof task_id !== "number" || !Number.isFinite(task_id)) return;
     clearSpeedSample(task_id);
     if (isTaskDismissed(task_id)) {
       onEnd?.();
@@ -516,15 +534,29 @@ function makeFinishedHandler(
       if (existing) {
         return deduped.map((task) => {
           if (task.taskId !== task_id || task.status === "cancelled") return task;
+          const label = payloadLabel ?? task.label;
+          const easyTierZip = isEasyTierZipDownloadFinished(eventName, success, label);
+          if (easyTierZip && isTaskDismissed(task_id)) {
+            return task;
+          }
           const isWarning = success && failed_count > 0;
           return {
             ...task,
-            status: (isWarning ? "warning" : success ? "success" : "error") as DownloadTaskStatus,
+            status: (easyTierZip
+              ? "downloading"
+              : isWarning
+                ? "warning"
+                : success
+                  ? "success"
+                  : "error") as DownloadTaskStatus,
             progress: success ? 100 : task.progress,
             error: error ?? undefined,
             failedCount: failed_count > 0 ? failed_count : undefined,
             speedBps: undefined,
             ...(payloadLabel ? { label: payloadLabel } : {}),
+            ...(easyTierZip
+              ? { stage: "正在安装联机工具…", detail: "正在解压并初始化…" }
+              : {}),
           };
         });
       }
@@ -593,6 +625,7 @@ export async function setupAllDownloadListeners(
     ["forge-download-progress", "forge-download-finished", "other"],
     ["mod-download-progress", "mod-download-finished", "other"],
     ["custom-download-progress", "custom-download-finished", "other"],
+    ["launcher-update-progress", "launcher-update-finished", "other"],
     ["neoforge-download-progress", "neoforge-download-finished", "other"],
     ["liteloader-download-progress", "liteloader-download-finished", "other"],
     ["quilt-download-progress", "quilt-download-finished", "other"],

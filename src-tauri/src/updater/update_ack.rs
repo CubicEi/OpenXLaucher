@@ -121,6 +121,13 @@ fn write_ack_file(path: &Path) -> bool {
         Ok(()) => {
             eprintln!("[更新器] 已写入更新 ack: {}", path.display());
             POST_UPDATE_SUCCESS_PENDING.store(true, Ordering::SeqCst);
+            // 新版本已成功拉起：清理 OpenX/update 中的安装包
+            crate::updater::config::clear_update_download_dir();
+            let mut cfg = crate::updater::config::get_update_config();
+            cfg.download_path = None;
+            cfg.download_progress = None;
+            cfg.status = crate::updater::config::UpdateStatus::Idle;
+            let _ = crate::updater::config::save_update_config(cfg);
             true
         }
         Err(e) => {

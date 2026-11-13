@@ -4,24 +4,15 @@ import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 
+import { ConfirmDialog } from "@/components/confirm-dialog";
 import { isTauriRuntime } from "@/lib/tauri-runtime";
 import { appLog } from "@/lib/runtime-log";
 import { useI18n } from "@/components/i18n/use-i18n";
-import { Button } from "@/components/ui/button";
-import {
-  AlertDialog,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
 
 type GameExitedPayload = {
   pid: number;
   exitCode: number;
   gameDir?: string;
-  /** Launcher-initiated stop (kill_game_process); do not treat as a crash. */
   terminationRequested?: boolean;
 };
 
@@ -31,7 +22,6 @@ function joinGameSubdir(gameDir: string, subdir: string): string {
   return `${base}/${sub}`;
 }
 
-/** Shown when the game process exits with code 1 and the stop was not launcher-initiated. */
 export function GameExitErrorDialog() {
   const { t } = useI18n();
   const [open, setOpen] = useState(false);
@@ -48,8 +38,6 @@ export function GameExitErrorDialog() {
       const payload = event.payload;
       const exitCode = typeof payload === "number" ? payload : payload.exitCode;
       if (exitCode !== 1) return;
-
-      // taskkill/kill from the launcher often yields exit code 1 — skip the crash dialog.
       if (typeof payload !== "number" && payload.terminationRequested) return;
 
       const dir =
@@ -87,36 +75,31 @@ export function GameExitErrorDialog() {
   );
 
   return (
-    <AlertDialog open={open} onOpenChange={setOpen}>
-      <AlertDialogContent>
-        <AlertDialogHeader>
-          <AlertDialogTitle>{t("launch.provider.gameErrorTitle")}</AlertDialogTitle>
-          <AlertDialogDescription>
-            {t("launch.provider.gameErrorDescription")}
-          </AlertDialogDescription>
-        </AlertDialogHeader>
-        <AlertDialogFooter className="sm:flex-wrap">
-          <Button
-            type="button"
-            variant="outline"
-            disabled={!gameDir}
-            onClick={() => void openSubdir("logs")}
-          >
-            {t("launch.provider.viewLogs")}
-          </Button>
-          <Button
-            type="button"
-            variant="outline"
-            disabled={!gameDir}
-            onClick={() => void openSubdir("crash-reports")}
-          >
-            {t("launch.provider.viewCrashReports")}
-          </Button>
-          <Button type="button" onClick={() => setOpen(false)}>
-            {t("common.confirm")}
-          </Button>
-        </AlertDialogFooter>
-      </AlertDialogContent>
-    </AlertDialog>
+    <ConfirmDialog
+      open={open}
+      onOpenChange={setOpen}
+      title={t("launch.provider.gameErrorTitle")}
+      actions={[
+        {
+          label: t("launch.provider.viewLogs"),
+          variant: "outline",
+          disabled: !gameDir,
+          onClick: () => void openSubdir("logs"),
+        },
+        {
+          label: t("launch.provider.viewCrashReports"),
+          variant: "outline",
+          disabled: !gameDir,
+          onClick: () => void openSubdir("crash-reports"),
+        },
+        {
+          label: t("common.confirm"),
+          variant: "primary",
+          onClick: () => setOpen(false),
+        },
+      ]}
+    >
+      {t("launch.provider.gameErrorDescription")}
+    </ConfirmDialog>
   );
 }

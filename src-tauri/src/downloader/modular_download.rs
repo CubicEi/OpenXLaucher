@@ -25,16 +25,22 @@ const CHUNKED_THRESHOLD: u64 = 256 * 1024;
 const SMALL_CHUNK: u64 = 256 * 1024;
 const MEDIUM_CHUNK: u64 = 1 * 1024 * 1024;
 const LARGE_CHUNK: u64 = 4 * 1024 * 1024;
-const LAST_MILE_THRESHOLD: f64 = 0.5;
-const FINAL_SPRINT_THRESHOLD: f64 = 0.8;
 const STALL_BYTES_PER_SEC: u64 = 30 * 1024;
-const STALL_DETECTION_INTERVAL: Duration = Duration::from_secs(2);
 const MAX_RETRIES_PER_URL: u32 = 8;
 const MAX_RETRIES_PER_CHUNK: u32 = 5;
-const CHUNK_TIMEOUT_BASE: Duration = Duration::from_secs(15);
 
 fn workers_for_size(size: u64) -> usize {
     download_runtime_config::workers_for_file_size(size, CHUNKED_THRESHOLD)
+}
+
+/// 从 `Content-Range: bytes start-end/total` 解析整文件大小。
+/// `total` 为 `*` 或缺失时返回 `None`——切勿用分片响应的 `Content-Length` 冒充整文件大小。
+fn parse_content_range_total(header: &str) -> Option<u64> {
+    let total = header.split('/').nth(1)?.trim();
+    if total.is_empty() || total == "*" {
+        return None;
+    }
+    total.parse::<u64>().ok().filter(|&n| n > 0)
 }
 
 fn chunk_size_for(size: u64) -> u64 {
@@ -83,286 +89,23 @@ pub enum SingleDownloadResult {
 }
 
 #[derive(Debug, Clone, Copy)]
-struct Range {
+struct ByteRange {
+    /// Inclusive start offset.
     start: u64,
+    /// Inclusive end offset.
     end: u64,
 }
-impl Range {
-    fn size(&self) -> u64 {
+
+impl ByteRange {
+    fn size(self) -> u64 {
         self.end.saturating_sub(self.start) + 1
     }
 }
 
-struct ChunkTask {
-    range: Range,
-    started_at: Option<Instant>,
-    last_progress_at: Option<Instant>,
-    downloaded_in_chunk: Arc<AtomicU64>,
+#[derive(Debug, Clone, Copy)]
+struct ChunkJob {
+    range: ByteRange,
     attempts: u32,
-    is_rescue: bool,
-}
-
-impl Clone for ChunkTask {
-    fn clone(&self) -> Self {
-        Self {
-            range: self.range,
-            started_at: self.started_at,
-            last_progress_at: self.last_progress_at,
-            downloaded_in_chunk: Arc::new(AtomicU64::new(
-                self.downloaded_in_chunk.load(Ordering::Relaxed),
-            )),
-            attempts: self.attempts,
-            is_rescue: self.is_rescue,
-        }
-    }
-}
-
-struct SharedDownloadState {
-    total_size: u64,
-    total_downloaded: Arc<AtomicU64>,
-    last_mile_enabled: AtomicBool,
-    failed: AtomicBool,
-    error_msg: StdMutex<Option<String>>,
-    cancel: Arc<AtomicBool>,
-}
-
-struct DynamicScheduler {
-    alloc_cursor: u64,
-    total_size: u64,
-    base_chunk: u64,
-    in_flight: VecDeque<ChunkTask>,
-    completed_offsets: VecDeque<(u64, u64)>,
-    total_downloaded: Arc<AtomicU64>,
-    last_mile_enabled: bool,
-    throughput_samples: VecDeque<(Instant, u64)>,
-    last_measured_bytes: u64,
-    current_throughput: u64,
-}
-
-impl DynamicScheduler {
-    fn new(total_size: u64, total_downloaded: Arc<AtomicU64>, base_chunk: u64) -> Self {
-        Self {
-            alloc_cursor: 0,
-            total_size,
-            base_chunk,
-            in_flight: VecDeque::new(),
-            completed_offsets: VecDeque::new(),
-            total_downloaded,
-            last_mile_enabled: false,
-            throughput_samples: VecDeque::new(),
-            last_measured_bytes: 0,
-            current_throughput: 0,
-        }
-    }
-
-    fn tick(&mut self) {
-        let now = Instant::now();
-        let current = self.total_downloaded.load(Ordering::Relaxed);
-        let delta = current.saturating_sub(self.last_measured_bytes);
-        self.throughput_samples.push_back((now, delta));
-        self.last_measured_bytes = current;
-        while let Some(&(t, _)) = self.throughput_samples.front() {
-            if now.duration_since(t) > Duration::from_secs(8) {
-                self.throughput_samples.pop_front();
-            } else {
-                break;
-            }
-        }
-        if self.throughput_samples.len() >= 2 {
-            let window_bytes: u64 = self.throughput_samples.iter().map(|(_, b)| *b).sum();
-            let first_t = self
-                .throughput_samples
-                .front()
-                .map(|(t, _)| *t)
-                .unwrap_or(now);
-            let last_t = self
-                .throughput_samples
-                .back()
-                .map(|(t, _)| *t)
-                .unwrap_or(now);
-            let elapsed = last_t.duration_since(first_t).as_secs_f64().max(0.5);
-            self.current_throughput = (window_bytes as f64 / elapsed) as u64;
-        }
-        let progress_ratio = if self.total_size > 0 {
-            current as f64 / self.total_size as f64
-        } else {
-            0.0
-        };
-        if progress_ratio > LAST_MILE_THRESHOLD && !self.last_mile_enabled {
-            self.last_mile_enabled = true;
-        }
-    }
-
-    fn alloc_next(&mut self) -> Option<ChunkTask> {
-        if self.is_dead() {
-            return None;
-        }
-        if self.alloc_cursor < self.total_size {
-            let remaining = self.total_size - self.alloc_cursor;
-            let mut target_chunk = self.base_chunk;
-            if self.last_mile_enabled {
-                target_chunk = target_chunk.min(192 * 1024);
-                if remaining < 5 * 1024 * 1024 {
-                    target_chunk = target_chunk.min(128 * 1024);
-                }
-                if remaining < 1 * 1024 * 1024 {
-                    target_chunk = target_chunk.min(64 * 1024);
-                }
-            }
-            target_chunk = target_chunk.max(32 * 1024);
-            let end = (self.alloc_cursor + target_chunk - 1).min(self.total_size - 1);
-            let range = Range {
-                start: self.alloc_cursor,
-                end,
-            };
-            self.alloc_cursor = end + 1;
-            let task = ChunkTask {
-                range,
-                started_at: Some(Instant::now()),
-                last_progress_at: Some(Instant::now()),
-                downloaded_in_chunk: Arc::new(AtomicU64::new(0)),
-                attempts: 0,
-                is_rescue: false,
-            };
-            self.in_flight.push_back(task.clone());
-            return Some(task);
-        }
-        self.try_rescue_stalled_chunk()
-    }
-
-    fn try_rescue_stalled_chunk(&mut self) -> Option<ChunkTask> {
-        let now = Instant::now();
-        let mut best_idx: Option<usize> = None;
-        let mut best_slow: Duration = Duration::from_secs(0);
-        for (i, c) in self.in_flight.iter().enumerate() {
-            let elapsed = c.started_at.map(|t| t.elapsed()).unwrap_or_default();
-            let download = c.downloaded_in_chunk.load(Ordering::Relaxed);
-            let remain = c.range.size().saturating_sub(download);
-            if remain < 16 * 1024 {
-                continue;
-            }
-            let remain_fraction = if download == 0 {
-                if elapsed > STALL_DETECTION_INTERVAL {
-                    elapsed
-                } else {
-                    continue;
-                }
-            } else {
-                let avg_bps = (download as f64 / elapsed.as_secs_f64().max(0.1)) as u64;
-                let threshold = if self.last_mile_enabled {
-                    STALL_BYTES_PER_SEC * 3 / 2
-                } else {
-                    STALL_BYTES_PER_SEC
-                };
-                if elapsed > STALL_DETECTION_INTERVAL && avg_bps < threshold {
-                    elapsed
-                } else {
-                    continue;
-                }
-            };
-            if remain_fraction > best_slow {
-                best_slow = remain_fraction;
-                best_idx = Some(i);
-            }
-        }
-        if let Some(idx) = best_idx {
-            let c = &self.in_flight[idx];
-            let orig_range = c.range;
-            let current_downloaded = c.downloaded_in_chunk.load(Ordering::Relaxed);
-            let new_start = orig_range
-                .start
-                .saturating_add(current_downloaded.max(orig_range.size() / 3));
-            if new_start >= orig_range.end {
-                return None;
-            }
-            let new_chunk = ChunkTask {
-                range: Range {
-                    start: new_start,
-                    end: orig_range.end,
-                },
-                started_at: Some(Instant::now()),
-                last_progress_at: Some(Instant::now()),
-                downloaded_in_chunk: Arc::new(AtomicU64::new(0)),
-                attempts: 0,
-                is_rescue: true,
-            };
-            self.in_flight[idx].range = Range {
-                start: orig_range.start,
-                end: new_start.saturating_sub(1),
-            };
-            let out = new_chunk.clone();
-            self.in_flight.push_back(new_chunk);
-            let _ = now;
-            return Some(out);
-        }
-        None
-    }
-
-    fn mark_done(&mut self, start: u64, end: u64) {
-        self.in_flight
-            .retain(|c| !(c.range.start == start && c.range.end == end));
-        if start == self.alloc_cursor {
-            self.alloc_cursor = end + 1;
-        }
-        self.completed_offsets.push_back((start, end));
-        if self.completed_offsets.len() > 64 {
-            self.completed_offsets.pop_front();
-        }
-    }
-
-    fn mark_chunk_failed(&mut self, start: u64, end: u64) {
-        if let Some(pos) = self
-            .in_flight
-            .iter()
-            .position(|c| c.range.start == start && c.range.end == end)
-        {
-            if let Some(c) = self.in_flight.remove(pos) {
-                let new_cursor = self.alloc_cursor.min(start);
-                self.alloc_cursor = new_cursor;
-                let mut back = c;
-                back.attempts += 1;
-                back.started_at = None;
-                back.last_progress_at = None;
-                back.downloaded_in_chunk = Arc::new(AtomicU64::new(0));
-                back.is_rescue = false;
-                if back.attempts <= MAX_RETRIES_PER_CHUNK {
-                    self.in_flight.push_front(back);
-                } else {
-                    drop(back);
-                }
-            }
-        } else {
-            let new_cursor = self.alloc_cursor.min(start);
-            self.alloc_cursor = new_cursor;
-        }
-    }
-
-    fn total_failures(&self) -> u32 {
-        self.in_flight.iter().map(|c| c.attempts).sum::<u32>()
-    }
-
-    fn is_done(&self) -> bool {
-        self.alloc_cursor >= self.total_size && self.in_flight.is_empty()
-    }
-
-    fn is_dead(&self) -> bool {
-        if self.in_flight.is_empty() {
-            return false;
-        }
-        self.in_flight.iter().all(|c| c.attempts >= 2)
-    }
-
-    fn remaining_ratio(&self) -> f64 {
-        if self.total_size == 0 {
-            return 0.0;
-        }
-        let done = self.total_downloaded.load(Ordering::Relaxed);
-        1.0 - (done as f64 / self.total_size as f64)
-    }
-
-    fn in_flight_count(&self) -> usize {
-        self.in_flight.len()
-    }
 }
 
 struct TempFileGuard {
@@ -612,7 +355,7 @@ async fn download_file_internal(
     }
     
     let temp_path = generate_temp_path(&target);
-    let _guard = TempFileGuard::new(temp_path.clone(), target.clone(), cancel_arc.clone());
+    let mut guard = TempFileGuard::new(temp_path.clone(), target.clone(), cancel_arc.clone());
     
     let mut last_err: Option<String> = None;
     let mut urls_tried: Vec<String> = Vec::new();
@@ -660,7 +403,15 @@ async fn download_file_internal(
                     let _ = fs::remove_file(&part_path);
                     continue;
                 }
-                
+
+                guard.disarm();
+                remove_stale_downloading_temp(&target);
+
+                if let Some(tx) = progress_tx.as_ref() {
+                    let size = fs::metadata(&target).map(|m| m.len()).unwrap_or(0);
+                    let _ = tx.send((size, size.max(1))).await;
+                }
+
                 let size = fs::metadata(&target).map(|m| m.len()).unwrap_or(0);
                 println!(
                     "[Download] ✓ 成功: {} ({} bytes) | URL: {}",
@@ -876,17 +627,39 @@ async fn try_download_to_temp(
             );
             
             if status == 206 {
-                let size = resp
+                let range_total = resp
                     .headers()
                     .get(reqwest::header::CONTENT_RANGE)
                     .and_then(|v| v.to_str().ok())
-                    .and_then(|s| s.split('/').nth(1))
-                    .and_then(|s| s.parse::<u64>().ok())
-                    .unwrap_or(resp.content_length().unwrap_or(0));
+                    .and_then(parse_content_range_total);
+                let header_partial_len = resp.content_length();
+
+                // 没有明确整文件大小时，Content-Length 只是本次分片长度（常为 ~1MB），
+                // 绝不能当作完整文件大小，否则会提前 finalize 出残缺文件。
+                let Some(size) = range_total else {
+                    println!(
+                        "[Download]   ! HTTP 206 但缺少有效 Content-Range 总量 (partial≈{:?} bytes)，回退单线程下载",
+                        header_partial_len
+                    );
+                    drop(resp);
+                    return single_threaded_download(
+                        &client,
+                        &url_to_use,
+                        temp_path,
+                        progress_tx,
+                        cancel,
+                    )
+                    .await;
+                };
+
                 let body = resp.bytes().await.unwrap_or_default();
-                println!("[Download]   ✓ 支持Range (HTTP 206) | 文件大小: {} bytes | first_chunk: {} bytes", size, body.len());
-                
-                if size > 0 && body.is_empty() {
+                println!(
+                    "[Download]   ✓ 支持Range (HTTP 206) | 文件大小: {} bytes | first_chunk: {} bytes",
+                    size,
+                    body.len()
+                );
+
+                if body.is_empty() {
                     println!("[Download]   ! Range请求返回空body，回退到单线程下载");
                     return single_threaded_download(
                         &client,
@@ -944,18 +717,27 @@ async fn try_download_to_temp(
     
     if total_size <= first_range_end + 1 {
         if let Some(data) = first_chunk_data {
-            if !data.is_empty() {
+            // 仅当探测分片已覆盖整文件时才可直接落盘；长度不足说明总量不可信或响应被截断。
+            if !data.is_empty() && data.len() as u64 == total_size {
                 println!("[Download]   小文件 ({} bytes), 直接写入", total_size);
                 fs::write(temp_path, &data).with_context(|| "写入文件失败")?;
-                
+
                 if let Some(sha) = sha1 {
                     if !verify_sha1(temp_path, sha) {
                         let _ = fs::remove_file(temp_path);
                         return Err(anyhow!("SHA1 不匹配"));
                     }
                 }
+                if let Some(tx) = progress_tx.as_ref() {
+                    let _ = tx.try_send((total_size, total_size));
+                }
                 return Ok(());
             }
+            println!(
+                "[Download]   ! 小文件探测不完整 (body={} / total={}), 回退单线程下载",
+                data.len(),
+                total_size
+            );
         }
         println!("[Download]   走单线程下载");
         return single_threaded_download(&client, &url_to_use, temp_path, progress_tx, cancel)
@@ -971,306 +753,273 @@ async fn try_download_to_temp(
             .await;
     }
     
-    if let Err(e) = preallocate_file(temp_path, total_size) {
-        return Err(e.context("预分配文件失败"));
-    }
-    
-    let bw = workers_for_size(total_size);
+    parallel_range_download(
+        &client,
+        &url_to_use,
+        temp_path,
+        total_size,
+        first_chunk_data.take(),
+        sha1,
+        progress_tx,
+        cancel,
+    )
+    .await
+}
+
+/// 多线程 Range 下载：分片拉齐后按偏移直接写盘，仅在落盘成功后计入进度。
+async fn parallel_range_download(
+    client: &reqwest::Client,
+    url: &str,
+    temp_path: &Path,
+    total_size: u64,
+    first_chunk: Option<Vec<u8>>,
+    sha1: &Option<String>,
+    progress_tx: Option<mpsc::Sender<(u64, u64)>>,
+    cancel: Arc<AtomicBool>,
+) -> Result<()> {
+    let workers = workers_for_size(total_size).max(1);
+    let chunk_len = chunk_size_for(total_size).max(32 * 1024);
     println!(
-        "[Download]   分片模式下载 | 总大小: {} bytes | base_workers: {}",
-        total_size, bw
+        "[Download]   分片模式下载 | 总大小: {} bytes | workers: {} | chunk: {} bytes",
+        total_size, workers, chunk_len
     );
-    
-    let (writer_tx, mut writer_rx): (
-        mpsc::UnboundedSender<(u64, Vec<u8>)>,
-        mpsc::UnboundedReceiver<(u64, Vec<u8>)>,
-    ) = mpsc::unbounded_channel();
-    
-    let first_chunk_len = first_chunk_data.as_ref().map(|d| d.len()).unwrap_or(0);
-    if let Some(data) = first_chunk_data.take() {
+
+    preallocate_file(temp_path, total_size).context("预分配文件失败")?;
+
+    let file = Arc::new(StdMutex::new({
+        use std::fs::OpenOptions;
+        use std::io::{Seek, SeekFrom, Write};
+        let mut f = OpenOptions::new()
+            .write(true)
+            .read(true)
+            .open(temp_path)
+            .with_context(|| format!("打开临时文件失败: {}", temp_path.display()))?;
+        // 确保不会因其它句柄截断；长度已由 preallocate 设定。
+        let _ = f.seek(SeekFrom::Start(0));
+        let _ = Write::flush(&mut f);
+        f
+    }));
+
+    // written：已成功落盘字节（完成校验用）
+    // progress：含在途分片已接收字节（UI 进度/速度用），失败分片会回滚
+    let written = Arc::new(AtomicU64::new(0));
+    let progress = Arc::new(AtomicU64::new(0));
+    let failed = Arc::new(AtomicBool::new(false));
+    let error_msg: Arc<StdMutex<Option<String>>> = Arc::new(StdMutex::new(None));
+
+    let mut cursor = 0u64;
+    if let Some(data) = first_chunk {
         if !data.is_empty() {
-            let _ = writer_tx.send((0, data));
+            let n = data.len() as u64;
+            if n > total_size {
+                return Err(anyhow!(
+                    "探测分片大于声明文件大小: {} > {}",
+                    n,
+                    total_size
+                ));
+            }
+            write_at_offset(&file, 0, &data)?;
+            written.fetch_add(n, Ordering::SeqCst);
+            progress.fetch_add(n, Ordering::SeqCst);
+            cursor = n;
+            if let Some(tx) = progress_tx.as_ref() {
+                let _ = tx.send((n, total_size)).await;
+            }
+            println!("[Download]   已写入探测分片: {} bytes", n);
         }
     }
-    
-    let temp_path_buf = temp_path.to_path_buf();
-    let write_handle = tokio::spawn(async move {
-        use tokio::io::AsyncSeekExt;
-        let mut f = match tokio::fs::File::create(&temp_path_buf).await {
-            Ok(f) => f,
-            Err(e) => {
-                eprintln!("[Download]   ✗ 创建文件失败: {}", e);
-                return;
-            }
-        };
-        
-        let mut buf: std::collections::BTreeMap<u64, Vec<u8>> = std::collections::BTreeMap::new();
-        let mut expected: u64 = 0;
-        let mut buffered_bytes: u64 = 0;
-        let flush_threshold: u64 = 8 * 1024 * 1024;
-        
-        while let Some((offset, data)) = writer_rx.recv().await {
-            let data_len = data.len() as u64;
-            
-            if offset == expected {
-                let _ = f.seek(std::io::SeekFrom::Start(offset)).await;
-                let _ = f.write_all(&data).await;
-                expected = offset + data_len;
-                buffered_bytes += data_len;
-                
-                while let Some(next_data) = buf.remove(&expected) {
-                    let _ = f.seek(std::io::SeekFrom::Start(expected)).await;
-                    let nd_len = next_data.len() as u64;
-                    let _ = f.write_all(&next_data).await;
-                    expected += nd_len;
-                    buffered_bytes += nd_len;
-                }
-                
-                if buffered_bytes >= flush_threshold {
-                    let _ = f.flush().await;
-                    buffered_bytes = 0;
-                }
-            } else {
-                buffered_bytes += data_len;
-                buf.insert(offset, data);
-                
-                if buffered_bytes >= flush_threshold {
-                    let _ = f.flush().await;
-                    buffered_bytes = 0;
-                }
-            }
+
+    let jobs: Arc<StdMutex<VecDeque<ChunkJob>>> = Arc::new(StdMutex::new({
+        let mut q = VecDeque::new();
+        while cursor < total_size {
+            let end = (cursor + chunk_len - 1).min(total_size - 1);
+            q.push_back(ChunkJob {
+                range: ByteRange {
+                    start: cursor,
+                    end,
+                },
+                attempts: 0,
+            });
+            cursor = end + 1;
         }
-        
-        let _ = f.flush().await;
-        let _ = f.sync_all().await;
-    });
-    
-    let total_downloaded = Arc::new(AtomicU64::new(0));
-    if first_chunk_len > 0 {
-        total_downloaded.fetch_add(first_chunk_len as u64, Ordering::Relaxed);
-    }
-    
-    let state = Arc::new(SharedDownloadState {
-        total_size,
-        total_downloaded: total_downloaded.clone(),
-        last_mile_enabled: AtomicBool::new(false),
-        failed: AtomicBool::new(false),
-        error_msg: StdMutex::new(None),
-        cancel: cancel.clone(),
-    });
-    
-    let scheduler = Arc::new(tokio::sync::Mutex::new(DynamicScheduler::new(
-        total_size,
-        total_downloaded.clone(),
-        chunk_size_for(total_size),
-    )));
-    
-    if first_chunk_len > 0 {
-        let mut s = scheduler.lock().await;
-        s.mark_done(0, first_chunk_len as u64 - 1);
-    }
-    
-    let base_workers = workers_for_size(total_size);
-    
-    let progress_monitor = {
-        let state = state.clone();
-        let scheduler = scheduler.clone();
-        let tx = progress_tx.clone();
-        
-        tokio::spawn(async move {
-            let mut last_report = Instant::now();
-            loop {
-                tokio::time::sleep(Duration::from_millis(200)).await;
-                
-                let done = state.total_downloaded.load(Ordering::Relaxed);
-                if let Some(tx) = &tx {
-                    let _ = tx.try_send((done, state.total_size));
-                }
-                
-                if state.cancel.load(Ordering::SeqCst) || state.failed.load(Ordering::SeqCst) {
-                    break;
-                }
-                
-                let done_sched = {
-                    let mut s = scheduler.lock().await;
-                    s.tick();
-                    s.is_done()
-                };
-                
-                if done_sched
-                    && Instant::now().duration_since(last_report) > Duration::from_millis(400)
-                {
-                    break;
-                }
-                
-                last_report = Instant::now();
-                
-                if done >= state.total_size {
-                    break;
-                }
-            }
-        })
-    };
-    
-    let url_arc = Arc::new(url_to_use.clone());
-    let client_arc = client.clone();
-    let writer_sender = writer_tx.clone();
-    let mut worker_handles = Vec::new();
-    
-    for worker_id in 0..base_workers {
-        let scheduler = scheduler.clone();
-        let state = state.clone();
-        let url = url_arc.clone();
-        let client = client_arc.clone();
-        let ws = writer_sender.clone();
-        
-        let handle = tokio::spawn(async move {
-            worker_loop(worker_id, scheduler, state, url, client, ws).await;
-        });
-        worker_handles.push(handle);
-    }
-    
-    let state_clone = state.clone();
-    let scheduler_clone = scheduler.clone();
-    let url_arc2 = url_arc.clone();
-    let client_arc2 = client_arc.clone();
-    let ws2 = writer_sender.clone();
-    
-    let accelerator_handle = tokio::spawn(async move {
-        let mut last_add = Instant::now();
-        let mut current_worker_count = base_workers as u64;
-        let mut last_throughput_samples: VecDeque<u64> = VecDeque::new();
-        let mut last_done: u64 = total_downloaded.load(Ordering::Relaxed);
-        let mut last_time = Instant::now();
-        
+        q
+    }));
+    let in_flight = Arc::new(AtomicU64::new(0));
+
+    let progress_tx_mon = progress_tx.clone();
+    let progress_mon = progress.clone();
+    let written_mon = written.clone();
+    let failed_mon = failed.clone();
+    let cancel_mon = cancel.clone();
+    let progress_monitor = tokio::spawn(async move {
+        let mut last_sent = u64::MAX;
         loop {
-            tokio::time::sleep(Duration::from_millis(1500)).await;
-            
-            if state_clone.cancel.load(Ordering::SeqCst)
-                || state_clone.failed.load(Ordering::SeqCst)
-            {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            if cancel_mon.load(Ordering::SeqCst) || failed_mon.load(Ordering::SeqCst) {
                 break;
             }
-            
-            let done = state_clone.total_downloaded.load(Ordering::SeqCst);
-            if done >= state_clone.total_size {
+            let done = progress_mon
+                .load(Ordering::SeqCst)
+                .max(written_mon.load(Ordering::SeqCst))
+                .min(total_size);
+            // 只在字节变化时推送，避免塞满有界 channel 导致后续进度被 try_send 丢掉
+            if done != last_sent {
+                if let Some(tx) = progress_tx_mon.as_ref() {
+                    if tx.send((done, total_size)).await.is_err() {
+                        break;
+                    }
+                }
+                last_sent = done;
+            }
+            if written_mon.load(Ordering::SeqCst) >= total_size {
                 break;
             }
-            
-            let now = Instant::now();
-            let dt = now.duration_since(last_time).as_secs_f64().max(0.1);
-            let dd = done.saturating_sub(last_done);
-            let current_bps = (dd as f64 / dt) as u64;
-            
-            last_throughput_samples.push_back(current_bps);
-            if last_throughput_samples.len() > 4 {
-                last_throughput_samples.pop_front();
-            }
-            
-            let avg_bps = if !last_throughput_samples.is_empty() {
-                last_throughput_samples.iter().sum::<u64>() / last_throughput_samples.len() as u64
-            } else {
-                0
-            };
-            
-            last_done = done;
-            last_time = now;
-            
-            let (in_flight, alloc_done, _remaining) = {
-                let s = scheduler_clone.lock().await;
-                (
-                    s.in_flight_count(),
-                    s.alloc_cursor >= s.total_size,
-                    s.total_size
-                        .saturating_sub(s.total_downloaded.load(Ordering::Relaxed)),
+        }
+    });
+
+    let mut handles = Vec::with_capacity(workers);
+    for _ in 0..workers {
+        let client = client.clone();
+        let url = url.to_string();
+        let file = file.clone();
+        let jobs = jobs.clone();
+        let written = written.clone();
+        let progress = progress.clone();
+        let failed = failed.clone();
+        let error_msg = error_msg.clone();
+        let cancel = cancel.clone();
+        let in_flight = in_flight.clone();
+
+        handles.push(tokio::spawn(async move {
+            loop {
+                if cancel.load(Ordering::SeqCst) || failed.load(Ordering::SeqCst) {
+                    return;
+                }
+
+                let job = {
+                    let mut q = jobs.lock().unwrap();
+                    q.pop_front()
+                };
+                let Some(job) = job else {
+                    if in_flight.load(Ordering::SeqCst) == 0 {
+                        return;
+                    }
+                    tokio::time::sleep(Duration::from_millis(40)).await;
+                    continue;
+                };
+
+                in_flight.fetch_add(1, Ordering::SeqCst);
+                let range = job.range;
+                let result = fetch_and_write_range(
+                    &client,
+                    &url,
+                    &file,
+                    range,
+                    &progress,
+                    &cancel,
+                    &failed,
                 )
-            };
-            
-            let ratio = done as f64 / state_clone.total_size as f64;
-            let mut should_spawn = false;
-            let mut num_new: u64 = 0;
-            
-            // 早期阶段也主动增加 worker
-            if ratio < 0.2 && in_flight > 0 {
-                let max_workers = download_runtime_config::max_workers_per_file_cap() as u64;
-                if current_worker_count < max_workers / 2 {
-                    num_new = 4;
-                    should_spawn = true;
-                }
-            } else if ratio >= FINAL_SPRINT_THRESHOLD && in_flight > 0 {
-                num_new = (in_flight as u64).min(24).max(8);
-                should_spawn = true;
-            } else if ratio >= LAST_MILE_THRESHOLD {
-                if avg_bps < STALL_BYTES_PER_SEC * 6 && in_flight > 0 {
-                    num_new = (in_flight as u64).min(16).max(6);
-                    should_spawn = true;
-                }
-            } else if alloc_done && in_flight > 0 {
-                if avg_bps < STALL_BYTES_PER_SEC * 6 {
-                    num_new = (in_flight as u64).min(12).max(5);
-                    should_spawn = true;
-                }
-            } else if avg_bps < STALL_BYTES_PER_SEC * 2 && in_flight > 0 {
-                num_new = 5;
-                should_spawn = true;
-            }
-            
-            if should_spawn && last_add.elapsed() > Duration::from_secs(2) {
-                let max_total = download_runtime_config::max_workers_per_file_cap() as u64;
-                let can_add = max_total.saturating_sub(current_worker_count);
-                let actual_add = num_new.min(can_add);
-                
-                if actual_add > 0 {
-                    last_add = Instant::now();
-                    current_worker_count += actual_add;
-                    
-                    for n in 0..actual_add {
-                        let scheduler = scheduler_clone.clone();
-                        let state = state_clone.clone();
-                        let url = url_arc2.clone();
-                        let client = client_arc2.clone();
-                        let ws = ws2.clone();
-                        let wid = 10000 + ((n as usize) * 7919 + current_worker_count as usize);
-                        
-                        tokio::spawn(async move {
-                            worker_loop(wid, scheduler, state, url, client, ws).await;
-                        });
+                .await;
+
+                match result {
+                    Ok(()) => {
+                        in_flight.fetch_sub(1, Ordering::SeqCst);
+                        let n = range.size();
+                        written.fetch_add(n, Ordering::SeqCst);
+                        println!(
+                            "[Download]     ✓ chunk {}-{} 落盘 ({} bytes)",
+                            range.start, range.end, n
+                        );
+                    }
+                    Err(e) => {
+                        if cancel.load(Ordering::SeqCst) {
+                            in_flight.fetch_sub(1, Ordering::SeqCst);
+                            return;
+                        }
+                        let attempts = job.attempts + 1;
+                        println!(
+                            "[Download]     ✗ chunk {}-{} 失败 ({}/{}): {}",
+                            range.start, range.end, attempts, MAX_RETRIES_PER_CHUNK, e
+                        );
+                        if attempts >= MAX_RETRIES_PER_CHUNK {
+                            failed.store(true, Ordering::SeqCst);
+                            if let Ok(mut guard) = error_msg.lock() {
+                                *guard = Some(format!(
+                                    "chunk {}-{} 重试耗尽: {}",
+                                    range.start, range.end, e
+                                ));
+                            }
+                            in_flight.fetch_sub(1, Ordering::SeqCst);
+                            return;
+                        }
+                        // 先入队再减少 in_flight，避免其它 worker 误判“队列空且无在途”而提前退出。
+                        {
+                            let mut q = jobs.lock().unwrap();
+                            q.push_back(ChunkJob { range, attempts });
+                        }
+                        in_flight.fetch_sub(1, Ordering::SeqCst);
                     }
                 }
             }
-        }
-    });
-    
-    for h in worker_handles {
+        }));
+    }
+
+    for h in handles {
         let _ = h.await;
     }
-    
-    let _ = accelerator_handle.await;
     let _ = progress_monitor.await;
-    
-    drop(writer_sender);
-    drop(writer_tx);
-    let _ = write_handle.await;
-    
-    if state.failed.load(Ordering::SeqCst) {
-        let msg = state
-            .error_msg
-            .lock()
-            .ok()
-            .and_then(|guard| guard.as_ref().cloned())
-            .unwrap_or_else(|| "下载失败".to_string());
-        return Err(anyhow!(msg));
+
+    // flush + 释放句柄，便于后续 rename / 校验。
+    {
+        use std::io::Write;
+        if let Ok(mut guard) = file.lock() {
+            let _ = guard.flush();
+            let _ = guard.sync_all();
+        }
     }
-    
-    if state.cancel.load(Ordering::SeqCst) {
+    drop(file);
+
+    if cancel.load(Ordering::SeqCst) {
         return Err(anyhow!("已取消"));
     }
-    
-    let actual = state.total_downloaded.load(Ordering::Relaxed);
-    if actual < state.total_size {
-        return Err(anyhow!("下载未完成: {}/{} 字节", actual, state.total_size));
+    if failed.load(Ordering::SeqCst) {
+        let msg = error_msg
+            .lock()
+            .ok()
+            .and_then(|g| g.clone())
+            .unwrap_or_else(|| "分片下载失败".to_string());
+        return Err(anyhow!(msg));
     }
-    
+
+    // 队列必须清空，否则仍有未完成分片。
+    {
+        let pending = jobs.lock().unwrap().len();
+        if pending > 0 {
+            return Err(anyhow!("分片下载未完成: 仍有 {} 个分片待处理", pending));
+        }
+    }
+
+    let counted = written.load(Ordering::SeqCst);
+    if counted != total_size {
+        return Err(anyhow!(
+            "写入计数不匹配: {}/{} 字节",
+            counted,
+            total_size
+        ));
+    }
+
+    let on_disk = fs::metadata(temp_path)
+        .map(|m| m.len())
+        .unwrap_or(0);
+    if on_disk != total_size {
+        return Err(anyhow!(
+            "磁盘文件大小不匹配: {}/{} 字节 ({})",
+            on_disk,
+            total_size,
+            temp_path.display()
+        ));
+    }
+
     if let Some(sha) = sha1 {
         println!("[Download]   校验SHA1: {}", sha);
         if !verify_sha1(temp_path, sha) {
@@ -1278,238 +1027,163 @@ async fn try_download_to_temp(
         }
         println!("[Download]   ✓ SHA1匹配");
     }
-    
+
+    if let Some(tx) = progress_tx.as_ref() {
+        let _ = tx.send((total_size, total_size)).await;
+    }
+    println!(
+        "[Download]   ✓ 分片下载完成: {} bytes → {}",
+        total_size,
+        temp_path.display()
+    );
     Ok(())
 }
 
-async fn worker_loop(
-    _worker_id: usize,
-    scheduler: Arc<tokio::sync::Mutex<DynamicScheduler>>,
-    state: Arc<SharedDownloadState>,
-    url: Arc<String>,
-    client: Arc<reqwest::Client>,
-    writer: mpsc::UnboundedSender<(u64, Vec<u8>)>,
-) {
-    let start = Instant::now();
-    let mut tick_counter: u64 = 0;
-
-    loop {
-        if state.cancel.load(Ordering::SeqCst) || state.failed.load(Ordering::SeqCst) {
-            return;
-        }
-        let maybe_chunk = {
-            let mut s = scheduler.lock().await;
-            if s.is_dead() {
-                state.failed.store(true, Ordering::SeqCst);
-                let mut em = state.error_msg.lock().unwrap();
-                *em = Some(format!(
-                    "chunk 全部重试超限 ({} 个未完成)",
-                    s.in_flight_count()
-                ));
-                return;
-            }
-            s.alloc_next()
-        };
-        
-        let chunk = match maybe_chunk {
-            Some(c) => c,
-            None => {
-                let done = {
-                    let s = scheduler.lock().await;
-                    s.is_done()
-                };
-                if done {
-                    return;
-                }
-                tokio::time::sleep(Duration::from_millis(200)).await;
-                continue;
-            }
-        };
-        
-        let range = chunk.range;
-        if chunk.attempts >= MAX_RETRIES_PER_CHUNK {
-            state.failed.store(true, Ordering::SeqCst);
-            let mut em = state.error_msg.lock().unwrap();
-            *em = Some(format!(
-                "chunk 重试次数超限 (bytes {}-{})",
-                range.start, range.end
-            ));
-            return;
-        }
-        
-        let chunk_start = Instant::now();
-        let attempt = chunk.attempts;
-        tick_counter += 1;
-        
-        if tick_counter % 5 == 0 {
-            let elapsed = start.elapsed().as_secs();
-            let done_bytes = state.total_downloaded.load(Ordering::Relaxed);
-            let pct = done_bytes as f64 / state.total_size as f64 * 100.0;
-            println!(
-                "[Download]   worker 活跃: 已运行 {}s, 进度 {:.1}% ({}/{} bytes)",
-                elapsed, pct, done_bytes, state.total_size
-            );
-        }
-        
-        match download_chunk(&client, &url, &writer, range, &state, &chunk).await {
-            Ok(()) => {
-                let mut s = scheduler.lock().await;
-                s.mark_done(range.start, range.end);
-                let elapsed = chunk_start.elapsed().as_secs_f64();
-                println!(
-                    "[Download]     ✓ chunk {}-{} 完成 (尝试 {}次, {:.1}s, {} bytes)",
-                    range.start,
-                    range.end,
-                    attempt + 1,
-                    elapsed,
-                    range.size()
-                );
-            }
-            Err(e) => {
-                let elapsed = chunk_start.elapsed().as_secs_f64();
-                println!(
-                    "[Download]     ✗ chunk {}-{} 失败 (尝试 {}次, {:.1}s, 错误: {})",
-                    range.start,
-                    range.end,
-                    attempt + 1,
-                    elapsed,
-                    e
-                );
-                let mut s = scheduler.lock().await;
-                s.mark_chunk_failed(range.start, range.end);
-            }
-        }
-    }
+fn write_at_offset(file: &Arc<StdMutex<std::fs::File>>, offset: u64, data: &[u8]) -> Result<()> {
+    use std::io::{Seek, SeekFrom, Write};
+    let mut guard = file
+        .lock()
+        .map_err(|_| anyhow!("写文件锁中毒"))?;
+    guard
+        .seek(SeekFrom::Start(offset))
+        .with_context(|| format!("seek 到 {} 失败", offset))?;
+    guard.write_all(data).context("写入分片失败")?;
+    Ok(())
 }
 
-async fn download_chunk(
+async fn fetch_and_write_range(
     client: &reqwest::Client,
     url: &str,
-    writer: &mpsc::UnboundedSender<(u64, Vec<u8>)>,
-    range: Range,
-    state: &SharedDownloadState,
-    chunk: &ChunkTask,
+    file: &Arc<StdMutex<std::fs::File>>,
+    range: ByteRange,
+    progress: &AtomicU64,
+    cancel: &AtomicBool,
+    failed: &AtomicBool,
 ) -> Result<()> {
-    let _worker_permit = download_runtime_config::worker_semaphore()
+    let _permit = download_runtime_config::worker_semaphore()
         .acquire_owned()
         .await
         .map_err(|_| anyhow!("下载 worker 池已关闭"))?;
 
-    let range_header = format!("bytes={}-{}", range.start, range.end);
-    let req_start = Instant::now();
+    if cancel.load(Ordering::SeqCst) || failed.load(Ordering::SeqCst) {
+        return Err(anyhow!("已取消或已失败"));
+    }
 
+    let range_header = format!("bytes={}-{}", range.start, range.end);
     let resp = client
         .get(url)
         .header(reqwest::header::RANGE, &range_header)
         .send()
         .await
         .with_context(|| format!("请求 chunk {}-{} 失败", range.start, range.end))?;
-    
-    if !resp.status().is_success() && resp.status().as_u16() != 206 {
+
+    let status = resp.status().as_u16();
+    if status != 206 && status != 200 {
         return Err(anyhow!(
             "HTTP {} (bytes {}-{})",
-            resp.status(),
+            status,
             range.start,
             range.end
         ));
     }
-    
+
+    // 必须是分片响应；若服务端忽略 Range 返回整文件，长度会对不上并失败重试/回退。
+    if status == 200 {
+        let len = resp.content_length().unwrap_or(0);
+        if len != range.size() {
+            return Err(anyhow!(
+                "服务端未按 Range 返回分片 (HTTP 200, len={}, expected={})",
+                len,
+                range.size()
+            ));
+        }
+    }
+
     use futures::stream::StreamExt;
     let mut stream = resp.bytes_stream();
-    let mut offset = range.start;
-    let downloaded_meter = chunk.downloaded_in_chunk.clone();
-    downloaded_meter.store(0, Ordering::Relaxed);
-    
-    let mut buffer: Vec<u8> = Vec::with_capacity(range.size() as usize);
-    let mut last_progress_time = Instant::now();
-    let mut last_bytes_time = Instant::now();
-    let mut last_offset: u64 = range.start;
-    let read_timeout = crate::http_client::DOWNLOAD_IDLE_TIMEOUT;
-    let mut error_count: u32 = 0;
-    const MAX_ERRORS: u32 = 15;
+    let mut buffer = Vec::with_capacity(range.size() as usize);
+    let idle_timeout = crate::http_client::DOWNLOAD_IDLE_TIMEOUT;
+    let mut last_bytes = Instant::now();
+    let mut credited: u64 = 0;
+
+    let rollback = |credited: u64| {
+        if credited > 0 {
+            progress.fetch_sub(credited, Ordering::SeqCst);
+        }
+    };
 
     loop {
-        if state.cancel.load(Ordering::SeqCst) {
-            return Err(anyhow!("已取消"));
+        if cancel.load(Ordering::SeqCst) || failed.load(Ordering::SeqCst) {
+            rollback(credited);
+            return Err(anyhow!("已取消或已失败"));
         }
-        if state.failed.load(Ordering::SeqCst) {
-            return Err(anyhow!("已失败"));
-        }
-
-        match tokio::time::timeout(read_timeout, stream.next()).await {
+        match tokio::time::timeout(idle_timeout, stream.next()).await {
             Err(_) => {
+                rollback(credited);
                 return Err(anyhow!(
                     "chunk 读取超时 ({}s 内未收到数据)",
-                    read_timeout.as_secs()
+                    idle_timeout.as_secs()
                 ));
             }
             Ok(None) => break,
-            Ok(Some(chunk_data)) => match chunk_data {
-                Ok(data) => {
-                    error_count = 0;
-                    if data.is_empty() {
-                        continue;
-                    }
-                    let data_len = data.len() as u64;
-                    buffer.extend_from_slice(&data);
-                    offset += data_len;
-                    downloaded_meter.fetch_add(data_len, Ordering::Relaxed);
-                    state
-                        .total_downloaded
-                        .fetch_add(data_len, Ordering::Relaxed);
-                    if offset > last_offset {
-                        last_offset = offset;
-                        last_bytes_time = Instant::now();
-                    } else if last_bytes_time.elapsed() > read_timeout * 2 {
-                        return Err(anyhow!("chunk 下载停滞"));
-                    }
-                }
-                Err(e) => {
-                    error_count += 1;
-                    if error_count > MAX_ERRORS {
-                        return Err(anyhow!("chunk 读取错误 (连续 {} 次): {}", MAX_ERRORS, e));
-                    }
-                    let sleep_ms = 200u64 + (error_count as u64) * 100;
-                    println!(
-                        "[Download]     ! chunk {}-{} 错误 ({}/{}): {}, 等待 {}ms...",
-                        range.start, range.end, error_count, MAX_ERRORS, e, sleep_ms
-                    );
-                    tokio::time::sleep(Duration::from_millis(sleep_ms)).await;
+            Ok(Some(Ok(data))) => {
+                if data.is_empty() {
                     continue;
                 }
-            },
-        }
-        
-        if last_progress_time.elapsed() > Duration::from_millis(5000) {
-            let total_done = state.total_downloaded.load(Ordering::Relaxed);
-            let percent = total_done as f64 / state.total_size as f64 * 100.0;
-            let elapsed = req_start.elapsed().as_secs_f64();
-            let chunk_bytes = offset.saturating_sub(range.start);
-            let chunk_pct = chunk_bytes as f64 / range.size() as f64 * 100.0;
-            let speed_kb = chunk_bytes as f64 / 1024.0 / elapsed.max(0.1);
-            println!("[Download]     ↓ 进度: {:.1}% ({}/{} bytes) | chunk {}-{}: {:.1}% (速度 {:.0} KB/s)",
-                percent, total_done, state.total_size,
-                range.start, range.end, chunk_pct, speed_kb);
-            last_progress_time = Instant::now();
-        }
-        
-        if state.last_mile_enabled.load(Ordering::SeqCst) {
-            tokio::task::yield_now().await;
+                let n = data.len() as u64;
+                buffer.extend_from_slice(&data);
+                progress.fetch_add(n, Ordering::SeqCst);
+                credited += n;
+                last_bytes = Instant::now();
+                if buffer.len() as u64 > range.size() {
+                    rollback(credited);
+                    return Err(anyhow!(
+                        "chunk 数据过长 (bytes {}-{}): {} > {}",
+                        range.start,
+                        range.end,
+                        buffer.len(),
+                        range.size()
+                    ));
+                }
+            }
+            Ok(Some(Err(e))) => {
+                rollback(credited);
+                if last_bytes.elapsed() > idle_timeout {
+                    return Err(anyhow!("chunk 读取错误且停滞: {}", e));
+                }
+                return Err(anyhow!("chunk 读取错误: {}", e));
+            }
         }
     }
-    
-    if offset.saturating_sub(range.start) != range.size() {
+
+    if buffer.len() as u64 != range.size() {
+        rollback(credited);
         return Err(anyhow!(
             "chunk 不完整 (bytes {}-{}): 期望 {}, 实际 {}",
             range.start,
             range.end,
             range.size(),
-            offset.saturating_sub(range.start)
+            buffer.len()
         ));
     }
-    
-    let _ = writer.send((range.start, buffer));
-    Ok(())
+
+    // 在阻塞线程写盘，避免长时间占用 async worker。
+    let file = file.clone();
+    let offset = range.start;
+    match tokio::task::spawn_blocking(move || write_at_offset(&file, offset, &buffer))
+        .await
+        .map_err(|e| anyhow!("写盘任务失败: {}", e))
+    {
+        Ok(Ok(())) => Ok(()),
+        Ok(Err(e)) => {
+            rollback(credited);
+            Err(e)
+        }
+        Err(e) => {
+            rollback(credited);
+            Err(e)
+        }
+    }
 }
 
 async fn single_threaded_download(
@@ -1637,12 +1311,7 @@ async fn single_threaded_download(
     
     file.flush().await.ok();
     drop(file);
-    
-    // 推送最终进度，保证至少到达 100% 一次
-    if let Some(ref tx) = progress_tx {
-        let _ = tx.try_send((received, total_size.max(received)));
-    }
-    
+
     if total_size > 0 && received != total_size {
         return Err(anyhow!(
             "大小不匹配: 期望 {}, 实际 {}",
@@ -1806,12 +1475,7 @@ async fn browser_style_download(
     
     file.flush().await.ok();
     drop(file);
-    
-    // 推送最终进度，保证至少到达 100% 一次
-    if let Some(ref tx) = progress_tx {
-        let _ = tx.try_send((received, total_size.max(received)));
-    }
-    
+
     if total_size > 0 && received != total_size {
         return Err(anyhow!(
             "大小不匹配: 期望 {}, 实际 {}",
@@ -1849,31 +1513,107 @@ fn preallocate_file(path: &Path, size: u64) -> Result<()> {
     Ok(())
 }
 
+fn rename_error_transient(err: &std::io::Error) -> bool {
+    matches!(
+        err.raw_os_error(),
+        Some(5) | Some(32) | Some(33) // Windows: access denied / sharing violation
+    )
+}
+
+/// 删除可能残留的 `.downloading_<目标文件名>`（重命名失败或杀软扫描延迟时）。
+fn remove_stale_downloading_temp(target: &Path) {
+    let Some(parent) = target.parent() else {
+        return;
+    };
+    let Some(name) = target.file_name() else {
+        return;
+    };
+    let stale = parent.join(format!(".downloading_{}", name.to_string_lossy()));
+    if stale.is_file() {
+        let _ = fs::remove_file(stale);
+    }
+}
+
 fn finalize_download(temp_path: &Path, target: &Path) -> Result<()> {
     if let Some(parent) = target.parent() {
-        fs::create_dir_all(parent).with_context(|| format!("创建目标目录失败"))?;
+        fs::create_dir_all(parent).context("创建目标目录失败")?;
     }
-    
-    let part_path = target.with_extension(format!(
-        "{}.part",
-        target
-            .extension()
-            .and_then(|e| e.to_str())
-            .unwrap_or("download")
-    ));
-    
-    if part_path.exists() {
-        fs::remove_file(&part_path).ok();
+
+    let temp_len = fs::metadata(temp_path).map(|m| m.len()).unwrap_or(0);
+    if !temp_path.is_file() || temp_len == 0 {
+        // 不把“目标已存在”当作成功：可能是旧残缺文件。
+        return Err(anyhow!(
+            "临时下载文件无效: {} (exists={}, size={})",
+            temp_path.display(),
+            temp_path.exists(),
+            temp_len
+        ));
     }
-    
-    fs::rename(temp_path, &part_path).with_context(|| format!("重命名到临时part文件失败"))?;
-    
-    if target.exists() {
-        fs::remove_file(target).with_context(|| format!("删除已存在的目标文件失败"))?;
+
+    if target.is_file() {
+        fs::remove_file(target).context("删除已存在的目标文件失败")?;
     }
-    
-    fs::rename(&part_path, target).with_context(|| format!("重命名part文件到最终目标失败"))?;
-    Ok(())
+
+    const MAX_ATTEMPTS: u32 = 10;
+    for attempt in 0..MAX_ATTEMPTS {
+        match fs::rename(temp_path, target) {
+            Ok(()) => {
+                if !target.is_file() {
+                    return Err(anyhow!(
+                        "重命名后目标文件不存在: {}",
+                        target.display()
+                    ));
+                }
+                let final_len = fs::metadata(target).map(|m| m.len()).unwrap_or(0);
+                if final_len != temp_len {
+                    return Err(anyhow!(
+                        "重命名后文件大小异常: {} → {} bytes",
+                        temp_len,
+                        final_len
+                    ));
+                }
+                remove_stale_downloading_temp(target);
+                return Ok(());
+            }
+            Err(err) if attempt + 1 < MAX_ATTEMPTS && rename_error_transient(&err) => {
+                std::thread::sleep(Duration::from_millis(40 * (attempt as u64 + 1)));
+            }
+            Err(err) => {
+                // rename 跨卷失败时回退为 copy + 删除临时文件。
+                println!(
+                    "[Download]   rename 失败 ({})，尝试 copy: {} → {}",
+                    err,
+                    temp_path.display(),
+                    target.display()
+                );
+                fs::copy(temp_path, target).with_context(|| {
+                    format!(
+                        "复制下载文件失败: {} → {}",
+                        temp_path.display(),
+                        target.display()
+                    )
+                })?;
+                let final_len = fs::metadata(target).map(|m| m.len()).unwrap_or(0);
+                if final_len != temp_len {
+                    let _ = fs::remove_file(target);
+                    return Err(anyhow!(
+                        "复制后文件大小异常: {} → {} bytes",
+                        temp_len,
+                        final_len
+                    ));
+                }
+                let _ = fs::remove_file(temp_path);
+                remove_stale_downloading_temp(target);
+                return Ok(());
+            }
+        }
+    }
+
+    Err(anyhow!(
+        "重命名下载文件失败: {} → {}",
+        temp_path.display(),
+        target.display()
+    ))
 }
 
 fn rand_id() -> usize {
@@ -2415,4 +2155,20 @@ async fn smart_batch_download(
     let success_count = successes_arc.load(Ordering::SeqCst) as usize;
     let fail_list = failures.lock().ok().map(|m| m.clone()).unwrap_or_default();
     (success_count, fail_list)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_content_range_total;
+
+    #[test]
+    fn content_range_total_requires_definite_size() {
+        assert_eq!(
+            parse_content_range_total("bytes 0-1048575/5242880"),
+            Some(5_242_880)
+        );
+        assert_eq!(parse_content_range_total("bytes 0-1048575/*"), None);
+        assert_eq!(parse_content_range_total("bytes 0-100/0"), None);
+        assert_eq!(parse_content_range_total("bytes 0-100"), None);
+    }
 }

@@ -369,9 +369,9 @@ fn default_minecraft_path() -> String {
     }
     #[cfg(target_os = "macos")]
     {
-        crate::app_paths::migrate_portable_layout();
-        let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
-        format!("{}/Library/Application Support/OpenXLauncher/version", home)
+        crate::app_paths::macos_standard_minecraft_dir()
+            .to_string_lossy()
+            .into_owned()
     }
     #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     {

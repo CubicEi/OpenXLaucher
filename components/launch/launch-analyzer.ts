@@ -404,16 +404,16 @@ export function analyzeLaunchLogs(
   const totalDurationMs =
     startedAt && endedAt ? endedAt - startedAt : stages.reduce<number>((acc, s) => acc + (s.durationMs ?? 0), 0) || null;
 
-  // 若已进入并完成「加载模组」阶段，则判定 running
   let reportStatus: LaunchAnalysisReport["finalStatus"] = finalStatus ?? "in_progress";
-  if (!reportStatus || reportStatus === "in_progress") {
+  if (reportStatus !== "cancelled" && (!reportStatus || reportStatus === "in_progress")) {
     if (currentStageIdx === stages.length - 1 && stages[currentStageIdx]?.completed) {
       reportStatus = "running";
     } else if (currentStageIdx === stages.length - 1) {
-      // 已进入最后阶段（即便尚未 close），也视为客户端已拉起
       reportStatus = "running";
     }
-    if (errorCount > 0 && failureHints.length > 0) reportStatus = "error";
+    if (errorCount > 0 && failureHints.length > 0) {
+      reportStatus = "error";
+    }
   }
 
   return {

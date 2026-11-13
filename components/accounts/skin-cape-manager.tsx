@@ -23,6 +23,8 @@ import { overlayFade, scaleIn } from "@/lib/motion";
 import type { Account } from "@/types";
 import { cn } from "@/lib/utils";
 import { useAccountContext } from "@/components/accounts/account-provider";
+import { useConfirmDialog } from "@/components/confirm-dialog";
+import { useI18n } from "@/components/i18n/use-i18n";
 
 interface SkinCapeManagerProps {
   account: Account;
@@ -40,6 +42,8 @@ function normalizeTextureUrl(url?: string | null): string {
 }
 
 export function SkinCapeManager({ account: initialAccount, onClose }: SkinCapeManagerProps) {
+  const { t } = useI18n();
+  const { confirm } = useConfirmDialog();
   const { updateProfile } = useAccountContext();
   const [account, setAccount] = useState(initialAccount);
   const [tab, setTab] = useState<TabType>("skins");
@@ -258,7 +262,14 @@ export function SkinCapeManager({ account: initialAccount, onClose }: SkinCapeMa
   // 删除皮肤
   const handleDeleteSkin = async (skinId: string) => {
     if (!account.accessToken) return;
-    if (!confirm("确认删除此皮肤？删除后无法恢复")) return;
+    const accepted = await confirm({
+      title: t("home.confirmDeleteSkinTitle"),
+      description: t("home.confirmDeleteSkinBody"),
+      confirmLabel: t("common.confirm"),
+      cancelLabel: t("common.cancel"),
+      destructive: true,
+    });
+    if (!accepted) return;
     setBusyAction(`delete-${skinId}`);
     setErrorMsg(null);
     try {

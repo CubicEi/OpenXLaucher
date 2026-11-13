@@ -27,9 +27,11 @@ import { CombinedFabricApiSelect } from "@/components/download/combined-fabric-a
 import { LoaderIcon } from "@/components/launch/loader-icon";
 import { useDownloadManager } from "@/components/download/download-provider";
 import { useI18n } from "@/components/i18n/use-i18n";
+import { ConfirmDialog } from "@/components/confirm-dialog";
 import { Download, CheckCircle2, Loader2, TriangleAlert, Puzzle, X } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import type { LoaderType, LoaderVersion, MinecraftVersion } from "@/types";
+import { buildDefaultInstanceName } from "@/lib/instance-name";
 
 const loaderColors: Record<LoaderType, { bg: string; text: string; border: string; card: string }> = {
   vanilla: { bg: "bg-stone-100 dark:bg-stone-800/40", text: "text-stone-600 dark:text-stone-400", border: "hover:border-stone-400 dark:hover:border-stone-500", card: "" },
@@ -66,6 +68,7 @@ export function CombinedInstall({ version }: CombinedInstallProps) {
   const [view, setView] = useState<"grid" | "fabric-api">("grid");
 
   const [showNameDialog, setShowNameDialog] = useState(false);
+  const [showFabricApiMissingWarn, setShowFabricApiMissingWarn] = useState(false);
   const [installing, setInstalling] = useState(false);
 
   const hasFabric = selected.includes("fabric");
@@ -204,28 +207,28 @@ export function CombinedInstall({ version }: CombinedInstallProps) {
     return canSelectLoader(version.id, loader, selected);
   };
 
-  const defaultInstanceName = (() => {
-    if (selected.length === 0) return version.id;
-    const parts = [version.id];
-    for (const l of selected) {
-      if (l === "vanilla") continue;
-      const v = versions[l];
-      parts.push(v ? `${l}-${v}` : l);
-    }
-    if (fabricApiEnabled) {
-      parts.push(fabricApiVersionLabel ? `API-${fabricApiVersionLabel}` : "API");
-    }
-    return parts.join("-").replace(/[\\/:*?"<>|]/g, "_");
-  })();
+  const defaultInstanceName = buildDefaultInstanceName(
+    version.id,
+    selected
+      .filter((l) => l !== "vanilla")
+      .map((l) => ({ loader: l, version: versions[l] ?? "" })),
+  );
 
   const allVersionsChosen = selected
     .filter((l) => l !== "vanilla")
     .every((l) => Boolean(versions[l]));
   const canInstall = allVersionsChosen;
 
+  const openInstallNameDialog = () => setShowNameDialog(true);
+
   const handleInstall = () => {
     if (!canInstall) return;
-    setShowNameDialog(true);
+    const fabricSelected = selected.includes("fabric");
+    if (fabricSelected && !fabricApiEnabled) {
+      setShowFabricApiMissingWarn(true);
+      return;
+    }
+    openInstallNameDialog();
   };
 
   const confirmInstall = async (instanceName: string) => {
@@ -483,6 +486,29 @@ export function CombinedInstall({ version }: CombinedInstallProps) {
           )}
         </div>
       </div>
+
+      <ConfirmDialog
+        open={showFabricApiMissingWarn}
+        onOpenChange={setShowFabricApiMissingWarn}
+        title={t("download.fabricApiMissingWarnTitle")}
+        actions={[
+          {
+            label: t("common.cancel"),
+            variant: "outline",
+            onClick: () => setShowFabricApiMissingWarn(false),
+          },
+          {
+            label: t("download.fabricApiMissingContinue"),
+            variant: "primary",
+            onClick: () => {
+              setShowFabricApiMissingWarn(false);
+              openInstallNameDialog();
+            },
+          },
+        ]}
+      >
+        {t("download.fabricApiMissingWarnBody")}
+      </ConfirmDialog>
 
       <InstanceNameDialog
         open={showNameDialog}

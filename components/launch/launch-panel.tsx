@@ -8,6 +8,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { invoke } from "@tauri-apps/api/core";
 import { useLaunchContext } from "@/components/launch/launch-provider";
 import { useAccountContext } from "@/components/accounts/account-provider";
+import { useCornerNotice } from "@/components/global/corner-notice";
 import { LaunchStatusBadge } from "@/components/launch/launch-status-badge";
 import { LaunchProgress } from "@/components/launch/launch-progress";
 import { LaunchProgressStages } from "@/components/launch/launch-progress-stages";
@@ -17,7 +18,6 @@ import { cn, getAvatarColor, getAvatarInitials } from "@/lib/utils";
 import {
   Play,
   Loader2,
-  AlertCircle,
   HardDrive,
   Sparkles,
   Square,
@@ -48,10 +48,10 @@ interface MemoryOptimizationReport {
 export function LaunchPanel() {
   const { slots, snapshot, reportThemeError } = useThemeRuntime();
   const { t } = useI18n();
+  const { pushNotice } = useCornerNotice();
   const {
     config,
     status,
-    errorMessage,
     launchGame,
     cancelLaunch,
     runningInstances,
@@ -62,7 +62,6 @@ export function LaunchPanel() {
   // 内存清理相关的状态
   const [optimizing, setOptimizing] = useState(false);
   const [lastReport, setLastReport] = useState<MemoryOptimizationReport | null>(null);
-  const [optimizeError, setOptimizeError] = useState<string | null>(null);
 
   const displayProfile = useMemo(
     () => resolveLaunchProfileForConfig(profiles, selectedProfile, config),
@@ -95,7 +94,6 @@ export function LaunchPanel() {
   async function handleOptimizeMemory() {
     if (optimizing) return;
     setOptimizing(true);
-    setOptimizeError(null);
     try {
       const report = await invoke<MemoryOptimizationReport>("optimize_memory_usage");
       setLastReport(report);
@@ -104,7 +102,7 @@ export function LaunchPanel() {
         setOptimizing(false);
       }, 2500);
     } catch (err) {
-      setOptimizeError(String(err));
+      pushNotice({ variant: "error", message: String(err) });
       setOptimizing(false);
     }
   }
@@ -158,23 +156,6 @@ export function LaunchPanel() {
             </div>
           )}
         </div>
-
-        {/* 错误信息 */}
-        <AnimatePresence>
-          {errorMessage && (
-            <motion.div
-              variants={fadeSlideUp}
-              initial="initial"
-              animate="animate"
-              exit="exit"
-            >
-              <div className="flex items-start gap-2 rounded-xl bg-destructive/10 p-3 text-xs text-destructive">
-                <AlertCircle className="size-3.5 shrink-0 mt-0.5" />
-                <span>{errorMessage}</span>
-              </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
 
         {/* 启动进度 */}
         <LaunchProgress />
@@ -274,7 +255,7 @@ export function LaunchPanel() {
         {/* 启动分析报告 */}
         <LaunchReportButton />
 
-        {/* 内存清理报告 / 错误 */}
+        {/* 内存清理报告 */}
         <AnimatePresence>
           {lastReport && !optimizing && (
             <motion.div
@@ -304,21 +285,6 @@ export function LaunchPanel() {
                     </p>
                   )}
                 </div>
-              </div>
-            </motion.div>
-          )}
-
-          {optimizeError && (
-            <motion.div
-              key="memory-error"
-              variants={fadeSlideUp}
-              initial="initial"
-              animate="animate"
-              exit="exit"
-            >
-              <div className="flex items-start gap-2 rounded-xl bg-destructive/10 p-3 text-[11px] text-destructive">
-                <AlertCircle className="size-3.5 shrink-0 mt-0.5" />
-                <span>{optimizeError}</span>
               </div>
             </motion.div>
           )}

@@ -1,15 +1,24 @@
-use std::fs;
-use std::io::{Read, Seek};
+use std::fs::File;
+use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 static LOG_BUFFER: Mutex<Vec<u8>> = Mutex::new(Vec::new());
-static OPENP2P_TXT_OFFSET: Mutex<u64> = Mutex::new(0);
-static OPENP2P_LOG_OFFSET: Mutex<u64> = Mutex::new(0);
+static SESSION_LOG_OFFSET: Mutex<u64> = Mutex::new(0);
+
+pub(super) fn session_log_path(working_dir: &Path) -> PathBuf {
+    working_dir.join("log").join("easytier-session.log")
+}
 
 pub(super) fn append(text: &[u8]) {
     if let Ok(mut buffer) = LOG_BUFFER.lock() {
         buffer.extend_from_slice(text);
+        // 防止无限增长：保留最近约 512 KiB
+        const MAX: usize = 512 * 1024;
+        if buffer.len() > MAX {
+            let drain = buffer.len() - MAX;
+            buffer.drain(0..drain);
+        }
     }
 }
 
@@ -17,100 +26,63 @@ pub(super) fn append_text(text: &str) {
     append(text.as_bytes());
 }
 
-fn openp2p_log_file(working_dir: &Path) -> PathBuf {
-    working_dir.join("log").join("openp2p.txt")
-}
-
-fn openp2p_legacy_log_file(working_dir: &Path) -> PathBuf {
-    working_dir.join("log").join("openp2p.log")
-}
-
-pub(super) fn clear_files(working_dir: &Path) {
-    let log_dir = working_dir.join("log");
-    if let Err(error) = fs::create_dir_all(&log_dir) {
-        append_text(&format!("[OpenXLauncher] ⚠ 创建日志目录失败: {}\n", error));
-        return;
-    }
-
-    for log_file in [
-        openp2p_log_file(working_dir),
-        openp2p_legacy_log_file(working_dir),
-    ] {
-        let _ = fs::File::create(log_file);
-    }
-
-    if let Ok(mut offset) = OPENP2P_TXT_OFFSET.lock() {
-        *offset = 0;
-    }
-    if let Ok(mut offset) = OPENP2P_LOG_OFFSET.lock() {
-        *offset = 0;
-    }
-}
-
 pub(super) fn clear_buffer() {
     if let Ok(mut buffer) = LOG_BUFFER.lock() {
         buffer.clear();
     }
+    if let Ok(mut offset) = SESSION_LOG_OFFSET.lock() {
+        *offset = 0;
+    }
 }
 
-pub(super) fn poll(working_dir: Option<&Path>) -> String {
+pub(super) fn reset_session_log(working_dir: &Path) {
+    let path = session_log_path(working_dir);
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let _ = std::fs::write(&path, b"");
+    if let Ok(mut offset) = SESSION_LOG_OFFSET.lock() {
+        *offset = 0;
+    }
+}
+
+fn read_session_log_increment(working_dir: &Path) -> Vec<u8> {
+    let path = session_log_path(working_dir);
+    if !path.is_file() {
+        return Vec::new();
+    }
+    let Ok(mut file) = File::open(&path) else {
+        return Vec::new();
+    };
+    let Ok(mut offset) = SESSION_LOG_OFFSET.lock() else {
+        return Vec::new();
+    };
+    let Ok(meta) = file.metadata() else {
+        return Vec::new();
+    };
+    let len = meta.len();
+    if len < *offset {
+        *offset = 0;
+    }
+    if file.seek(SeekFrom::Start(*offset)).is_err() {
+        return Vec::new();
+    }
+    let mut buf = Vec::new();
+    if file.read_to_end(&mut buf).is_err() {
+        return Vec::new();
+    }
+    *offset = len;
+    buf
+}
+
+pub(super) fn poll() -> String {
     let mut content = if let Ok(mut buffer) = LOG_BUFFER.lock() {
         std::mem::take(&mut *buffer)
     } else {
         Vec::new()
     };
-
-    if let Some(working_dir) = working_dir {
-        for chunk in [
-            read_increment(&openp2p_log_file(working_dir), &OPENP2P_TXT_OFFSET),
-            read_increment(&openp2p_legacy_log_file(working_dir), &OPENP2P_LOG_OFFSET),
-        ] {
-            if !chunk.is_empty() {
-                if !content.is_empty() && !content.ends_with(b"\n") {
-                    content.push(b'\n');
-                }
-                content.extend_from_slice(&chunk);
-            }
-        }
+    if let Ok(dir) = super::paths::tool_dir() {
+        content.extend(read_session_log_increment(&dir));
     }
-
     String::from_utf8_lossy(&content).to_string()
-}
-
-pub(super) fn read_increment(path: &Path, offset: &Mutex<u64>) -> Vec<u8> {
-    let file_size = match fs::metadata(path) {
-        Ok(metadata) => metadata.len(),
-        Err(_) => return Vec::new(),
-    };
-    let mut offset_guard = match offset.lock() {
-        Ok(guard) => guard,
-        Err(_) => return Vec::new(),
-    };
-
-    if file_size < *offset_guard {
-        *offset_guard = 0;
-    }
-    if file_size == *offset_guard {
-        return Vec::new();
-    }
-
-    let mut file = match fs::File::open(path) {
-        Ok(file) => file,
-        Err(_) => return Vec::new(),
-    };
-    if file.seek(std::io::SeekFrom::Start(*offset_guard)).is_err() {
-        return Vec::new();
-    }
-
-    let mut buffer = Vec::new();
-    if file
-        .take(file_size - *offset_guard)
-        .read_to_end(&mut buffer)
-        .is_err()
-    {
-        return Vec::new();
-    }
-
-    *offset_guard = file_size;
-    buffer
 }

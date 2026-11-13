@@ -25,6 +25,7 @@ import {
   List,
   Loader2,
   Play,
+  Square,
   Terminal,
   XCircle,
 } from "lucide-react";
@@ -40,6 +41,7 @@ const FINAL_STATUS_KEYS: Record<ReportFinalStatus, string> = {
   in_progress: "launch.report.statusInProgress",
   idle: "launch.report.statusIdle",
   timeout: "launch.report.statusTimeout",
+  cancelled: "launch.report.statusCancelled",
 } as const;
 
 function copyText(text: string) {
@@ -115,7 +117,9 @@ export function LaunchReportButton() {
   );
 
   const hasSomethingToReport = logs.length > 0;
-  const failed = FAILURE_STATUSES.has(report.finalStatus) || report.errorCount > 0;
+  const failed =
+    report.finalStatus !== "cancelled" &&
+    (FAILURE_STATUSES.has(report.finalStatus) || report.errorCount > 0);
 
   const handleExportZip = async () => {
     setExporting(true);
@@ -226,6 +230,8 @@ export function LaunchReportButton() {
                 <div className="flex items-center gap-2">
                   {report.finalStatus === "error" || report.finalStatus === "timeout" ? (
                     <XCircle className="size-4 text-destructive" />
+                  ) : report.finalStatus === "cancelled" ? (
+                    <Square className="size-4 text-muted-foreground" />
                   ) : report.finalStatus === "running" || report.finalStatus === "stopped" ? (
                     <CheckCircle2 className="size-4 text-emerald-500" />
                   ) : report.finalStatus === "in_progress" ? (

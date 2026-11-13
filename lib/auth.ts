@@ -341,6 +341,22 @@ export async function msSilentRefreshAccount(
   return safeInvoke<AccountInfo>("ms_silent_refresh_account", { uuid });
 }
 
+export type CachedAccessToken = {
+  access_token: string;
+  expires_at: number;
+  expires_in: number;
+};
+
+/**
+ * 从 accounts.db 读取尚未进入「到期前 1 小时」窗口的 Minecraft access_token。
+ * 关闭启动器再打开也可直接复用，无需重新登录。
+ */
+export async function msGetCachedAccessToken(
+  uuid: string
+): Promise<CachedAccessToken | null> {
+  return safeInvoke<CachedAccessToken | null>("ms_get_cached_access_token", { uuid });
+}
+
 /**
  * 用户取消微软认证（停止准备 / 关闭登录窗）—— 不应再弹强制登录。
  */
@@ -355,6 +371,21 @@ export function isMicrosoftAuthCancelled(message: string): boolean {
 /**
  * 启动时刷新 Minecraft 令牌失败：是否为网络/限流等暂态问题（仍应弹出强制登录，仅用于文案区分）。
  */
+/** 微软设备码 / 轮询登录因网络或超时失败时的用户提示 */
+export const MS_LOGIN_TIMEOUT_MESSAGE =
+  "网络连接超时，请检查网络连接后重试。";
+
+/**
+ * 是否为微软登录流程中的网络超时或连通性问题（应关闭登录窗，仅提示警告）。
+ */
+export function isMicrosoftLoginNetworkOrTimeout(message: string): boolean {
+  if (!message) return false;
+  if (message.includes("_TIMEOUT") || message === "DEVICE_CODE_REQUEST_TIMEOUT") {
+    return true;
+  }
+  return isMicrosoftTokenTransientError(message);
+}
+
 export function isMicrosoftTokenTransientError(message: string): boolean {
   if (!message) return false;
   const lower = message.toLowerCase();

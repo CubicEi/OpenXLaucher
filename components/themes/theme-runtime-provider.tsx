@@ -47,6 +47,7 @@ import {
 import { createThemeSDK } from "@/lib/themes/sdk";
 import { ThemeSlotRegistry } from "@/lib/themes/slot-registry";
 import { ThemeSettingsSubscriptions } from "@/lib/themes/settings-subscriptions";
+import { getGlobalConfirmDialogApi } from "@/components/confirm-dialog";
 
 export interface ThemeInstalledPackage {
   manifest: ThemeManifest;
@@ -465,7 +466,16 @@ function ConnectedThemeRuntimeProvider({ children }: { children: ReactNode }) {
               .__rt_toast?.(message);
             return `${Date.now()}`;
           },
-          async confirm(message) { return window.confirm(message); },
+          async confirm(message) {
+            const api = getGlobalConfirmDialogApi();
+            if (!api) return window.confirm(message);
+            return api.confirm({
+              title: current.current.t("settings.themeManager.selectTheme" as TranslationKey),
+              description: message,
+              confirmLabel: current.current.t("common.confirm" as TranslationKey),
+              cancelLabel: current.current.t("common.cancel" as TranslationKey),
+            });
+          },
         },
         storage: localStorage,
         events: eventBus,

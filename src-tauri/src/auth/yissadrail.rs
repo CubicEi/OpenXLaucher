@@ -226,6 +226,12 @@ pub fn getAccountList(
     user: String,
     pwd: String,
 ) -> Result<super::ThirdPartyAccountList, String> {
+    crate::handler::auth_trace_log::auth_trace(
+        "third_party",
+        "authenticate",
+        "请求第三方 Yggdrasil 登录",
+        Some(serde_json::json!({ "baseUrl": url, "username": user })),
+    );
     // 初始化
     let fullUrl = format!("{}/{}", url, "authserver/authenticate");
     let client = reqwest::blocking::Client::new();
@@ -276,6 +282,12 @@ pub fn getAccountList(
 
     info!("accessToken: {}", accessToken);
     info!("profiles: {:?}", profiles);
+    crate::handler::auth_trace_log::auth_trace(
+        "third_party",
+        "authenticate",
+        "第三方登录成功",
+        Some(serde_json::json!({ "profileCount": profiles.len() })),
+    );
 
     Ok(super::ThirdPartyAccountList {
         access_token: accessToken,

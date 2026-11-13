@@ -23,6 +23,8 @@ export type Account = {
   status: string;
   /** access_token */
   accessToken?: string;
+  /** Minecraft access_token 绝对过期时间（unix ms），用于重启后复用 */
+  tokenExpiresAt?: number;
   /** 第三方认证服务器地址 */
   yggdrasilUrl?: string;
   /** 皮肤 URL */
@@ -284,7 +286,14 @@ export interface LaunchAnalysisReport {
   startedAt: number | null;
   endedAt: number | null;
   totalDurationMs: number | null;
-  finalStatus: "idle" | "running" | "stopped" | "error" | "timeout" | "in_progress";
+  finalStatus:
+    | "idle"
+    | "running"
+    | "stopped"
+    | "error"
+    | "timeout"
+    | "in_progress"
+    | "cancelled";
   exitCode: number | null;
   stages: LaunchStageTiming[];
   detectedModCount: number | null;

@@ -145,6 +145,8 @@ export function LoginDialog({
 
   const isLoading = loginState === "loading";
 
+  const showForcedChrome = forcedMode;
+
   const canUseOldLaunchToken =
     Boolean(microsoftLaunchFallbackToken?.trim()) &&
     !isMicrosoftOfficialAuthRejection(microsoftLaunchTokenError ?? "");
@@ -269,7 +271,7 @@ export function LoginDialog({
                     <AlertCircle className="size-5 text-amber-500 shrink-0" />
                   )}
                   <CardTitle>
-                    {forcedMode ? "需要重新登录正版账号" : "添加档案"}
+                    {showForcedChrome ? "需要重新登录正版账号" : "添加档案"}
                   </CardTitle>
                 </div>
                 <Button variant="ghost" size="icon-sm" onClick={handleClose} aria-label="关闭">
@@ -279,7 +281,7 @@ export function LoginDialog({
 
               <CardContent className="space-y-4">
                 {/* ─── 强制登录的警告提示条 ─── */}
-                {forcedMode && (
+                {showForcedChrome && (
                   <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3">
                     <div className="flex items-start gap-2">
                       <AlertCircle className="size-4 text-amber-500 shrink-0 mt-0.5" />
@@ -294,7 +296,7 @@ export function LoginDialog({
                 {/* Tab 切换（强制模式下禁用切换，只显示 microsoft 一个按钮为激活态，其他为禁用灰色） */}
                 <div className="grid grid-cols-4 gap-1 p-1 rounded-lg bg-muted">
                   {tabs.map((t) => {
-                    const disabled = forcedMode;
+                    const disabled = showForcedChrome;
                     const active = tab === t.id;
                     return (
                       <button
@@ -304,16 +306,16 @@ export function LoginDialog({
                         className={cn(
                           "flex items-center justify-center gap-1 rounded-md px-2 py-1.5 text-xs font-medium transition-colors whitespace-nowrap",
                           active
-                            ? forcedMode
+                            ? showForcedChrome
                               ? "bg-amber-500 text-white shadow-sm cursor-default"
                               : "bg-background text-foreground shadow-sm"
-                            : forcedMode
+                            : showForcedChrome
                               ? "text-muted-foreground/60 cursor-not-allowed opacity-60"
                               : "text-muted-foreground hover:text-foreground",
-                          !forcedMode && "cursor-pointer"
+                          !showForcedChrome && "cursor-pointer"
                         )}
                         onClick={() => {
-                          if (forcedMode) return; // 强制模式：忽略点击
+                          if (showForcedChrome) return; // 强制模式：忽略点击
                           setTab(t.id);
                           setTpProfiles(null);
                           setLsProfiles(null);
@@ -346,7 +348,7 @@ export function LoginDialog({
 
                     {/* 微软正版登录 */}
                     {tab === "microsoft" && !msDeviceCode && (
-                      forcedMode ? (
+                      showForcedChrome ? (
                         // 🔴 强制登录模式下：没有 device_code 说明正在等待后端 msRequestDeviceCode 返回，
                         // 或获取失败，直接显示 loading（或错误信息 + 文字说明），不让玩家点按钮。
                         <div className="space-y-4">
@@ -366,9 +368,6 @@ export function LoginDialog({
                           ) : (
                             <div className="rounded-lg border border-destructive/40 bg-destructive/5 p-4 space-y-3">
                               <p className="text-sm text-destructive">{loginError}</p>
-                              <p className="text-xs text-muted-foreground">
-                                可关闭窗口后检查网络，或稍后从账户菜单重新登录。
-                              </p>
                             </div>
                           )}
                         </div>
@@ -654,7 +653,7 @@ export function LoginDialog({
                   </motion.div>
                 </AnimatePresence>
 
-                {forcedMode && (
+                {showForcedChrome && (
                   <div className="space-y-2 pt-2 border-t border-border">
                     {microsoftLaunchFallbackToken?.trim() && (
                       <p className="text-xs text-muted-foreground leading-relaxed">

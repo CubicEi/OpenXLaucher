@@ -8,12 +8,7 @@ import { motion } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+import { ConfirmDialog } from "@/components/confirm-dialog";
 import { useI18n } from "@/components/i18n/use-i18n";
 import {
   ExportIncludeExpandable,
@@ -552,44 +547,34 @@ export function ExportInstanceForm({
         </section>
       </motion.div>
 
-      <Dialog open={sizeWarnOpen} onOpenChange={setSizeWarnOpen}>
-        <DialogContent className="!max-w-md p-0">
-          <DialogHeader>
-            <DialogTitle>{t("gameSettings.exportSavesSizeWarnTitle")}</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4 p-5 pt-0">
-            <p className="text-sm text-muted-foreground">
-              {t("gameSettings.exportSavesSizeWarnBody")}
-            </p>
-            <div className="flex items-center justify-end gap-2">
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={() => {
-                  setSizeWarnOpen(false);
-                  setPendingExport(false);
-                }}
-              >
-                {t("common.cancel")}
-              </Button>
-              <Button
-                type="button"
-                size="sm"
-                onClick={() => {
-                  setSizeWarnOpen(false);
-                  if (pendingExport) {
-                    setPendingExport(false);
-                    void runExport();
-                  }
-                }}
-              >
-                {t("gameSettings.exportSavesSizeWarnContinue")}
-              </Button>
-            </div>
-          </div>
-        </DialogContent>
-      </Dialog>
+      <ConfirmDialog
+        open={sizeWarnOpen}
+        onOpenChange={setSizeWarnOpen}
+        title={t("gameSettings.exportSavesSizeWarnTitle")}
+        actions={[
+          {
+            label: t("common.cancel"),
+            variant: "outline",
+            onClick: () => {
+              setSizeWarnOpen(false);
+              setPendingExport(false);
+            },
+          },
+          {
+            label: t("gameSettings.exportSavesSizeWarnContinue"),
+            variant: "primary",
+            onClick: () => {
+              setSizeWarnOpen(false);
+              if (pendingExport) {
+                setPendingExport(false);
+                void runExport();
+              }
+            },
+          },
+        ]}
+      >
+        {t("gameSettings.exportSavesSizeWarnBody")}
+      </ConfirmDialog>
     </div>
   );
 }

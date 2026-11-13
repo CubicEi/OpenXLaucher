@@ -6,7 +6,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use tauri::{AppHandle, Emitter};
 
-use crate::downloader::modular_download::{download_file, DownloadTask, SingleDownloadResult};
+use crate::downloader::single_file_download::{
+    download_single_file, SingleFileDownloadRequest,
+};
 
 #[derive(Debug, Serialize, Clone)]
 struct CustomDownloadProgressPayload {
@@ -129,6 +131,7 @@ pub async fn start_custom_download(
     url: String,
     directory: String,
     file_name: Option<String>,
+    label: Option<String>,
 ) -> Result<u64, String> {
     validate_http_url(&url)?;
     let dir = PathBuf::from(directory.trim());
@@ -155,16 +158,21 @@ pub async fn start_custom_download(
         );
     }
 
-    let label = format!("自定义下载: {}", file_name);
-    let download_task = DownloadTask {
-        file_name: file_name.clone(),
+    let label = label
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| format!("自定义下载: {}", file_name));
+    let req = SingleFileDownloadRequest {
+        url: url.trim().to_string(),
         target_dir: dir.clone(),
-        urls: vec![url.trim().to_string()],
+        file_name: file_name.clone(),
         sha1: None,
+        cancel: Some(cancel.clone()),
     };
 
     let app_clone = app.clone();
-    let (progress_tx, mut progress_rx) = tokio::sync::mpsc::channel::<(u64, u64)>(32);
+    // 进度 channel 需要足够大，避免分片并发时把中间进度挤掉。
+    let (progress_tx, mut progress_rx) = tokio::sync::mpsc::channel::<(u64, u64)>(256);
 
     tokio::spawn(async move {
         let tid = task_id;
@@ -174,11 +182,20 @@ pub async fn start_custom_download(
             let mut last_downloaded = 0u64;
             let mut last_at = std::time::Instant::now();
             let mut primed = false;
-            const MIN_SPEED_WINDOW_SECS: f64 = 0.3;
+            let mut last_emit_at = std::time::Instant::now()
+                .checked_sub(std::time::Duration::from_secs(1))
+                .unwrap_or_else(std::time::Instant::now);
+            const MIN_SPEED_WINDOW_SECS: f64 = 0.2;
             const MAX_PLAUSIBLE_BPS: f64 = 500.0 * 1024.0 * 1024.0;
+            const MIN_EMIT_INTERVAL: std::time::Duration = std::time::Duration::from_millis(80);
             while let Some((downloaded, total)) = progress_rx.recv().await {
+                // 合并短时间突发，减轻前端压力；到期后用最新一条刷新百分比与速度。
+                let force = total > 0 && downloaded >= total;
+                if !force && last_emit_at.elapsed() < MIN_EMIT_INTERVAL {
+                    continue;
+                }
                 let percent = if total > 0 {
-                    (downloaded as f64 / total as f64) * 100.0
+                    ((downloaded as f64 / total as f64) * 100.0).clamp(0.0, 100.0)
                 } else {
                     downloaded as f64 / 1_000_000.0
                 };
@@ -198,6 +215,7 @@ pub async fn start_custom_download(
                     last_at = std::time::Instant::now();
                     primed = true;
                 }
+                last_emit_at = std::time::Instant::now();
                 let _ = app_progress.emit(
                     "custom-download-progress",
                     CustomDownloadProgressPayload {
@@ -212,13 +230,13 @@ pub async fn start_custom_download(
             }
         });
 
-        let result = download_file(&download_task, Some(progress_tx), Some(cancel.clone())).await;
+        let result = download_single_file(req, Some(progress_tx)).await;
         let _ = progress_forward.await;
 
         active_tasks().lock().unwrap().remove(&task_id);
 
         match result {
-            SingleDownloadResult::Success { path, .. } => {
+            Ok(outcome) => {
                 let _ = app_clone.emit(
                     "custom-download-finished",
                     CustomDownloadFinishedPayload {
@@ -226,11 +244,11 @@ pub async fn start_custom_download(
                         success: true,
                         error: None,
                         label: Some(label),
-                        path: Some(path.to_string_lossy().to_string()),
+                        path: Some(outcome.path.to_string_lossy().to_string()),
                     },
                 );
             }
-            SingleDownloadResult::Failed { error, .. } => {
+            Err(error) => {
                 let _ = app_clone.emit(
                     "custom-download-finished",
                     CustomDownloadFinishedPayload {

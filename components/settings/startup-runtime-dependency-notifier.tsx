@@ -2,16 +2,11 @@
 
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { AlertCircle, ExternalLink } from "lucide-react";
+import { ExternalLink } from "lucide-react";
 
+import { ConfirmDialog } from "@/components/confirm-dialog";
 import { isTauriRuntime } from "@/lib/tauri-runtime";
 import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 
 interface RuntimeDependency {
   id: string;
@@ -37,7 +32,6 @@ export function StartupRuntimeDependencyNotifier() {
       try {
         const report = await invoke<RuntimeDependencyReport>("check_runtime_dependencies");
         if (!active || report.ready || report.missing.length === 0) return;
-        // 界面已能交互说明 WebView2 可用，忽略注册表误报
         const effectiveMissing = report.missing.filter((dep) => dep.id !== "webview2");
         if (effectiveMissing.length === 0) return;
         setMissing(effectiveMissing);
@@ -63,51 +57,43 @@ export function StartupRuntimeDependencyNotifier() {
   };
 
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
-      <DialogContent className="max-w-md">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <AlertCircle className="size-5 text-destructive" />
-            缺少运行依赖
-          </DialogTitle>
-        </DialogHeader>
-
-        <div className="space-y-3 px-5 py-4">
-          <p className="text-sm text-muted-foreground">
-            当前为便携/免安装模式，以下组件需单独安装。安装完成后请重新启动 OpenXLauncher。
-          </p>
-
-          <ul className="space-y-3">
-            {missing.map((dep) => (
-              <li
-                key={dep.id}
-                className="rounded-lg border border-border bg-muted/30 p-3 text-sm"
-              >
-                <p className="font-medium text-foreground">{dep.name}</p>
-                <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-                  {dep.description}
-                </p>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="mt-2 gap-1.5"
-                  onClick={() => void openDownload(dep.download_url)}
-                >
-                  <ExternalLink className="size-3.5" />
-                  打开下载页面
-                </Button>
-              </li>
-            ))}
-          </ul>
-        </div>
-
-        <div className="flex items-center justify-end gap-2 border-t border-border px-5 py-3">
-          <Button type="button" variant="secondary" onClick={() => setOpen(false)}>
-            我知道了
-          </Button>
-        </div>
-      </DialogContent>
-    </Dialog>
+    <ConfirmDialog
+      open={open}
+      onOpenChange={setOpen}
+      title="缺少运行依赖"
+      className="!max-w-lg"
+      actions={[
+        {
+          label: "我知道了",
+          variant: "primary",
+          onClick: () => setOpen(false),
+        },
+      ]}
+    >
+      <p>
+        当前为便携/免安装模式，以下组件需单独安装。安装完成后请重新启动 OpenXLauncher。
+      </p>
+      <ul className="mt-3 space-y-3">
+        {missing.map((dep) => (
+          <li
+            key={dep.id}
+            className="rounded-lg border border-border bg-muted/30 p-3 text-sm"
+          >
+            <p className="font-medium text-foreground">{dep.name}</p>
+            <p className="mt-1 text-xs leading-relaxed">{dep.description}</p>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="mt-2 gap-1.5"
+              onClick={() => void openDownload(dep.download_url)}
+            >
+              <ExternalLink className="size-3.5" />
+              打开下载页面
+            </Button>
+          </li>
+        ))}
+      </ul>
+    </ConfirmDialog>
   );
 }

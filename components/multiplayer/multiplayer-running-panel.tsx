@@ -1,16 +1,22 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type MutableRefObject } from "react";
 import { Check, Copy, Loader2, Power, ScrollText, Server, Users } from "lucide-react";
 
-import { Button } from "@/components/ui/button";
+import {
+  formatHostAddress,
+  type DecodedInvite,
+} from "@/components/multiplayer/multiplayer-invite";
 import type { RunMode } from "@/components/multiplayer/multiplayer-state";
+import { useI18n } from "@/components/i18n/use-i18n";
+import { Button } from "@/components/ui/button";
 
 type MultiplayerRunningPanelProps = {
   runMode: RunMode | null;
   roomInfo: string | null;
+  decodedInvite: DecodedInvite | null;
   logText: string;
-  openP2PDirectory: string;
+  toolDirectory?: string;
   onStop: () => void | Promise<void>;
   onClearLog: () => void;
 };
@@ -18,15 +24,23 @@ type MultiplayerRunningPanelProps = {
 export function MultiplayerRunningPanel({
   runMode,
   roomInfo,
+  decodedInvite,
   logText,
-  openP2PDirectory,
   onStop,
   onClearLog,
 }: MultiplayerRunningPanelProps) {
+  const { t } = useI18n();
   const [autoScroll, setAutoScroll] = useState(true);
-  const [copied, setCopied] = useState(false);
+  const [copiedInvite, setCopiedInvite] = useState(false);
+  const [copiedAddress, setCopiedAddress] = useState(false);
   const logRef = useRef<HTMLDivElement>(null);
   const copyTimerRef = useRef<number | null>(null);
+  const addressTimerRef = useRef<number | null>(null);
+
+  const hostAddress = useMemo(
+    () => (decodedInvite ? formatHostAddress(decodedInvite) : null),
+    [decodedInvite]
+  );
 
   useEffect(() => {
     if (autoScroll && logRef.current) {
@@ -37,52 +51,47 @@ export function MultiplayerRunningPanel({
   useEffect(
     () => () => {
       if (copyTimerRef.current !== null) window.clearTimeout(copyTimerRef.current);
+      if (addressTimerRef.current !== null) window.clearTimeout(addressTimerRef.current);
     },
     []
   );
 
-  const copyRoomInfo = async () => {
-    if (!roomInfo) return;
+  const copyText = async (
+    value: string,
+    setCopied: (next: boolean) => void,
+    timerRef: MutableRefObject<number | null>
+  ) => {
     try {
-      await navigator.clipboard.writeText(roomInfo);
+      await navigator.clipboard.writeText(value);
       setCopied(true);
-      if (copyTimerRef.current !== null) window.clearTimeout(copyTimerRef.current);
-      copyTimerRef.current = window.setTimeout(() => setCopied(false), 2_000);
+      if (timerRef.current !== null) window.clearTimeout(timerRef.current);
+      timerRef.current = window.setTimeout(() => setCopied(false), 2_000);
     } catch (error) {
       console.error("复制失败:", error);
     }
   };
 
   const runningModeLabel =
-    runMode === "host" ? "房主模式" : runMode === "join" ? "加入模式" : "后台进程";
-
-  const peerOfflineHint =
-    /peer offline/i.test(logText) || /offline, it will auto reconnect/i.test(logText);
+    runMode === "host"
+      ? t("multiplayer.running.modeHost")
+      : runMode === "join"
+        ? t("multiplayer.running.modeJoin")
+        : t("multiplayer.running.modeBackground");
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-border bg-card">
       <div className="flex shrink-0 items-center justify-between gap-2 border-b border-border bg-muted/30 px-4 py-3">
         <div className="flex items-center gap-2 text-sm text-foreground">
           <div className="size-2 animate-pulse rounded-full bg-green-500" />
-          <span className="font-medium">OpenP2P 正在运行（{runningModeLabel}）</span>
+          <span className="font-medium">
+            {t("multiplayer.running.header", { mode: runningModeLabel })}
+          </span>
         </div>
         <Button variant="destructive" size="sm" onClick={() => void onStop()} className="gap-1.5">
           <Power className="size-3.5" />
-          <span>停止联机</span>
+          <span>{t("multiplayer.running.stop")}</span>
         </Button>
       </div>
-
-      {peerOfflineHint ? (
-        <div className="mx-4 shrink-0 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-900 dark:text-amber-200">
-          <p className="font-medium">检测到 peer offline（对端节点未在线）</p>
-          <ul className="mt-1 list-inside list-disc space-y-0.5 text-[11px] opacity-90">
-            <li>房主须先在本页「创建房间」并保持 OpenP2P 运行，再加入</li>
-            <li>房间名至少 8 个字符；分享的房间编码须来自最新一次创建</li>
-            <li>双方网络需能访问 OpenP2P 服务；房主开防火墙放行 openp2p</li>
-            <li>日志出现 online 后可再在游戏里连接 127.0.0.1:端口</li>
-          </ul>
-        </div>
-      ) : null}
 
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden lg:flex-row">
         <div className="flex flex-col items-center justify-center gap-5 overflow-auto border-border p-6 lg:w-[45%] lg:border-r">
@@ -97,37 +106,93 @@ export function MultiplayerRunningPanel({
           <div className="max-w-md space-y-2 text-center">
             <h2 className="text-lg font-semibold text-foreground">
               {runMode === "host"
-                ? "房间已创建"
+                ? t("multiplayer.running.hostReady")
                 : runMode === "join"
-                  ? "已加入房间"
-                  : "OpenP2P 已在后台运行"}
+                  ? t("multiplayer.running.joinReady")
+                  : t("multiplayer.running.sessionRunning")}
             </h2>
             <p className="text-sm leading-relaxed text-muted-foreground">
-              OpenP2P 正在后台静默运行，不会弹出任何命令窗口。
-              下方日志面板实时显示运行状态反馈。
+              {t("multiplayer.running.sessionHint")}
             </p>
           </div>
 
-          {runMode === "host" && roomInfo ? (
-            <div className="w-full max-w-lg space-y-2">
-              <div className="text-center text-xs text-muted-foreground">
-                将此编码分享给其他玩家以加入你的房间：
-              </div>
-              <div className="flex items-center gap-2 rounded-lg border border-border bg-background/50 px-3 py-2">
-                <code className="flex-1 break-all font-mono text-xs text-foreground">{roomInfo}</code>
-                <Button variant="outline" size="sm" onClick={copyRoomInfo} className="shrink-0 gap-1.5">
-                  {copied ? <Check className="size-3.5 text-green-600" /> : <Copy className="size-3.5" />}
-                  <span>{copied ? "已复制" : "复制"}</span>
+          {runMode === "join" && hostAddress ? (
+            <div className="w-full max-w-lg space-y-3">
+              <div className="space-y-2 rounded-xl border border-primary/40 bg-primary/5 px-4 py-5 text-center">
+                <p className="text-xs font-medium uppercase tracking-wide text-primary">
+                  {t("multiplayer.running.directConnectTitle")}
+                </p>
+                <button
+                  type="button"
+                  onClick={() =>
+                    void copyText(hostAddress, setCopiedAddress, addressTimerRef)
+                  }
+                  className="mx-auto block w-full rounded-lg bg-background/80 px-3 py-3 font-mono text-2xl font-bold tracking-wide text-foreground transition-colors hover:bg-background"
+                  title={t("multiplayer.running.copyAddress")}
+                >
+                  {hostAddress}
+                </button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() =>
+                    void copyText(hostAddress, setCopiedAddress, addressTimerRef)
+                  }
+                  className="gap-1.5"
+                >
+                  {copiedAddress ? (
+                    <Check className="size-3.5 text-green-600" />
+                  ) : (
+                    <Copy className="size-3.5" />
+                  )}
+                  <span>
+                    {copiedAddress
+                      ? t("multiplayer.common.copied")
+                      : t("multiplayer.running.copyAddress")}
+                  </span>
                 </Button>
+                <p className="text-xs leading-relaxed text-muted-foreground">
+                  {t("multiplayer.running.directConnectHint")}
+                </p>
               </div>
             </div>
           ) : null}
 
-          {runMode === "join" && roomInfo ? (
+          {runMode === "host" && hostAddress ? (
+            <div className="w-full max-w-lg space-y-2 rounded-lg border border-border bg-background/50 px-3 py-3 text-center">
+              <p className="text-xs text-muted-foreground">
+                {t("multiplayer.running.hostAddressHint")}
+              </p>
+              <p className="font-mono text-base font-semibold text-foreground">{hostAddress}</p>
+            </div>
+          ) : null}
+
+          {runMode === "host" && roomInfo ? (
             <div className="w-full max-w-lg space-y-2">
-              <div className="text-center text-xs text-muted-foreground">当前使用的房间编码：</div>
-              <div className="rounded-lg border border-border bg-background/50 px-3 py-2">
-                <code className="break-all font-mono text-xs text-muted-foreground">{roomInfo}</code>
+              <div className="text-center text-xs text-muted-foreground">
+                {t("multiplayer.running.shareInvite")}
+              </div>
+              <div className="flex items-center gap-2 rounded-lg border border-border bg-background/50 px-3 py-2">
+                <code className="flex-1 break-all font-mono text-xs text-foreground">
+                  {roomInfo}
+                </code>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => void copyText(roomInfo, setCopiedInvite, copyTimerRef)}
+                  className="shrink-0 gap-1.5"
+                >
+                  {copiedInvite ? (
+                    <Check className="size-3.5 text-green-600" />
+                  ) : (
+                    <Copy className="size-3.5" />
+                  )}
+                  <span>
+                    {copiedInvite
+                      ? t("multiplayer.common.copied")
+                      : t("multiplayer.common.copy")}
+                  </span>
+                </Button>
               </div>
             </div>
           ) : null}
@@ -137,10 +202,7 @@ export function MultiplayerRunningPanel({
           <div className="flex shrink-0 items-center justify-between bg-muted/20 px-4 py-2">
             <div className="flex items-center gap-2 text-xs text-muted-foreground">
               <ScrollText className="size-3.5" />
-              <span className="font-medium">运行日志</span>
-              {openP2PDirectory ? (
-                <span className="text-[10px] text-muted-foreground/70">（来自 {openP2PDirectory}）</span>
-              ) : null}
+              <span className="font-medium">{t("multiplayer.running.logs")}</span>
             </div>
             <div className="flex items-center gap-2">
               <label className="flex cursor-pointer items-center gap-1.5 text-[11px] text-muted-foreground">
@@ -150,10 +212,15 @@ export function MultiplayerRunningPanel({
                   onChange={(event) => setAutoScroll(event.target.checked)}
                   className="rounded border-border"
                 />
-                自动滚动
+                {t("multiplayer.running.autoScroll")}
               </label>
-              <Button variant="ghost" size="sm" onClick={onClearLog} className="h-6 px-2 text-[10px]">
-                清空
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={onClearLog}
+                className="h-6 px-2 text-[10px]"
+              >
+                {t("common.clear")}
               </Button>
             </div>
           </div>
@@ -168,8 +235,8 @@ export function MultiplayerRunningPanel({
             ) : (
               <div className="flex h-full flex-col items-center justify-center gap-2 text-slate-400">
                 <Loader2 className="size-4 animate-spin" />
-                <p className="text-[11px]">正在等待 OpenP2P 输出日志...</p>
-                <p className="text-[10px]">如果长时间没有内容，可能是 openp2p 启动失败或参数不正确</p>
+                <p className="text-[11px]">{t("multiplayer.running.waitingLogs")}</p>
+                <p className="text-[10px]">{t("multiplayer.running.waitingLogsHint")}</p>
               </div>
             )}
           </div>

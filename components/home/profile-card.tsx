@@ -19,7 +19,7 @@ export function ProfileCard({
   onOpenProfileSelector,
 }: ProfileCardProps) {
   const { t } = useI18n();
-  const { config, status, launchGame, cancelLaunch, errorMessage } = useLaunchContext();
+  const { config, status, launchGame, cancelLaunch } = useLaunchContext();
   const isLaunching = status === "preparing" || status === "launching";
   const isRunning = status === "running";
   const canLaunch = !isLaunching && !isRunning;
@@ -113,9 +113,6 @@ export function ProfileCard({
                 </>
               )}
             </Button>
-            {errorMessage && (
-              <p className="text-xs text-destructive">{errorMessage}</p>
-            )}
             <VersionSelectorDialog />
           </div>
         </CardContent>

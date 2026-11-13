@@ -6,9 +6,9 @@ import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Coffee, FolderOpen, HardDrive, Plus, Trash2, Loader2, Check, RotateCcw, RefreshCw, Database } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useCornerNotice } from "@/components/global/corner-notice";
 
 interface JavaInfo {
   path: string;
@@ -27,18 +27,16 @@ interface LauncherPathsConfig {
 
 // —— 路径 & Java ——
 export function PathsSection() {
+  const { pushNotice } = useCornerNotice();
   const [config, setConfig] = useState<LauncherPathsConfig | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [success, setSuccess] = useState<string | null>(null);
   const [newJavaPath, setNewJavaPath] = useState("");
   const [newMcPath, setNewMcPath] = useState("");
 
   // 加载
   const load = async () => {
     setLoading(true);
-    setError(null);
     try {
       const { invoke } = await import("@tauri-apps/api/core");
       const cfg = await invoke<LauncherPathsConfig>("get_launcher_paths_config");
@@ -57,7 +55,10 @@ export function PathsSection() {
           default_minecraft_path: "C:\\Users\\Me\\AppData\\Roaming\\.minecraft",
         });
       } else {
-          setError(e instanceof Error ? e.message : String(e));
+        pushNotice({
+          variant: "error",
+          message: e instanceof Error ? e.message : String(e),
+        });
       }
     } finally {
       setLoading(false);
@@ -72,15 +73,18 @@ export function PathsSection() {
   const save = async () => {
     if (!config) return;
     setSaving(true);
-    setError(null);
-    setSuccess(null);
     try {
       const { invoke } = await import("@tauri-apps/api/core");
       await invoke("save_launcher_paths_config", { config });
-      setSuccess("配置已保存。下次启动游戏时将使用新配置。");
-      setTimeout(() => setSuccess(null), 3000);
+      pushNotice({
+        variant: "success",
+        message: "配置已保存。下次启动游戏时将使用新配置。",
+      });
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      pushNotice({
+        variant: "error",
+        message: e instanceof Error ? e.message : String(e),
+      });
     } finally {
       setSaving(false);
     }
@@ -182,19 +186,6 @@ export function PathsSection() {
       </CardHeader>
 
       <CardContent className="space-y-6">
-        {error && (
-          <Alert variant="destructive">
-            <AlertDescription>{error}</AlertDescription>
-          </Alert>
-        )}
-        {success && (
-          <Alert>
-            <AlertDescription className="flex items-center gap-2">
-              <Check className="size-4" /> {success}
-            </AlertDescription>
-          </Alert>
-        )}
-
         {loading || !config ? (
           <div className="flex items-center justify-center py-8 text-sm text-muted-foreground">
             <Loader2 className="mr-2 size-4 animate-spin" />

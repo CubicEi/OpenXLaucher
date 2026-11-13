@@ -5,7 +5,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { cn } from "@/lib/utils";
 import { useI18n, type TranslationKey } from "@/components/i18n/use-i18n";
-import { Settings, Palette, Download, SlidersHorizontal } from "lucide-react";
+import { Settings, Palette, Download, SlidersHorizontal, Globe } from "lucide-react";
 import {
   PageEnter,
   PageEnterChrome,
@@ -35,6 +35,11 @@ const NAV_ITEMS: NavItem[] = [
     href: "/settings/download",
     label: "settings.page.download",
     icon: <Download className="size-4" />,
+  },
+  {
+    href: "/settings/multiplayer",
+    label: "settings.page.multiplayer",
+    icon: <Globe className="size-4" />,
   },
   {
     href: "/settings/appearance",

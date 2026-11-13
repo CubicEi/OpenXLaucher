@@ -53,7 +53,6 @@ export default function Home() {
     config,
     configLoaded,
     status,
-    errorMessage,
     launchGame,
     cancelLaunch,
   } = useLaunchContext();
@@ -202,11 +201,6 @@ export default function Home() {
                     {t("home.manageAccounts")}
                   </Button>
                 </div>
-                {errorMessage && (
-                  <p className="rounded-lg bg-destructive/10 px-3 py-2 text-left text-xs text-destructive">
-                    {errorMessage}
-                  </p>
-                )}
               </div>
             </PageEnterItem>
           </>
@@ -286,12 +280,6 @@ export default function Home() {
                           </Button>
                         </div>
                       </div>
-
-                      {errorMessage && (
-                        <p className="rounded-lg bg-destructive/10 px-3 py-2 text-xs text-destructive">
-                          {errorMessage}
-                        </p>
-                      )}
                     </CardContent>
                 </Card>
               </PageEnterItem>

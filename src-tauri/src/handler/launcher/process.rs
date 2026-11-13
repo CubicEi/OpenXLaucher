@@ -11,7 +11,10 @@ use std::{
     process::{Command, Stdio},
     thread,
 };
+use serde_json::json;
 use tauri::Emitter;
+
+use crate::handler::launch_trace_log::{launch_trace, launch_trace_error, launch_trace_warn};
 
 /// 检测游戏是否完全启动（模组加载完成即视为成功，不等待世界/主菜单）
 /// 通过 Minecraft 日志中的标志性字符串判断
@@ -236,6 +239,11 @@ pub fn run_command(
 ) -> Result<(), Box<dyn std::error::Error>> {
     // 检查 Java 路径是否存在
     if !javaPath.exists() {
+        launch_trace_error(
+            "rust.spawn",
+            "Java 可执行文件不存在",
+            Some(json!({ "javaPath": javaPath.display().to_string() })),
+        );
         return Err(format!("Java 路径不存在: {}", javaPath.display()).into());
     }
 
@@ -281,6 +289,11 @@ pub fn run_command(
 
     let game_dir_key = canonical_game_dir(Path::new(&game_directory));
     if is_game_dir_mod_update_locked(&game_dir_key) {
+        launch_trace_warn(
+            "rust.spawn",
+            "实例模组更新中，拒绝启动",
+            Some(json!({ "gameDir": game_dir_key })),
+        );
         return Err("该实例模组正在更新，请稍后再启动".into());
     }
 
@@ -293,6 +306,18 @@ pub fn run_command(
         Ok(mut child) => {
             let pid = child.id();
             info!("游戏启动成功，进程ID: {}", pid);
+            launch_trace(
+                "rust.spawn",
+                "Java 子进程已创建",
+                Some(json!({
+                    "pid": pid,
+                    "javaPath": javaPath.display().to_string(),
+                    "workDir": MCPath.display().to_string(),
+                    "gameDir": game_directory,
+                    "displayName": display_name,
+                    "argCount": args.len(),
+                })),
+            );
             apply_process_priority(&child, &process_priority);
 
             // 从子进程取出 stdout/stderr 管道
@@ -456,6 +481,14 @@ pub fn run_command(
         }
         Err(e) => {
             let msg = format!("游戏启动失败 (Java: {}): {}", javaPath.display(), e);
+            launch_trace_error(
+                "rust.spawn",
+                "Command::spawn 失败",
+                Some(json!({
+                    "error": e.to_string(),
+                    "javaPath": javaPath.display().to_string(),
+                })),
+            );
             println!("{}", msg);
             Err(msg.into())
         }

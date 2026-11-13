@@ -117,6 +117,22 @@ export function navigationMustPreserveAppShell(current: string, target: string) 
   return preservesAppShellState(current) || preservesAppShellState(target);
 }
 
+/**
+ * Secondary pages opened from a top-level page and closed via history back.
+ * Entering them soft-navigates so the session background never repaints;
+ * top-level ↔ top-level must stay a full reload (soft route can stall).
+ */
+const SECONDARY_PAGE_PATHS = [
+  "/check-update",
+  "/profiles",
+  "/select-version",
+  "/process-list",
+];
+
+export function isSecondaryPage(path: string) {
+  return SECONDARY_PAGE_PATHS.includes(normalizeAppPathname(path));
+}
+
 export function pushAppRoute(
   router: AppRouterInstance,
   href: string,
@@ -225,9 +241,10 @@ export function abortActiveMainNavigation() {
   resetPageTransitionStyles();
 }
 
+/** `targetPathname: null` waits until the pathname leaves `fromPathname` (history back). */
 function waitForPageContent(
   root: HTMLElement,
-  targetPathname: string,
+  targetPathname: string | null,
   signal: AbortSignal,
   fromPathname?: string,
 ) {
@@ -235,10 +252,15 @@ function waitForPageContent(
     let settled = false;
     let settleTimer: number | undefined;
     const allowMutationWithoutPathMatch =
-      !!fromPathname && isDescendantAppPath(fromPathname, targetPathname);
+      targetPathname !== null &&
+      !!fromPathname &&
+      isDescendantAppPath(fromPathname, targetPathname);
 
     const pathnameReady = () =>
-      pathnameMatchesNavigationTarget(window.location.pathname, targetPathname);
+      targetPathname === null
+        ? normalizeAppPathname(window.location.pathname) !==
+          normalizeAppPathname(fromPathname ?? "")
+        : pathnameMatchesNavigationTarget(window.location.pathname, targetPathname);
 
     const finish = (_reason: string) => {
       if (settled) return;
@@ -305,7 +327,7 @@ function runStaticFadeThenNavigate(
   navigate: () => void,
   options?: {
     waitRoot?: HTMLElement;
-    targetPathname?: string;
+    targetPathname?: string | null;
     fromPathname?: string;
     hardAssign?: boolean;
     assignHref?: string;
@@ -353,7 +375,7 @@ function runStaticFadeThenNavigate(
     const waitRoot = options?.waitRoot ?? root;
     const targetPathname = options?.targetPathname;
     try {
-      if (targetPathname) {
+      if (targetPathname !== undefined) {
         await waitForPageContent(
           waitRoot,
           targetPathname,
@@ -435,7 +457,11 @@ export function navigateWithMainTransition(
   }
   // Selective remount: soft-push keeps DownloadProvider; only page UI re-enters.
   const hardAssign =
-    isTauriRuntime() && !sameSection && !preserveShell && !avoidHardReload;
+    isTauriRuntime() &&
+    !sameSection &&
+    !preserveShell &&
+    !avoidHardReload &&
+    !isSecondaryPage(targetPathname);
 
   // Chrome float is section-enter only. Mark skip when same-section will
   // remount (Tauri assign); core tab uses dedicated mark above.
@@ -471,6 +497,35 @@ export function navigateWithMainTransition(
       assignHref: pushHref,
     },
   );
+}
+
+/**
+ * Leave a secondary page: fade out, then soft history back (no reload, so the
+ * background stays painted). Falls back to `fallbackHref` without history.
+ */
+export function navigateBackWithMainTransition(
+  router: AppRouterInstance,
+  fallbackHref = "/",
+) {
+  if (window.history.length <= 1) {
+    navigateWithMainTransition(router, fallbackHref);
+    return;
+  }
+
+  abortActiveMainNavigation();
+  clearSkipSectionChrome();
+
+  const root = getPageTransitionElement();
+  if (!root || window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+    router.back();
+    return;
+  }
+
+  runStaticFadeThenNavigate(root, () => router.back(), {
+    waitRoot: document.querySelector<HTMLElement>("main") ?? root,
+    targetPathname: null,
+    fromPathname: normalizeAppPathname(window.location.pathname),
+  });
 }
 
 export function onInAppLinkPointerDown() {

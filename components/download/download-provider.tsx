@@ -9,7 +9,7 @@ import {
   useState,
 } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { type UnlistenFn } from "@tauri-apps/api/event";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { dismissTaskIds, isTaskDismissed } from "./download-dismissed-tasks";
 import {
   bindBackendTaskId,
@@ -26,6 +26,7 @@ import {
   type PushDownloadCornerNoticeInput,
 } from "@/components/download/download-corner-notice";
 import { useI18n } from "@/components/i18n/use-i18n";
+import { LAUNCHER_UPDATE_TASK_ID } from "@/lib/launcher-update-task";
 import {
   downloadTaskLabel,
   formatJavaInvokeError,
@@ -155,7 +156,17 @@ interface DownloadContextValue {
     url: string;
     directory: string;
     fileName?: string | null;
+    label?: string | null;
+    /** 已在外层飞过时跳过，避免解析源后二次飞行 */
+    skipFly?: boolean;
   }) => Promise<number>;
+  /** 联机：选源后创建单文件多线程下载任务并完成 EasyTier 安装 */
+  startEasyTierInstall: (opts: {
+    sourceId: string;
+    flyFrom?: FlyCoords;
+  }) => Promise<number>;
+  /** 启动器自更新：下载到 OpenX/update，并入任务队列 */
+  startLauncherUpdateDownload: (opts?: { version?: string }) => Promise<void>;
   /** 单个模组更新（下载到临时目录后替换，进度走 mod-download 事件） */
   startModUpdate: (
     instanceDir: string,
@@ -222,6 +233,14 @@ function DownloadProviderInner({ children }: { children: React.ReactNode }) {
   const cancelledLocalIdsRef = useRef(new Set<number>());
   /** 任务状态快照：用于检测「刚完成」并弹出右下角提示 */
   const taskStatusSnapshotRef = useRef<Map<string, DownloadTaskStatus>>(new Map());
+  /** 联机工具等：ZIP 下载完成不算终态，仅安装收尾后再提示一次 */
+  const suppressTaskCompleteNoticeRef = useRef(new Set<number>());
+  /** 中断 startEasyTierInstall 中 ZIP 等待 / 解压收尾 */
+  const easyTierInstallAbortRef = useRef<AbortController | null>(null);
+
+  function isEasyTierInstallTask(task: DownloadTask | undefined): boolean {
+    return (task?.label?.trim() ?? "").startsWith("下载Easytier联机模块");
+  }
   const showJavaPrecheckFailure = useCallback(
     (message: string) => {
       pushNotice({
@@ -235,6 +254,38 @@ function DownloadProviderInner({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     const snapshot = taskStatusSnapshotRef.current;
     const seen = new Set<string>();
+
+    const findInstallPair = (task: DownloadTask): DownloadTask | undefined => {
+      if (task.sessionId) {
+        return tasks.find(
+          (other) =>
+            other.sessionId === task.sessionId &&
+            other.role === "install" &&
+            other.taskId !== task.taskId
+        );
+      }
+      if (task.role !== "download") return undefined;
+      return tasks.find(
+        (other) =>
+          other.taskId !== task.taskId &&
+          other.role === "install" &&
+          other.mcVersion === task.mcVersion &&
+          Math.abs(other.startedAt - task.startedAt) < 5000
+      );
+    };
+
+    const resolveInstanceName = (task: DownloadTask): string => {
+      const fromTarget = task.targetInstanceName?.trim();
+      if (fromTarget) return fromTarget;
+      const label = task.label?.trim() ?? "";
+      const installMatch = /^安装\s+(.+)$/.exec(label);
+      if (installMatch?.[1]?.trim()) return installMatch[1].trim();
+      const downloadMatch = /^下载\s+(.+?)\s+文件$/.exec(label);
+      if (downloadMatch?.[1]?.trim()) return downloadMatch[1].trim();
+      if (task.mcVersion?.trim() && task.mcVersion !== "—") return task.mcVersion.trim();
+      return label || String(task.taskId);
+    };
+
     for (const task of tasks) {
       const key = task.clientId || `id:${task.taskId}`;
       seen.add(key);
@@ -247,14 +298,29 @@ function DownloadProviderInner({ children }: { children: React.ReactNode }) {
         prev !== "success" &&
         prev !== "warning"
       ) {
-        const name = (task.label || "").trim() || String(task.taskId);
-        pushNotice({
-          variant: "success",
-          message:
-            next === "warning"
-              ? t("processList.taskCompletedWithWarning", { name })
-              : t("processList.taskCompleted", { name }),
-        });
+        if (suppressTaskCompleteNoticeRef.current.delete(task.taskId)) {
+          // Intermediate success (e.g. EasyTier zip download before extract).
+        } else if (task.role === "download" && findInstallPair(task)) {
+          // 双任务安装：下载腿完成不单独提示，等安装腿结束合并一条。
+        } else if (task.role === "install") {
+          const name = resolveInstanceName(task);
+          pushNotice({
+            variant: "success",
+            message:
+              next === "warning"
+                ? t("processList.instanceInstallCompletedWithWarning", { name })
+                : t("processList.instanceInstallCompleted", { name }),
+          });
+        } else {
+          const name = (task.label || "").trim() || String(task.taskId);
+          pushNotice({
+            variant: "success",
+            message:
+              next === "warning"
+                ? t("processList.taskCompletedWithWarning", { name })
+                : t("processList.taskCompleted", { name }),
+          });
+        }
       }
       snapshot.set(key, next);
     }
@@ -745,14 +811,19 @@ function DownloadProviderInner({ children }: { children: React.ReactNode }) {
     flyToProcessList();
     const taskId = taskIdCounterRef.current++;
     setTasks((prev) => {
+      const taskLabel = runtimeName.startsWith("下载 ")
+        ? runtimeName
+        : `下载 ${runtimeName}`;
       const isDownloading = prev.some(
-        (t) => t.label === runtimeName && (t.status === "downloading" || t.status === "success")
+        (t) =>
+          (t.label === taskLabel || t.label === runtimeName) &&
+          (t.status === "downloading" || t.status === "success")
       );
       if (isDownloading) return prev;
       const task: DownloadTask = {
         clientId: `client-${taskId}`,
         taskId,
-        label: runtimeName,
+        label: taskLabel,
         mcVersion: "Java",
         status: "downloading",
         detail: "下载",
@@ -890,7 +961,7 @@ function DownloadProviderInner({ children }: { children: React.ReactNode }) {
       platform?: "modrinth" | "curseforge",
       projectId?: string
     ) => {
-      const label = `${modName} (${mcVersion})`;
+      const label = `下载${modName} (${mcVersion})`;
       return startModLoaderDownload({
         label,
         mcVersion,
@@ -924,7 +995,7 @@ function DownloadProviderInner({ children }: { children: React.ReactNode }) {
       apiProjectType?: string | null,
       autoInstallAfterDownload?: boolean
     ) => {
-      const label = `${resourceName} (${mcVersion})`;
+      const label = `下载${resourceName} (${mcVersion})`;
       return startModLoaderDownload({
         label,
         mcVersion,
@@ -1142,7 +1213,13 @@ function DownloadProviderInner({ children }: { children: React.ReactNode }) {
   );
 
   const startCustomDownload = useCallback(
-    async (opts: { url: string; directory: string; fileName?: string | null }) => {
+    async (opts: {
+      url: string;
+      directory: string;
+      fileName?: string | null;
+      label?: string | null;
+      skipFly?: boolean;
+    }) => {
       await ensureDownloadListeners();
       const localTaskId = taskIdCounterRef.current++;
       const trimmedName = opts.fileName?.trim() ?? "";
@@ -1155,7 +1232,11 @@ function DownloadProviderInner({ children }: { children: React.ReactNode }) {
           displayName = "download.bin";
         }
       }
-      const label = `自定义下载: ${displayName}`;
+      const customLabel = opts.label?.trim();
+      const label =
+        customLabel && customLabel.length > 0
+          ? customLabel
+          : `自定义下载: ${displayName}`;
 
       setTasks((prev) => {
         const task: DownloadTask = {
@@ -1170,13 +1251,16 @@ function DownloadProviderInner({ children }: { children: React.ReactNode }) {
         return [task, ...prev];
       });
 
-      flyToProcessList();
+      if (!opts.skipFly) {
+        flyToProcessList();
+      }
 
       try {
         const returnedTaskId = await invoke<number>("start_custom_download", {
           url: opts.url.trim(),
           directory: opts.directory.trim(),
           fileName: trimmedName.length > 0 ? trimmedName : null,
+          label,
         });
         if (returnedTaskId !== localTaskId) {
           setTasks((prev) => bindBackendTaskId(prev, localTaskId, returnedTaskId));
@@ -1211,6 +1295,255 @@ function DownloadProviderInner({ children }: { children: React.ReactNode }) {
     [ensureDownloadListeners]
   );
 
+  const startEasyTierInstall = useCallback(
+    async (opts: { sourceId: string; flyFrom?: FlyCoords }) => {
+      await ensureDownloadListeners();
+      const sourceId = opts.sourceId.trim();
+      if (!sourceId) {
+        throw new Error("请选择下载源");
+      }
+
+      // 在解析下载源（可能较慢）之前立刻起飞，否则用户感觉点击无反馈。
+      flyToProcessList(opts.flyFrom);
+
+      const abort = new AbortController();
+      easyTierInstallAbortRef.current = abort;
+      const throwIfAborted = (taskId?: number | null) => {
+        if (abort.signal.aborted) {
+          throw new Error("已取消");
+        }
+        if (taskId != null && isTaskDismissed(taskId)) {
+          throw new Error("已取消");
+        }
+      };
+
+      let taskId: number | null = null;
+
+      try {
+        const prepared = await invoke<{
+          version: string;
+          assetName: string;
+          downloadUrl: string;
+          targetDir: string;
+        }>("mp_prepare_install_download", { sourceId });
+        throwIfAborted();
+
+        const label = "下载Easytier联机模块";
+
+        // 先挂监听再启动下载，避免小文件秒完时漏掉 finished 事件。
+        type FinishedPayload = {
+          task_id?: number;
+          taskId?: number;
+          success?: boolean;
+          error?: string | null;
+          path?: string | null;
+        };
+        let bufferedFinish: FinishedPayload | null = null;
+        const zipPath = await new Promise<string>((resolve, reject) => {
+          let expectedTaskId: number | null = null;
+          let settled = false;
+          let unlisten: UnlistenFn | undefined;
+          const onAbort = () => {
+            finish(() => reject(new Error("已取消")));
+          };
+          const finish = (fn: () => void) => {
+            if (settled) return;
+            settled = true;
+            window.clearTimeout(timeout);
+            abort.signal.removeEventListener("abort", onAbort);
+            unlisten?.();
+            fn();
+          };
+          const applyFinish = (payload: FinishedPayload) => {
+            const finishedId = payload.task_id ?? payload.taskId;
+            if (finishedId != null && isTaskDismissed(finishedId)) {
+              finish(() => reject(new Error("已取消")));
+              return;
+            }
+            if (payload.success && payload.path) {
+              finish(() => resolve(payload.path as string));
+            } else {
+              finish(() => reject(new Error(payload.error || "联机工具下载失败")));
+            }
+          };
+
+          abort.signal.addEventListener("abort", onAbort);
+
+          const timeout = window.setTimeout(() => {
+            finish(() => reject(new Error("联机工具下载超时")));
+          }, 30 * 60 * 1000);
+
+          void listen<FinishedPayload>("custom-download-finished", (event) => {
+            const payload = event.payload;
+            const finishedId = payload.task_id ?? payload.taskId;
+            if (expectedTaskId == null) {
+              bufferedFinish = payload;
+              return;
+            }
+            if (finishedId !== expectedTaskId) return;
+            applyFinish(payload);
+          })
+            .then(async (fn) => {
+              unlisten = fn;
+              throwIfAborted();
+              expectedTaskId = await startCustomDownload({
+                url: prepared.downloadUrl,
+                directory: prepared.targetDir,
+                fileName: prepared.assetName,
+                label,
+                skipFly: true,
+              });
+              taskId = expectedTaskId;
+              throwIfAborted(expectedTaskId);
+              if (
+                bufferedFinish &&
+                (bufferedFinish.task_id ?? bufferedFinish.taskId) === expectedTaskId
+              ) {
+                applyFinish(bufferedFinish);
+              }
+            })
+            .catch((err) => {
+              finish(() =>
+                reject(err instanceof Error ? err : new Error(String(err)))
+              );
+            });
+        });
+
+        if (taskId == null) {
+          throw new Error("联机工具下载任务创建失败");
+        }
+        throwIfAborted(taskId);
+        suppressTaskCompleteNoticeRef.current.add(taskId);
+
+        setTasks((prev) =>
+          prev.map((t) =>
+            t.taskId === taskId && t.status !== "cancelled"
+              ? {
+                  ...t,
+                  status: "downloading" as const,
+                  role: "install" as const,
+                  progressMode: "indeterminate" as const,
+                  progress: undefined,
+                  speedBps: undefined,
+                  stage: "正在安装联机工具…",
+                  detail: "正在解压并初始化…",
+                  label,
+                }
+              : t
+          )
+        );
+
+        throwIfAborted(taskId);
+        await invoke("mp_finalize_install", {
+          zipPath,
+          version: prepared.version,
+        });
+        throwIfAborted(taskId);
+        setTasks((prev) =>
+          prev.map((t) =>
+            t.taskId === taskId && t.status !== "cancelled"
+              ? {
+                  ...t,
+                  status: "success" as const,
+                  progress: 100,
+                  progressMode: "percent" as const,
+                  role: "install" as const,
+                  stage: "安装完成",
+                  detail: "安装完成",
+                  speedBps: undefined,
+                }
+              : t
+          )
+        );
+        return taskId;
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        if (message === "已取消") {
+          throw err;
+        }
+        if (taskId != null) {
+          suppressTaskCompleteNoticeRef.current.delete(taskId);
+          setTasks((prev) =>
+            prev.map((t) =>
+              t.taskId === taskId && t.status !== "cancelled"
+                ? {
+                    ...t,
+                    status: "error" as const,
+                    error: message,
+                    stage: "安装失败",
+                    detail: message,
+                  }
+                : t
+            )
+          );
+        }
+        throw err;
+      } finally {
+        if (easyTierInstallAbortRef.current === abort) {
+          easyTierInstallAbortRef.current = null;
+        }
+      }
+    },
+    [ensureDownloadListeners, startCustomDownload]
+  );
+
+  const startLauncherUpdateDownload = useCallback(
+    async (opts?: { version?: string }) => {
+      await ensureDownloadListeners();
+      const label = opts?.version
+        ? `下载启动器更新 v${opts.version}`
+        : "下载启动器更新";
+
+      setTasks((prev) => {
+        const existing = prev.find((t) => t.taskId === LAUNCHER_UPDATE_TASK_ID);
+        const nextTask: DownloadTask = {
+          clientId: "launcher-update",
+          taskId: LAUNCHER_UPDATE_TASK_ID,
+          label,
+          mcVersion: "—",
+          status: "downloading",
+          progress: 0,
+          startedAt: Date.now(),
+        };
+        if (existing) {
+          return prev.map((t) =>
+            t.taskId === LAUNCHER_UPDATE_TASK_ID ? { ...t, ...nextTask, startedAt: t.startedAt } : t
+          );
+        }
+        return [nextTask, ...prev];
+      });
+
+      flyToProcessList();
+
+      try {
+        await invoke<{ success: boolean; path: string; size: number }>("download_update");
+        setTasks((prev) =>
+          prev.map((t) =>
+            t.taskId === LAUNCHER_UPDATE_TASK_ID && t.status === "downloading"
+              ? { ...t, status: "success" as const, progress: 100, speedBps: undefined }
+              : t
+          )
+        );
+      } catch (err) {
+        console.error("启动器更新下载失败:", err);
+        setTasks((prev) =>
+          prev.map((t) =>
+            t.taskId === LAUNCHER_UPDATE_TASK_ID && t.status === "downloading"
+              ? {
+                  ...t,
+                  status: "error" as const,
+                  error: err instanceof Error ? err.message : String(err),
+                  speedBps: undefined,
+                }
+              : t
+          )
+        );
+        throw err;
+      }
+    },
+    [ensureDownloadListeners]
+  );
+
   /** ========== 取消与清理 ========== */
   const cancelDownload = useCallback(
     async (taskId: number) => {
@@ -1218,6 +1551,7 @@ function DownloadProviderInner({ children }: { children: React.ReactNode }) {
       const snapshot = await new Promise<{
         sessionId?: string;
         pairedIds: number[];
+        easyTierInstall: boolean;
       }>((resolve) => {
         setTasks((prev) => {
           const target = prev.find((t) => t.taskId === taskId);
@@ -1237,12 +1571,22 @@ function DownloadProviderInner({ children }: { children: React.ReactNode }) {
             );
             if (sibling) pairedIds = [taskId, sibling.taskId];
           }
-          resolve({ sessionId: sid, pairedIds });
+          resolve({
+            sessionId: sid,
+            pairedIds,
+            easyTierInstall: pairedIds.some((id) =>
+              isEasyTierInstallTask(prev.find((t) => t.taskId === id))
+            ),
+          });
           return prev;
         });
       });
 
-      const { sessionId, pairedIds } = snapshot;
+      const { sessionId, pairedIds, easyTierInstall } = snapshot;
+      if (easyTierInstall) {
+        easyTierInstallAbortRef.current?.abort();
+        suppressTaskCompleteNoticeRef.current.delete(taskId);
+      }
 
       pendingQueueRef.current = pendingQueueRef.current.filter(
         (item) =>
@@ -1291,6 +1635,10 @@ function DownloadProviderInner({ children }: { children: React.ReactNode }) {
             invoke("cancel_custom_download", { taskId }),
             invoke("cancel_java_download", { taskId }),
             invoke("cancel_instance_export_cmd", { taskId }),
+            // 启动器更新固定 task id；取消时必须打到 cancel_update（共享 cancel_flag）。
+            ...(pairedIds.includes(LAUNCHER_UPDATE_TASK_ID) || taskId === LAUNCHER_UPDATE_TASK_ID
+              ? [invoke("cancel_update")]
+              : []),
           ]);
         }
       } catch (e) {
@@ -1342,6 +1690,8 @@ function DownloadProviderInner({ children }: { children: React.ReactNode }) {
         startModpackDownload,
         startInstanceExport,
         startCustomDownload,
+        startEasyTierInstall,
+        startLauncherUpdateDownload,
         startModUpdate,
         startModUpdateAll,
         cancelDownload,

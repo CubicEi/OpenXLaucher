@@ -1,6 +1,13 @@
 "use client";
 
-import React, { createContext, useCallback, useContext, useEffect, useState } from "react";
+import React, {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import type { Account, AuthType } from "@/types";
 import {
   loginLittleSkin,
@@ -12,11 +19,14 @@ import {
   getSkinBase64,
   redownloadLittleSkinSkin,
   msSilentRefreshAccount,
+  msGetCachedAccessToken,
   msHasAccountInDb,
   deleteCachedSkin,
   isMicrosoftTokenTransientError,
   isMicrosoftOfficialAuthRejection,
   isMicrosoftAuthCancelled,
+  isMicrosoftLoginNetworkOrTimeout,
+  MS_LOGIN_TIMEOUT_MESSAGE,
   normalizeSkinVariant,
   type LittleSkinAccount,
   type ThirdPartyAccountList,
@@ -28,7 +38,10 @@ import {
   MS_LAUNCH_SILENT_REFRESH_BUDGET_MS,
 } from "@/lib/auth-timeouts";
 import { LoginDialog } from "@/components/accounts/login-dialog";
+import { ConfirmDialog } from "@/components/confirm-dialog";
 import { useSettings } from "@/components/settings/settings-provider";
+import { launchTrace, launchTraceWarn } from "@/lib/launch-trace-log";
+import { authTrace, authTraceError, authTraceWarn } from "@/lib/auth-trace-log";
 
 type LoginState = "idle" | "loading" | "error";
 
@@ -141,6 +154,8 @@ export function AccountProvider({ children }: { children: React.ReactNode }) {
   const useSystemProxy = settings.general.useSystemProxy;
   const [profiles, setProfiles] = useState<Account[]>([]);
   const [selectedProfile, setSelectedProfile] = useState<Account | null>(null);
+  /** 避免首屏 profiles=[] 把 localStorage 误写成空数组；删光档案后仍需持久化 [] */
+  const [profilesHydrated, setProfilesHydrated] = useState(false);
   const [loginState, setLoginState] = useState<LoginState>("idle");
   const [loginError, setLoginError] = useState<string | null>(null);
   const [forcedMicrosoftDeviceCode, setForcedMicrosoftDeviceCode] = useState<DeviceCodeInfo | null>(null);
@@ -148,6 +163,8 @@ export function AccountProvider({ children }: { children: React.ReactNode }) {
   const [forcedMicrosoftLoginMessage, setForcedMicrosoftLoginMessage] = useState<string | null>(null);
   // 手动打开的登录对话框（点"添加账户"按钮时）—— 统一由 Provider 控制对话框是否显示
   const [manualLoginOpen, setManualLoginOpen] = useState<boolean>(false);
+  /** 登录因网络/超时失败：关闭 LoginDialog，仅显示此警告 */
+  const [loginNetworkWarning, setLoginNetworkWarning] = useState<string | null>(null);
   // 微软登录的"取消标志"：每次调用 loginWithMicrosoft 时递增，
   // 如果用户在途中调用 cancelMicrosoftLogin，这个计数器会递增，
   // 使得后续的 .then/.catch 回调不更新状态（避免关闭对话框后仍显示"登录中"）
@@ -170,7 +187,7 @@ export function AccountProvider({ children }: { children: React.ReactNode }) {
   >(new Map());
 
   /** 提前量：到期前 30 分钟视为需要刷新 */
-  const MS_TOKEN_EXPIRY_SKEW_MS = 30 * 60 * 1000;
+  const MS_TOKEN_EXPIRY_SKEW_MS = 60 * 60 * 1000;
   /** 后端未返回 expires_in 时按 12h 计 */
   const MS_TOKEN_DEFAULT_TTL_MS = 12 * 60 * 60 * 1000;
 
@@ -183,10 +200,19 @@ export function AccountProvider({ children }: { children: React.ReactNode }) {
         typeof expiresInSec === "number" && expiresInSec > 0
           ? expiresInSec * 1000
           : MS_TOKEN_DEFAULT_TTL_MS;
+      const expiresAt = Date.now() + ttlMs;
       msSessionTokenCacheRef.current.set(id, {
         accessToken: token,
-        expiresAt: Date.now() + ttlMs,
+        expiresAt,
       });
+      // 同步写入 localStorage 档案，关闭启动器后仍可按 expiresAt 复用
+      setProfiles((prev) =>
+        prev.map((a) =>
+          a.uuid === id || a.uuid?.replace(/-/g, "") === id.replace(/-/g, "")
+            ? { ...a, accessToken: token, tokenExpiresAt: expiresAt }
+            : a
+        )
+      );
     },
     [MS_TOKEN_DEFAULT_TTL_MS],
   );
@@ -251,6 +277,34 @@ export function AccountProvider({ children }: { children: React.ReactNode }) {
     [rememberMsSessionToken]
   );
 
+  const applyMicrosoftRefreshRef = useRef(applyMicrosoftRefresh);
+  applyMicrosoftRefreshRef.current = applyMicrosoftRefresh;
+
+  const showLoginNetworkWarning = useCallback(
+    (message?: string) => {
+      msLoginVersionRef.current++;
+      setManualLoginOpen(false);
+      setForcedMicrosoftLoginMode(false);
+      setForcedMicrosoftLoginMessage(null);
+      setForcedMicrosoftDeviceCode(null);
+      setMicrosoftLaunchFallbackToken(null);
+      setMicrosoftLaunchTokenError(null);
+      setLoginState("idle");
+      setLoginError(null);
+      setLoginNetworkWarning(message?.trim() || MS_LOGIN_TIMEOUT_MESSAGE);
+      msCancelLogin().catch(() => {});
+      if (microsoftLaunchGateRef.current) {
+        const gate = microsoftLaunchGateRef.current;
+        microsoftLaunchGateRef.current = null;
+        gate({ accessToken: null, network: true });
+      }
+      authTraceWarn("microsoft_ui", "network_failure", "登录因网络失败，已关闭登录窗", {
+        message: message?.slice(0, 200),
+      });
+    },
+    []
+  );
+
   const runForcedMicrosoftRelogin = useCallback(
     (
       pName: string,
@@ -312,13 +366,17 @@ export function AccountProvider({ children }: { children: React.ReactNode }) {
                 finish(null);
                 return;
               }
+              if (isMicrosoftLoginNetworkOrTimeout(msg)) {
+                const detail = isMicrosoftTokenTransientError(msg)
+                  ? `${MS_LOGIN_TIMEOUT_MESSAGE}${proxyHint ? ` ${proxyHint}` : ""}`
+                  : `获取验证码失败（${msg}）。${proxyHint}`;
+                showLoginNetworkWarning(detail);
+                finish(null, true);
+                return;
+              }
               setForcedMicrosoftLoginMode(true);
               setForcedMicrosoftLoginMessage(forcedLoginIntro(pName, tokenErrorMsg));
-              setLoginError(
-                isMicrosoftTokenTransientError(msg)
-                  ? `获取验证码失败（${msg}），请检查网络后重试，或尝试使用旧令牌登录。${proxyHint ? ` ${proxyHint}` : ""}`
-                  : `获取验证码失败（${msg}），请稍后重试。`
-              );
+              setLoginError(`获取验证码失败（${msg}），请稍后重试。`);
               setLoginState("error");
               return;
             }
@@ -379,19 +437,38 @@ export function AccountProvider({ children }: { children: React.ReactNode }) {
                 return;
               }
               const msg = e instanceof Error ? e.message : String(e);
-              if (!msg.includes("已取消登录")) {
-                setLoginError(msg);
-                setLoginState("error");
+              if (msg.includes("已取消登录")) {
+                setLoginState("idle");
+                setLoginError(null);
+                finish(null);
                 return;
               }
-              setLoginState("idle");
-              setLoginError(null);
-              finish(null);
+              if (isMicrosoftLoginNetworkOrTimeout(msg)) {
+                const detail = isMicrosoftTokenTransientError(msg)
+                  ? `${MS_LOGIN_TIMEOUT_MESSAGE}${proxyHint ? ` ${proxyHint}` : ""}`
+                  : msg;
+                showLoginNetworkWarning(detail);
+                finish(null, true);
+                return;
+              }
+              setForcedMicrosoftLoginMode(true);
+              setForcedMicrosoftLoginMessage(forcedLoginIntro(pName, tokenErrorMsg));
+              setLoginError(msg);
+              setLoginState("error");
             }
           } catch (e: unknown) {
             const msg = e instanceof Error ? e.message : String(e);
             if (isMicrosoftOfficialAuthRejection(msg)) {
               finish(null);
+              return;
+            }
+            if (isMicrosoftLoginNetworkOrTimeout(msg)) {
+              showLoginNetworkWarning(
+                isMicrosoftTokenTransientError(msg)
+                  ? `${MS_LOGIN_TIMEOUT_MESSAGE}${proxyHint ? ` ${proxyHint}` : ""}`
+                  : msg
+              );
+              finish(null, true);
               return;
             }
             setForcedMicrosoftLoginMode(true);
@@ -402,7 +479,7 @@ export function AccountProvider({ children }: { children: React.ReactNode }) {
         })();
       });
     },
-    [rememberMsSessionToken, useSystemProxy]
+    [rememberMsSessionToken, useSystemProxy, showLoginNetworkWarning]
   );
 
   const prepareMicrosoftAccountForLaunch = useCallback(
@@ -413,20 +490,45 @@ export function AccountProvider({ children }: { children: React.ReactNode }) {
       }
 
       const puuid = profile.uuid;
+      launchTrace("ui.ms_prep", "正版启动令牌准备", {
+        uuid: puuid,
+        playerName: profile.name,
+      });
       // 本会话已成功刷新且仍在有效期内：直接使用，不再请求微软接口
       const cached = getValidMsSessionToken(puuid);
       if (cached) {
+        launchTrace("ui.ms_prep", "使用会话内已缓存的 Minecraft 令牌", {
+          tokenLen: cached.length,
+        });
         return { ok: true, accessToken: cached };
+      }
+
+      // 数据库中的令牌在「有效期 - 1 小时」内：重启启动器后仍直接使用
+      try {
+        const fromDb = await msGetCachedAccessToken(puuid);
+        if (fromDb?.access_token) {
+          rememberMsSessionToken(puuid, fromDb.access_token, fromDb.expires_in);
+          launchTrace("ui.ms_prep", "使用数据库缓存的 Minecraft 令牌", {
+            tokenLen: fromDb.access_token.length,
+            expiresIn: fromDb.expires_in,
+          });
+          return { ok: true, accessToken: fromDb.access_token };
+        }
+      } catch (e: unknown) {
+        launchTraceWarn("ui.ms_prep", "读取数据库缓存令牌失败", {
+          error: e instanceof Error ? e.message : String(e),
+        });
       }
 
       // cancelMicrosoftLogin 会递增该计数；停止准备后静默刷新即使超时也不应再弹强制登录
       const cancelEpoch = msLoginVersionRef.current;
       const wasCancelled = () => msLoginVersionRef.current !== cancelEpoch;
 
-      const trySilentRefresh = async (): Promise<
+      const trySilentRefresh = async (attempt: number): Promise<
         | { ok: true; accessToken: string }
         | { ok: false; error: string }
       > => {
+        launchTrace("ui.ms_prep", "尝试静默刷新 Minecraft 令牌", { attempt });
         try {
           const refreshed = await withTimeout(
             msSilentRefreshAccount(puuid),
@@ -441,6 +543,10 @@ export function AccountProvider({ children }: { children: React.ReactNode }) {
             if (wasCancelled()) {
               return { ok: false, error: "MS_AUTH_CANCELLED" };
             }
+            launchTrace("ui.ms_prep", "静默刷新成功", {
+              attempt,
+              tokenLen: refreshed.access_token.length,
+            });
             return { ok: true, accessToken: refreshed.access_token };
           }
           return { ok: false, error: "MC_TOKEN_REFRESH_EMPTY" };
@@ -448,11 +554,13 @@ export function AccountProvider({ children }: { children: React.ReactNode }) {
           if (wasCancelled()) {
             return { ok: false, error: "MS_AUTH_CANCELLED" };
           }
-          return { ok: false, error: e instanceof Error ? e.message : String(e) };
+          const err = e instanceof Error ? e.message : String(e);
+          launchTraceWarn("ui.ms_prep", "静默刷新失败", { attempt, error: err });
+          return { ok: false, error: err };
         }
       };
 
-      let first = await trySilentRefresh();
+      let first = await trySilentRefresh(1);
       if (first.ok) {
         return { ok: true, accessToken: first.accessToken };
       }
@@ -467,7 +575,7 @@ export function AccountProvider({ children }: { children: React.ReactNode }) {
 
       // 暂态失败时整链再试一次，再失败才强制设备码
       if (isMicrosoftTokenTransientError(tokenErrorMsg) || tokenErrorMsg.includes("MC_TOKEN_REFRESH")) {
-        const second = await trySilentRefresh();
+        const second = await trySilentRefresh(2);
         if (second.ok) {
           return { ok: true, accessToken: second.accessToken };
         }
@@ -484,27 +592,54 @@ export function AccountProvider({ children }: { children: React.ReactNode }) {
         return { ok: false, reason: "cancelled" };
       }
 
+      launchTraceWarn("ui.ms_prep", "静默刷新未成功，进入强制设备码登录", {
+        lastError: tokenErrorMsg,
+      });
       const relogin = await runForcedMicrosoftRelogin(
         profile.name,
         tokenErrorMsg,
         profile.accessToken?.trim() || null
       );
       if (relogin.accessToken) {
+        launchTrace("ui.ms_prep", "强制设备码登录完成", {
+          tokenLen: relogin.accessToken.length,
+        });
         return { ok: true, accessToken: relogin.accessToken };
       }
+      if (relogin.network) {
+        launchTraceWarn("ui.ms_prep", "强制设备码登录因网络失败", {});
+        return { ok: false, reason: "network" };
+      }
+      launchTraceWarn("ui.ms_prep", "强制设备码登录未获得令牌", {});
       return { ok: false, reason: "cancelled" };
     },
-    [applyMicrosoftRefresh, getValidMsSessionToken, runForcedMicrosoftRelogin]
+    [applyMicrosoftRefresh, getValidMsSessionToken, rememberMsSessionToken, runForcedMicrosoftRelogin]
   );
 
-  // 客户端挂载后从 localStorage 恢复数据，避免 SSR hydration 不匹配
+  // 客户端挂载后从 localStorage 恢复一次，避免 SSR hydration 不匹配；
+  // 不可依赖回调重跑，否则会在删档后再次用旧缓存覆盖内存态。
   // 同时刷新 LittleSkin 账户的皮肤；微软账号仅静默刷新令牌（不弹登录窗）
   useEffect(() => {
     const all = loadProfiles();
     const id = loadSelectedId();
     const selected = all.find((p) => p.id === id) ?? all[0] ?? null;
     setProfiles(all);
+    // 从持久化档案恢复内存令牌缓存（有效期 - 1 小时内可直接用）
+    for (const acc of all) {
+      if (acc.authType !== "microsoft" || !acc.uuid || !acc.accessToken) continue;
+      if (typeof acc.tokenExpiresAt === "number" && acc.tokenExpiresAt > 0) {
+        const remainingMs = acc.tokenExpiresAt - Date.now();
+        if (remainingMs > MS_TOKEN_EXPIRY_SKEW_MS) {
+          msSessionTokenCacheRef.current.set(acc.uuid.trim(), {
+            accessToken: acc.accessToken.trim(),
+            expiresAt: acc.tokenExpiresAt,
+          });
+        }
+      }
+    }
+
     setSelectedProfile(selected);
+    setProfilesHydrated(true);
 
     // 挂载后异步刷新所有 LittleSkin 账户的皮肤
     // 确保用户在 LittleSkin 网站更换皮肤后，重新打开启动器能看到最新皮肤
@@ -598,7 +733,7 @@ export function AccountProvider({ children }: { children: React.ReactNode }) {
             "MC_TOKEN_REFRESH"
           );
           if (refreshed?.access_token) {
-            await applyMicrosoftRefresh(pid, puuid, pName, refreshed);
+            await applyMicrosoftRefreshRef.current(pid, puuid, pName, refreshed);
             console.log(
               `[正版检测-前端] 步骤2：✓ Minecraft 令牌刷新成功，玩家名=${refreshed.name || pName}`
             );
@@ -612,7 +747,9 @@ export function AccountProvider({ children }: { children: React.ReactNode }) {
         }
       })();
     });
-  }, [applyMicrosoftRefresh]);
+    // 仅挂载时 hydrate；微软刷新走 ref，避免依赖变化重载 localStorage
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const clearForcedMicrosoftDeviceCode = useCallback(() => {
     setForcedMicrosoftDeviceCode(null);
@@ -620,13 +757,13 @@ export function AccountProvider({ children }: { children: React.ReactNode }) {
     setForcedMicrosoftLoginMessage(null);
   }, []);
 
-  // 持久化
+  // 持久化（含删光后的空列表，否则刷新会从旧缓存「复活」档案）
   useEffect(() => {
-    if (profiles.length === 0) return;
+    if (!profilesHydrated) return;
     try {
       localStorage.setItem(STORAGE_KEY_PROFILES, JSON.stringify(profiles));
     } catch {}
-  }, [profiles]);
+  }, [profiles, profilesHydrated]);
 
   useEffect(() => {
     try {
@@ -904,9 +1041,13 @@ export function AccountProvider({ children }: { children: React.ReactNode }) {
     const currentVersion = ++msLoginVersionRef.current;
     setLoginState("loading");
     setLoginError(null);
+    authTrace("microsoft_ui", "start", "用户发起微软正版登录");
     try {
       // 第一步：获取设备代码
       const codeInfo = await msRequestDeviceCode();
+      authTrace("microsoft_ui", "device_code_ui", "已向用户展示设备码", {
+        userCode: codeInfo.user_code,
+      });
 
       // 第二步：后台轮询 (不阻塞 UI, 异步等后端返回)
       msPollAndLogin(codeInfo.device_code, codeInfo.interval)
@@ -943,6 +1084,9 @@ export function AccountProvider({ children }: { children: React.ReactNode }) {
           });
           setSelectedProfile(newAccount);
           setLoginState("idle");
+          authTrace("microsoft_ui", "complete", "微软登录 UI 流程结束", {
+            playerName: info.name,
+          });
         })
         .catch((e: unknown) => {
           // 用户主动取消时不更新状态（不显示错误）
@@ -950,10 +1094,16 @@ export function AccountProvider({ children }: { children: React.ReactNode }) {
           const msg = e instanceof Error ? e.message : String(e);
           // "已取消登录" 是用户主动操作，不设为 error 状态
           if (msg.includes("已取消登录")) {
+            authTraceWarn("microsoft_ui", "cancelled", "用户取消微软登录", {});
             setLoginState("idle");
             setLoginError(null);
             return;
           }
+          if (isMicrosoftLoginNetworkOrTimeout(msg)) {
+            showLoginNetworkWarning();
+            return;
+          }
+          authTraceError("microsoft_ui", "failed", "微软登录失败", { error: msg });
           setLoginError(msg);
           setLoginState("error");
         });
@@ -964,11 +1114,15 @@ export function AccountProvider({ children }: { children: React.ReactNode }) {
       // 如果用户在第一步（获取 device_code）时就已取消，不设置 error 状态
       if (msLoginVersionRef.current !== currentVersion) throw e;
       const msg = e instanceof Error ? e.message : String(e);
+      if (isMicrosoftLoginNetworkOrTimeout(msg)) {
+        showLoginNetworkWarning();
+        throw e;
+      }
       setLoginError(msg);
       setLoginState("error");
       throw e;
     }
-  }, [rememberMsSessionToken]);
+  }, [rememberMsSessionToken, showLoginNetworkWarning]);
 
   // ---- 取消微软正版登录（用户关闭对话框时调用）----
   const cancelMicrosoftLogin = useCallback(() => {
@@ -1052,7 +1206,7 @@ export function AccountProvider({ children }: { children: React.ReactNode }) {
         两者只要有一个是 true，就显示 LoginDialog。
       */}
       <LoginDialog
-        open={forcedMicrosoftLoginMode || manualLoginOpen}
+        open={(forcedMicrosoftLoginMode || manualLoginOpen) && !loginNetworkWarning}
         onClose={() => {
           setManualLoginOpen(false);
         }}
@@ -1061,6 +1215,22 @@ export function AccountProvider({ children }: { children: React.ReactNode }) {
         forcedMode={forcedMicrosoftLoginMode}
         forcedMessage={forcedMicrosoftLoginMessage}
       />
+      <ConfirmDialog
+        open={loginNetworkWarning != null}
+        onOpenChange={(open) => {
+          if (!open) setLoginNetworkWarning(null);
+        }}
+        title="登录失败"
+        actions={[
+          {
+            label: "知道了",
+            variant: "primary",
+            onClick: () => setLoginNetworkWarning(null),
+          },
+        ]}
+      >
+        {loginNetworkWarning}
+      </ConfirmDialog>
     </AccountContext.Provider>
   );
 }

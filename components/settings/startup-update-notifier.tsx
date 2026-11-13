@@ -8,7 +8,7 @@ import { Download, Sparkles } from "lucide-react";
 
 import { useI18n } from "@/components/i18n/use-i18n";
 import { setAppUpdateState } from "@/components/settings/app-updater";
-import { LauncherUpdateNoticeAlert } from "@/components/settings/launcher-update-notice-alert";
+import { ConfirmDialog } from "@/components/confirm-dialog";
 import {
   markStartupUpdateCheckCompleted,
   markStartupUpdatePromptDismissed,
@@ -34,6 +34,7 @@ import {
 interface UpdateCheckResult {
   needs_check: boolean;
   update_available: boolean;
+  package_ready?: boolean;
   current_version: string;
   target_version: string | null;
   message: string;
@@ -58,8 +59,14 @@ export function StartupUpdateNotifier({ delayMs = 1500 }: { delayMs?: number }) 
   const deferredUpdatePromptRef = useRef(false);
   const availableUpdateRef = useRef<AvailableUpdate | null>(null);
 
-  const tryOpenUpdatePrompt = (update: AvailableUpdate) => {
+  const tryOpenUpdatePrompt = async (update: AvailableUpdate) => {
     if (!shouldShowStartupUpdatePrompt(update.version)) return;
+    try {
+      const cfg = await invoke<{ show_update_popup?: boolean }>("get_update_status");
+      if (cfg.show_update_popup === false) return;
+    } catch {
+      // 读取失败时仍按默认弹窗
+    }
     if (shouldDeferStartupUpdatePrompt()) {
       deferredUpdatePromptRef.current = true;
       return;
@@ -121,7 +128,7 @@ export function StartupUpdateNotifier({ delayMs = 1500 }: { delayMs?: number }) 
             const update = { version: result.target_version, changelog };
             availableUpdateRef.current = update;
             setAvailableUpdate(update);
-            tryOpenUpdatePrompt(update);
+            void tryOpenUpdatePrompt(update);
             return;
           }
 
@@ -157,9 +164,8 @@ export function StartupUpdateNotifier({ delayMs = 1500 }: { delayMs?: number }) 
     return subscribeOnboardingComplete(() => {
       const update = availableUpdateRef.current;
       if (!update || !deferredUpdatePromptRef.current) return;
-      if (!shouldShowStartupUpdatePrompt(update.version)) return;
       deferredUpdatePromptRef.current = false;
-      setUpdateOpen(true);
+      void tryOpenUpdatePrompt(update);
     });
   }, []);
 
@@ -218,19 +224,35 @@ export function StartupUpdateNotifier({ delayMs = 1500 }: { delayMs?: number }) 
         </DialogContent>
       </Dialog>
 
-      <LauncherUpdateNoticeAlert
+      <ConfirmDialog
         open={updateSuccessOpen}
         onOpenChange={setUpdateSuccessOpen}
         title={t("checkUpdate.updateSuccessTitle")}
-        description={t("checkUpdate.updateSuccessMessage", { version: installedVersion })}
-      />
+        actions={[
+          {
+            label: t("common.confirm"),
+            variant: "primary",
+            onClick: () => setUpdateSuccessOpen(false),
+          },
+        ]}
+      >
+        {t("checkUpdate.updateSuccessMessage", { version: installedVersion })}
+      </ConfirmDialog>
 
-      <LauncherUpdateNoticeAlert
+      <ConfirmDialog
         open={updateFailedOpen}
         onOpenChange={setUpdateFailedOpen}
         title={t("checkUpdate.updateFailedTitle")}
-        description={updateFailureMessage}
-      />
+        actions={[
+          {
+            label: t("common.confirm"),
+            variant: "primary",
+            onClick: () => setUpdateFailedOpen(false),
+          },
+        ]}
+      >
+        {updateFailureMessage}
+      </ConfirmDialog>
     </>
   );
 }
