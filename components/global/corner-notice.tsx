@@ -44,21 +44,28 @@ const CornerNoticeContext = createContext<CornerNoticeContextValue | null>(null)
 
 const DEFAULT_DISMISS_MS = 5000;
 
-/** 自下而上浮入 */
+/** 自下而上浮入；旧弹窗靠 layout 被顶上去 */
 const cornerNoticeFloatUp: Variants = {
-  initial: { opacity: 0, y: 28, scale: 0.98 },
+  initial: { opacity: 0, y: 36, scale: 0.98 },
   animate: {
     opacity: 1,
     y: 0,
     scale: 1,
-    transition: { duration: 0.35, ease: [0.22, 1, 0.36, 1] },
+    transition: { duration: 0.32, ease: [0.22, 1, 0.36, 1] },
   },
   exit: {
     opacity: 0,
-    y: 16,
+    y: 12,
     scale: 0.98,
-    transition: { duration: 0.2, ease: "easeIn" },
+    transition: { duration: 0.18, ease: "easeIn" },
   },
+};
+
+const cornerNoticeLayoutTransition = {
+  type: "spring" as const,
+  stiffness: 420,
+  damping: 32,
+  mass: 0.8,
 };
 
 const variantClasses: Record<CornerNoticeVariant, string> = {
@@ -96,31 +103,32 @@ function NoticeCard({
 
   return (
     <motion.div
-      layout
+      layout="position"
       variants={cornerNoticeFloatUp}
       initial="initial"
       animate="animate"
       exit="exit"
+      transition={{ layout: cornerNoticeLayoutTransition }}
       className={cn(
-        "pointer-events-auto flex w-80 items-start gap-2 rounded-xl border-2 px-3 py-2.5 text-xs shadow-lg",
+        "pointer-events-auto flex w-80 items-center gap-1.5 rounded-md border-2 px-2 py-1 text-xs shadow-lg",
         variantClasses[notice.variant]
       )}
     >
       {notice.loading ? (
-        <Loader2 className="mt-0.5 size-3.5 shrink-0 animate-spin" />
+        <Loader2 className="size-3 shrink-0 animate-spin" />
       ) : notice.variant === "success" ? (
-        <CheckCircle2 className="mt-0.5 size-3.5 shrink-0 text-green-600 dark:text-green-400" />
+        <CheckCircle2 className="size-3 shrink-0 text-green-600 dark:text-green-400" />
       ) : null}
-      <p className="min-w-0 flex-1 leading-snug">{notice.message}</p>
+      <p className="min-w-0 flex-1 leading-none">{notice.message}</p>
       <Button
         type="button"
         variant="ghost"
         size="icon-sm"
-        className={cn("size-5 shrink-0", dismissButtonClasses[notice.variant])}
+        className={cn("-mr-0.5 size-3.5 shrink-0", dismissButtonClasses[notice.variant])}
         onClick={onDismiss}
         aria-label="Dismiss"
       >
-        <X className="size-3" />
+        <X className="size-2.5" />
       </Button>
     </motion.div>
   );
@@ -142,10 +150,11 @@ function CornerNoticeHost({
 
   return createPortal(
     <div
-      className="pointer-events-none fixed bottom-4 right-4 z-[200] flex flex-col-reverse items-end gap-2"
+      className="pointer-events-none fixed bottom-4 right-4 z-[200] flex flex-col items-end justify-end gap-1.5"
       aria-live="polite"
     >
-      <AnimatePresence initial={false}>
+      {/* 数组末尾是最新：贴底出现，旧项 layout 上移 */}
+      <AnimatePresence initial={false} mode="popLayout">
         {notices.map((notice) => (
           <NoticeCard
             key={notice.id}
@@ -184,11 +193,11 @@ export function CornerNoticeProvider({
         durationMs: input.durationMs,
       };
       setNotices((prev) => {
-        const index = prev.findIndex((n) => n.id === id);
-        if (index === -1) return [...prev, item];
-        const next = [...prev];
-        next[index] = item;
-        return next;
+        // 同内容（或同 id）的旧弹窗先关掉，再显示新的，便于重新播入场动画
+        const next = prev.filter(
+          (n) => n.id !== id && n.message !== item.message
+        );
+        return [...next, item];
       });
       return id;
     },

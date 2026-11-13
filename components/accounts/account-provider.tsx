@@ -1,6 +1,13 @@
 "use client";
 
-import React, { createContext, useCallback, useContext, useEffect, useState } from "react";
+import React, {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import type { Account, AuthType } from "@/types";
 import {
   loginLittleSkin,
@@ -147,6 +154,8 @@ export function AccountProvider({ children }: { children: React.ReactNode }) {
   const useSystemProxy = settings.general.useSystemProxy;
   const [profiles, setProfiles] = useState<Account[]>([]);
   const [selectedProfile, setSelectedProfile] = useState<Account | null>(null);
+  /** 避免首屏 profiles=[] 把 localStorage 误写成空数组；删光档案后仍需持久化 [] */
+  const [profilesHydrated, setProfilesHydrated] = useState(false);
   const [loginState, setLoginState] = useState<LoginState>("idle");
   const [loginError, setLoginError] = useState<string | null>(null);
   const [forcedMicrosoftDeviceCode, setForcedMicrosoftDeviceCode] = useState<DeviceCodeInfo | null>(null);
@@ -267,6 +276,9 @@ export function AccountProvider({ children }: { children: React.ReactNode }) {
     },
     [rememberMsSessionToken]
   );
+
+  const applyMicrosoftRefreshRef = useRef(applyMicrosoftRefresh);
+  applyMicrosoftRefreshRef.current = applyMicrosoftRefresh;
 
   const showLoginNetworkWarning = useCallback(
     (message?: string) => {
@@ -604,28 +616,30 @@ export function AccountProvider({ children }: { children: React.ReactNode }) {
     [applyMicrosoftRefresh, getValidMsSessionToken, rememberMsSessionToken, runForcedMicrosoftRelogin]
   );
 
-  // 客户端挂载后从 localStorage 恢复数据，避免 SSR hydration 不匹配
+  // 客户端挂载后从 localStorage 恢复一次，避免 SSR hydration 不匹配；
+  // 不可依赖回调重跑，否则会在删档后再次用旧缓存覆盖内存态。
   // 同时刷新 LittleSkin 账户的皮肤；微软账号仅静默刷新令牌（不弹登录窗）
   useEffect(() => {
     const all = loadProfiles();
     const id = loadSelectedId();
     const selected = all.find((p) => p.id === id) ?? all[0] ?? null;
     setProfiles(all);
-      // 从持久化档案恢复内存令牌缓存（有效期 - 1 小时内可直接用）
-      for (const acc of all) {
-        if (acc.authType !== "microsoft" || !acc.uuid || !acc.accessToken) continue;
-        if (typeof acc.tokenExpiresAt === "number" && acc.tokenExpiresAt > 0) {
-          const remainingMs = acc.tokenExpiresAt - Date.now();
-          if (remainingMs > MS_TOKEN_EXPIRY_SKEW_MS) {
-            msSessionTokenCacheRef.current.set(acc.uuid.trim(), {
-              accessToken: acc.accessToken.trim(),
-              expiresAt: acc.tokenExpiresAt,
-            });
-          }
+    // 从持久化档案恢复内存令牌缓存（有效期 - 1 小时内可直接用）
+    for (const acc of all) {
+      if (acc.authType !== "microsoft" || !acc.uuid || !acc.accessToken) continue;
+      if (typeof acc.tokenExpiresAt === "number" && acc.tokenExpiresAt > 0) {
+        const remainingMs = acc.tokenExpiresAt - Date.now();
+        if (remainingMs > MS_TOKEN_EXPIRY_SKEW_MS) {
+          msSessionTokenCacheRef.current.set(acc.uuid.trim(), {
+            accessToken: acc.accessToken.trim(),
+            expiresAt: acc.tokenExpiresAt,
+          });
         }
       }
+    }
 
     setSelectedProfile(selected);
+    setProfilesHydrated(true);
 
     // 挂载后异步刷新所有 LittleSkin 账户的皮肤
     // 确保用户在 LittleSkin 网站更换皮肤后，重新打开启动器能看到最新皮肤
@@ -719,7 +733,7 @@ export function AccountProvider({ children }: { children: React.ReactNode }) {
             "MC_TOKEN_REFRESH"
           );
           if (refreshed?.access_token) {
-            await applyMicrosoftRefresh(pid, puuid, pName, refreshed);
+            await applyMicrosoftRefreshRef.current(pid, puuid, pName, refreshed);
             console.log(
               `[正版检测-前端] 步骤2：✓ Minecraft 令牌刷新成功，玩家名=${refreshed.name || pName}`
             );
@@ -733,7 +747,9 @@ export function AccountProvider({ children }: { children: React.ReactNode }) {
         }
       })();
     });
-  }, [applyMicrosoftRefresh]);
+    // 仅挂载时 hydrate；微软刷新走 ref，避免依赖变化重载 localStorage
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const clearForcedMicrosoftDeviceCode = useCallback(() => {
     setForcedMicrosoftDeviceCode(null);
@@ -741,13 +757,13 @@ export function AccountProvider({ children }: { children: React.ReactNode }) {
     setForcedMicrosoftLoginMessage(null);
   }, []);
 
-  // 持久化
+  // 持久化（含删光后的空列表，否则刷新会从旧缓存「复活」档案）
   useEffect(() => {
-    if (profiles.length === 0) return;
+    if (!profilesHydrated) return;
     try {
       localStorage.setItem(STORAGE_KEY_PROFILES, JSON.stringify(profiles));
     } catch {}
-  }, [profiles]);
+  }, [profiles, profilesHydrated]);
 
   useEffect(() => {
     try {

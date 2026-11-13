@@ -9,6 +9,7 @@ import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { useI18n } from "@/components/i18n/use-i18n";
 import { useDownloadManager } from "@/components/download/download-provider";
+import { useCornerNotice } from "@/components/global/corner-notice";
 
 const HTTP_URL_RE = /^https?:\/\/.+/i;
 
@@ -24,12 +25,12 @@ function inferFileName(url: string): string {
 
 export function CustomDownloadCard() {
   const { t } = useI18n();
+  const { pushNotice } = useCornerNotice();
   const { startCustomDownload } = useDownloadManager();
   const [url, setUrl] = useState("");
   const [directory, setDirectory] = useState("");
   const [fileName, setFileName] = useState("");
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     void invoke<{ customDownloadDirectory?: string | null }>("get_download_prefs")
@@ -62,7 +63,6 @@ export function CustomDownloadCard() {
       const result = await mod.open({ directory: true, multiple: false });
       if (typeof result === "string" && result) {
         setDirectory(result);
-        setError(null);
         await persistDirectory(result);
       }
     } catch {
@@ -73,7 +73,6 @@ export function CustomDownloadCard() {
   const startDownload = async () => {
     if (!canStart) return;
     setBusy(true);
-    setError(null);
     try {
       await persistDirectory(directory);
       const trimmedName = fileName.trim();
@@ -84,7 +83,10 @@ export function CustomDownloadCard() {
       });
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
-      setError(message || t("tools.customDownload.startFailed"));
+      pushNotice({
+        variant: "error",
+        message: message || t("tools.customDownload.startFailed"),
+      });
     } finally {
       setBusy(false);
     }
@@ -138,8 +140,6 @@ export function CustomDownloadCard() {
             }
           />
         </div>
-
-        {error && <p className="text-xs text-destructive">{error}</p>}
 
         <Button type="button" className="gap-2" disabled={!canStart} onClick={startDownload}>
           {busy ? <Loader2 className="size-4 animate-spin" /> : <Download className="size-4" />}

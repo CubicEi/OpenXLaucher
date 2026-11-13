@@ -23,6 +23,7 @@ import {
 import { readMigratedLocalStorage } from "@/lib/storage-migrate";
 import { log4jParser } from "@/components/launch/log4j-progress-parser";
 import { useI18n } from "@/components/i18n/use-i18n";
+import { useCornerNotice } from "@/components/global/corner-notice";
 import { analyzeLaunchLogs } from "@/components/launch/launch-analyzer";
 import { setLaunchInFlight } from "@/lib/launch-in-flight";
 import {
@@ -141,6 +142,7 @@ function deriveStatus(options: {
 
 export function LaunchProvider({ children }: { children: React.ReactNode }) {
   const { t, language } = useI18n();
+  const { pushNotice } = useCornerNotice();
   const [config, setConfig] = useState<LaunchConfig>(DEFAULT_LAUNCH_CONFIG);
   const [configLoaded, setConfigLoaded] = useState(false);
   const [status, setStatus] = useState<LaunchStatus>("idle");
@@ -686,10 +688,19 @@ export function LaunchProvider({ children }: { children: React.ReactNode }) {
       } else {
         syncStatus(instancesRef.current);
       }
-      setErrorMessage(msg);
+      setErrorMessage(null);
+      pushNotice({ variant: "error", message: msg });
       setProgress(null);
     },
-    [syncStatus, syncLaunchInFlight],
+    [syncStatus, syncLaunchInFlight, pushNotice],
+  );
+
+  const showLaunchValidationNotice = useCallback(
+    (message: string) => {
+      setErrorMessage(null);
+      pushNotice({ variant: "error", message });
+    },
+    [pushNotice]
   );
 
   const launchGame = useCallback(
@@ -699,17 +710,17 @@ export function LaunchProvider({ children }: { children: React.ReactNode }) {
 
       if (!merged.minecraftPath) {
         launchTraceWarn("ui.validate", "启动校验失败：未设置游戏目录");
-        setErrorMessage(t("launch.provider.setTheMinecraftGameDirectory"));
+        showLaunchValidationNotice(t("launch.provider.setTheMinecraftGameDirectory"));
         return;
       }
       if (!isAutoJavaSelection(merged.javaPath) && !merged.javaPath) {
         launchTraceWarn("ui.validate", "启动校验失败：未设置 Java");
-        setErrorMessage(t("launch.provider.setAJavaPath"));
+        showLaunchValidationNotice(t("launch.provider.setAJavaPath"));
         return;
       }
       if (!merged.versionName) {
         launchTraceWarn("ui.validate", "启动校验失败：未选择实例");
-        setErrorMessage(t("launch.provider.selectAGameVersion"));
+        showLaunchValidationNotice(t("launch.provider.selectAGameVersion"));
         return;
       }
 
@@ -722,7 +733,7 @@ export function LaunchProvider({ children }: { children: React.ReactNode }) {
       );
       if (!launchProfile) {
         launchTraceWarn("ui.validate", "启动校验失败：未选择档案");
-        setErrorMessage(t("launch.provider.selectAPlayerAccountFirst"));
+        showLaunchValidationNotice(t("launch.provider.selectAPlayerAccountFirst"));
         return;
       }
 
@@ -933,6 +944,7 @@ export function LaunchProvider({ children }: { children: React.ReactNode }) {
       syncStatus,
       prepareMicrosoftAccountForLaunch,
       abortLaunchUi,
+      showLaunchValidationNotice,
     ],
   );
 
