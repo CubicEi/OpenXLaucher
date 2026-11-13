@@ -12,6 +12,7 @@ import {
   getSkinBase64,
   redownloadLittleSkinSkin,
   msSilentRefreshAccount,
+  msGetCachedAccessToken,
   msHasAccountInDb,
   deleteCachedSkin,
   isMicrosoftTokenTransientError,
@@ -177,7 +178,7 @@ export function AccountProvider({ children }: { children: React.ReactNode }) {
   >(new Map());
 
   /** 提前量：到期前 30 分钟视为需要刷新 */
-  const MS_TOKEN_EXPIRY_SKEW_MS = 30 * 60 * 1000;
+  const MS_TOKEN_EXPIRY_SKEW_MS = 60 * 60 * 1000;
   /** 后端未返回 expires_in 时按 12h 计 */
   const MS_TOKEN_DEFAULT_TTL_MS = 12 * 60 * 60 * 1000;
 
@@ -190,10 +191,19 @@ export function AccountProvider({ children }: { children: React.ReactNode }) {
         typeof expiresInSec === "number" && expiresInSec > 0
           ? expiresInSec * 1000
           : MS_TOKEN_DEFAULT_TTL_MS;
+      const expiresAt = Date.now() + ttlMs;
       msSessionTokenCacheRef.current.set(id, {
         accessToken: token,
-        expiresAt: Date.now() + ttlMs,
+        expiresAt,
       });
+      // 同步写入 localStorage 档案，关闭启动器后仍可按 expiresAt 复用
+      setProfiles((prev) =>
+        prev.map((a) =>
+          a.uuid === id || a.uuid?.replace(/-/g, "") === id.replace(/-/g, "")
+            ? { ...a, accessToken: token, tokenExpiresAt: expiresAt }
+            : a
+        )
+      );
     },
     [MS_TOKEN_DEFAULT_TTL_MS],
   );
@@ -481,6 +491,23 @@ export function AccountProvider({ children }: { children: React.ReactNode }) {
         return { ok: true, accessToken: cached };
       }
 
+      // 数据库中的令牌在「有效期 - 1 小时」内：重启启动器后仍直接使用
+      try {
+        const fromDb = await msGetCachedAccessToken(puuid);
+        if (fromDb?.access_token) {
+          rememberMsSessionToken(puuid, fromDb.access_token, fromDb.expires_in);
+          launchTrace("ui.ms_prep", "使用数据库缓存的 Minecraft 令牌", {
+            tokenLen: fromDb.access_token.length,
+            expiresIn: fromDb.expires_in,
+          });
+          return { ok: true, accessToken: fromDb.access_token };
+        }
+      } catch (e: unknown) {
+        launchTraceWarn("ui.ms_prep", "读取数据库缓存令牌失败", {
+          error: e instanceof Error ? e.message : String(e),
+        });
+      }
+
       // cancelMicrosoftLogin 会递增该计数；停止准备后静默刷新即使超时也不应再弹强制登录
       const cancelEpoch = msLoginVersionRef.current;
       const wasCancelled = () => msLoginVersionRef.current !== cancelEpoch;
@@ -574,7 +601,7 @@ export function AccountProvider({ children }: { children: React.ReactNode }) {
       launchTraceWarn("ui.ms_prep", "强制设备码登录未获得令牌", {});
       return { ok: false, reason: "cancelled" };
     },
-    [applyMicrosoftRefresh, getValidMsSessionToken, runForcedMicrosoftRelogin]
+    [applyMicrosoftRefresh, getValidMsSessionToken, rememberMsSessionToken, runForcedMicrosoftRelogin]
   );
 
   // 客户端挂载后从 localStorage 恢复数据，避免 SSR hydration 不匹配
@@ -584,6 +611,20 @@ export function AccountProvider({ children }: { children: React.ReactNode }) {
     const id = loadSelectedId();
     const selected = all.find((p) => p.id === id) ?? all[0] ?? null;
     setProfiles(all);
+      // 从持久化档案恢复内存令牌缓存（有效期 - 1 小时内可直接用）
+      for (const acc of all) {
+        if (acc.authType !== "microsoft" || !acc.uuid || !acc.accessToken) continue;
+        if (typeof acc.tokenExpiresAt === "number" && acc.tokenExpiresAt > 0) {
+          const remainingMs = acc.tokenExpiresAt - Date.now();
+          if (remainingMs > MS_TOKEN_EXPIRY_SKEW_MS) {
+            msSessionTokenCacheRef.current.set(acc.uuid.trim(), {
+              accessToken: acc.accessToken.trim(),
+              expiresAt: acc.tokenExpiresAt,
+            });
+          }
+        }
+      }
+
     setSelectedProfile(selected);
 
     // 挂载后异步刷新所有 LittleSkin 账户的皮肤

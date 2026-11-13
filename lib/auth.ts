@@ -341,6 +341,22 @@ export async function msSilentRefreshAccount(
   return safeInvoke<AccountInfo>("ms_silent_refresh_account", { uuid });
 }
 
+export type CachedAccessToken = {
+  access_token: string;
+  expires_at: number;
+  expires_in: number;
+};
+
+/**
+ * 从 accounts.db 读取尚未进入「到期前 1 小时」窗口的 Minecraft access_token。
+ * 关闭启动器再打开也可直接复用，无需重新登录。
+ */
+export async function msGetCachedAccessToken(
+  uuid: string
+): Promise<CachedAccessToken | null> {
+  return safeInvoke<CachedAccessToken | null>("ms_get_cached_access_token", { uuid });
+}
+
 /**
  * 用户取消微软认证（停止准备 / 关闭登录窗）—— 不应再弹强制登录。
  */

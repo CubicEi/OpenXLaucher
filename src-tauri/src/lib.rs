@@ -19,8 +19,9 @@ mod version_management;
 use auth::littleskinLoader::{useMethod, use_method_with_credentials};
 use auth::official::{
     delete_cached_skin, fetch_texture_image_base64, get_skin_base64, ms_activate_skin,
-    ms_cancel_login, ms_delete_skin, ms_get_skins_and_capes, ms_has_account_in_db,
-    ms_poll_and_login, ms_request_device_code, ms_set_active_cape, ms_silent_refresh_account,
+    ms_cancel_login, ms_delete_skin, ms_get_cached_access_token, ms_get_skins_and_capes,
+    ms_has_account_in_db, ms_poll_and_login, ms_request_device_code, ms_set_active_cape,
+    ms_silent_refresh_account,
     ms_upload_skin, redownload_littleskin_skin, redownload_yggdrasil_skin,
 };
 use auth::yissadrail::{getAccountList, getPlayerSkin, thirdPartyLogin};
@@ -124,10 +125,11 @@ use handler::diagnostics::{
 };
 use handler::mod_links::{get_modrinth_required_dependencies, get_curseforge_required_dependencies};
 use multiplayer::{
-    ensure_easytier_stopped_on_exit, mp_encode_room_info, mp_ensure_installed,
+    ensure_easytier_stopped_on_exit, mp_encode_room_info, mp_ensure_installed, mp_finalize_install,
     mp_force_kill_process, mp_get_download_progress, mp_get_paths, mp_get_tool_status,
-    mp_is_running, mp_poll_log, mp_prepare_privileges, mp_set_peer, mp_start_host, mp_start_join,
-    mp_stop_session, mp_uninstall_tool,
+    mp_is_running, mp_list_download_sources, mp_poll_log, mp_prepare_install_download,
+    mp_prepare_privileges, mp_set_peer, mp_start_host, mp_start_join, mp_stop_session,
+    mp_uninstall_tool,
 };
 use updater::handler::{
     cancel_update, can_check_update, check_for_updates, create_updater_state, download_update,
@@ -218,9 +220,13 @@ pub fn run() {
             ms_delete_skin,
             ms_set_active_cape,
             ms_silent_refresh_account,
+            ms_get_cached_access_token,
             ms_has_account_in_db,
             delete_cached_skin,
             mp_ensure_installed,
+            mp_list_download_sources,
+            mp_prepare_install_download,
+            mp_finalize_install,
             mp_get_tool_status,
             mp_get_download_progress,
             mp_start_host,

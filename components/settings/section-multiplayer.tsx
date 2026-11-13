@@ -15,9 +15,9 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
-import { Alert, AlertDescription } from "@/components/ui/alert";
 import { useI18n } from "@/components/i18n/use-i18n";
 import { useConfirmDialog } from "@/components/confirm-dialog";
+import { useCornerNotice } from "@/components/global/corner-notice";
 
 const DEFAULT_PUBLIC_NODE_URL = "tcp://225284.xyz:11010";
 const PUBLIC_NODE_STORAGE_KEY = "openxlauncher:multiplayer:publicNodeUrl";
@@ -164,13 +164,12 @@ async function emergencyStopProcess(): Promise<void> {
 export function MultiplayerSection() {
   const { t } = useI18n();
   const { confirm } = useConfirmDialog();
+  const { pushNotice } = useCornerNotice();
 
   const [status, setStatus] = useState<ToolStatus | null>(null);
   const [paths, setPaths] = useState<MpPaths | null>(null);
   const [publicNodeUrl, setPublicNodeUrl] = useState(DEFAULT_PUBLIC_NODE_URL);
   const [busy, setBusy] = useState<BusyAction>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [success, setSuccess] = useState<string | null>(null);
 
   useEffect(() => {
     setPublicNodeUrl(loadStoredPublicNodeUrl());
@@ -178,7 +177,6 @@ export function MultiplayerSection() {
 
   const refresh = useCallback(async (showBusy = true) => {
     if (showBusy) setBusy("refresh");
-    setError(null);
     try {
       const [toolStatusRaw, runningRaw, pathsRaw] = await Promise.all([
         invoke<unknown>("mp_get_tool_status").catch(() => null),
@@ -206,11 +204,14 @@ export function MultiplayerSection() {
         setStatus(normalizeToolStatus(toolStatusRaw, Boolean(runningRaw), nextPaths));
       }
     } catch (e) {
-      setError(errorMessage(e) || t("settings.multiplayer.loadFailed"));
+      pushNotice({
+        variant: "error",
+        message: errorMessage(e) || t("settings.multiplayer.loadFailed"),
+      });
     } finally {
       if (showBusy) setBusy(null);
     }
-  }, [t]);
+  }, [pushNotice, t]);
 
   useEffect(() => {
     void refresh(true);
@@ -227,14 +228,15 @@ export function MultiplayerSection() {
     work: () => Promise<void>,
   ) => {
     setBusy(action);
-    setError(null);
-    setSuccess(null);
     try {
       await work();
-      setSuccess(t(successKey));
+      pushNotice({ variant: "success", message: t(successKey) });
       await refresh(false);
     } catch (e) {
-      setError(errorMessage(e) || t("settings.multiplayer.actionFailed"));
+      pushNotice({
+        variant: "error",
+        message: errorMessage(e) || t("settings.multiplayer.actionFailed"),
+      });
     } finally {
       setBusy(null);
     }
@@ -248,8 +250,6 @@ export function MultiplayerSection() {
   const handlePreparePrivileges = () => {
     void (async () => {
       setBusy("privileges");
-      setError(null);
-      setSuccess(null);
       try {
         const result = await invoke<{
           ok?: boolean;
@@ -260,13 +260,24 @@ export function MultiplayerSection() {
         const steps = result.manualSteps ?? result.manual_steps ?? [];
         const detail = [result.message, ...steps].filter(Boolean).join("\n");
         if (result.ok === false) {
-          setError(detail || t("settings.multiplayer.actionFailed"));
+          pushNotice({
+            variant: "error",
+            message: detail || t("settings.multiplayer.actionFailed"),
+            durationMs: 8000,
+          });
         } else {
-          setSuccess(detail || t("settings.multiplayer.privilegesSuccess"));
+          pushNotice({
+            variant: "success",
+            message: detail || t("settings.multiplayer.privilegesSuccess"),
+            durationMs: 8000,
+          });
         }
         await refresh(false);
       } catch (e) {
-        setError(errorMessage(e) || t("settings.multiplayer.actionFailed"));
+        pushNotice({
+          variant: "error",
+          message: errorMessage(e) || t("settings.multiplayer.actionFailed"),
+        });
       } finally {
         setBusy(null);
       }
@@ -319,17 +330,6 @@ export function MultiplayerSection() {
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          {error ? (
-            <Alert variant="destructive">
-              <AlertDescription>{error}</AlertDescription>
-            </Alert>
-          ) : null}
-          {success ? (
-            <Alert>
-              <AlertDescription>{success}</AlertDescription>
-            </Alert>
-          ) : null}
-
           <div className="space-y-2 rounded-lg border p-3">
             <div className="flex items-center justify-between gap-3">
               <Label className="text-sm font-medium">{t("settings.multiplayer.status")}</Label>

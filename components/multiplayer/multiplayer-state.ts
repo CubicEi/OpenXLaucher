@@ -64,6 +64,7 @@ export type MultiplayerAction =
       decodedInvite?: DecodedInvite | null;
     }
   | { type: "installStarted" }
+  | { type: "installCancelled" }
   | { type: "downloadProgress"; downloaded: number; total: number }
   | { type: "operationStarted"; operation: "start" | "stop" }
   | {
@@ -92,6 +93,17 @@ export function multiplayerReducer(
 
       if (!action.installed) {
         clearPersistedMultiplayerSession();
+        // Keep in-flight manual install UI while the download task runs.
+        if (state.status === "installing") {
+          return {
+            ...state,
+            ...toolMeta,
+            privilegeRequired: false,
+            runMode: null,
+            roomInfo: null,
+            decodedInvite: null,
+          };
+        }
         return {
           ...state,
           ...toolMeta,
@@ -159,6 +171,14 @@ export function multiplayerReducer(
       return {
         ...state,
         status: "installing",
+        errorMsg: null,
+        privilegeRequired: false,
+        downloadProgress: null,
+      };
+    case "installCancelled":
+      return {
+        ...state,
+        status: "not_installed",
         errorMsg: null,
         privilegeRequired: false,
         downloadProgress: null,

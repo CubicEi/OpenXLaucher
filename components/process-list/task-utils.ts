@@ -24,6 +24,17 @@ export function isInstallTaskActive(task: DownloadTask): boolean {
   return isInstallTask(task) && !INSTALL_TERMINAL.has(task.status);
 }
 
+/**
+ * Sliding prep animation (same as multiplayer install):
+ * active install tasks, or any queued/downloading task still at 0%.
+ */
+export function taskShowsIndeterminateProgress(task: DownloadTask): boolean {
+  if (isInstallTaskActive(task)) return true;
+  if (task.status !== "downloading" && task.status !== "queued") return false;
+  const progress = task.progress;
+  return progress === undefined || !Number.isFinite(progress) || progress <= 0;
+}
+
 /** Active download-role tasks that contribute to overall % / speed. */
 export function isDownloadMeterTask(task: DownloadTask): boolean {
   if (isInstallTask(task)) return false;

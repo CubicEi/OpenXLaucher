@@ -179,7 +179,7 @@ function defaultLabelForEvent(eventName: string): string {
   switch (eventName) {
     case "java-download-progress":
     case "java-download-finished":
-      return "Java JDK";
+      return "下载 Java JDK";
     case "download-progress":
     case "download-finished":
       return "Minecraft";
@@ -209,7 +209,7 @@ function defaultLabelForEvent(eventName: string): string {
       return "自定义下载";
     case "launcher-update-progress":
     case "launcher-update-finished":
-      return "启动器更新";
+      return "下载启动器更新";
     case "combined-download-progress":
     case "combined-download-finished":
       return "组合安装";
@@ -500,6 +500,18 @@ function makeProgressHandler(
   };
 }
 
+function isEasyTierZipDownloadFinished(
+  eventName: string,
+  success: boolean,
+  label?: string | null
+): boolean {
+  return (
+    eventName === "custom-download-finished" &&
+    success &&
+    (label?.trim() ?? "").startsWith("下载Easytier联机模块")
+  );
+}
+
 function makeFinishedHandler(
   setTasks: Dispatch<SetStateAction<DownloadTask[]>>,
   cancelledRef: { current: boolean },
@@ -522,15 +534,29 @@ function makeFinishedHandler(
       if (existing) {
         return deduped.map((task) => {
           if (task.taskId !== task_id || task.status === "cancelled") return task;
+          const label = payloadLabel ?? task.label;
+          const easyTierZip = isEasyTierZipDownloadFinished(eventName, success, label);
+          if (easyTierZip && isTaskDismissed(task_id)) {
+            return task;
+          }
           const isWarning = success && failed_count > 0;
           return {
             ...task,
-            status: (isWarning ? "warning" : success ? "success" : "error") as DownloadTaskStatus,
+            status: (easyTierZip
+              ? "downloading"
+              : isWarning
+                ? "warning"
+                : success
+                  ? "success"
+                  : "error") as DownloadTaskStatus,
             progress: success ? 100 : task.progress,
             error: error ?? undefined,
             failedCount: failed_count > 0 ? failed_count : undefined,
             speedBps: undefined,
             ...(payloadLabel ? { label: payloadLabel } : {}),
+            ...(easyTierZip
+              ? { stage: "正在安装联机工具…", detail: "正在解压并初始化…" }
+              : {}),
           };
         });
       }

@@ -1272,7 +1272,7 @@ pub async fn download_resource_file(
     };
     let app_clone = app.clone();
     let task_id_clone = task_id;
-    let progress_label = Some(format!("{} ({})", resourceName, mcVersion));
+    let progress_label = Some(format!("下载{} ({})", resourceName, mcVersion));
     let (progress_tx, mut progress_rx) = tokio::sync::mpsc::channel::<(u64, u64)>(32);
     tokio::spawn(async move {
         let app2 = app_clone.clone();

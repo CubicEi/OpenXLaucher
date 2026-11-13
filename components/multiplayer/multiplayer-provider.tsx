@@ -28,6 +28,9 @@ import {
 type MultiplayerContextValue = MultiplayerState & {
   checkStatus: () => Promise<void>;
   ensureInstalled: () => Promise<void>;
+  beginInstall: () => void;
+  cancelInstall: () => void;
+  failInstall: (message: string) => void;
   startAsHost: (roomName: string, port: string) => Promise<string>;
   startAsJoin: (encodedInvite: string, playerName: string) => Promise<string>;
   stopSession: () => Promise<void>;
@@ -176,6 +179,22 @@ export function MultiplayerProvider({
     return request;
   }, [api, checkStatus]);
 
+  const beginInstall = useCallback(() => {
+    dispatch({ type: "installStarted" });
+  }, []);
+
+  const cancelInstall = useCallback(() => {
+    dispatch({ type: "installCancelled" });
+  }, []);
+
+  const failInstall = useCallback((message: string) => {
+    dispatch({
+      type: "failed",
+      message: message || "联机工具安装失败",
+      privilegeRequired: false,
+    });
+  }, []);
+
   const startAsHost = useCallback(
     async (roomName: string, port: string) => {
       dispatch({ type: "operationStarted", operation: "start" });
@@ -311,6 +330,9 @@ export function MultiplayerProvider({
       ...state,
       checkStatus,
       ensureInstalled,
+      beginInstall,
+      cancelInstall,
+      failInstall,
       startAsHost,
       startAsJoin,
       stopSession,
@@ -325,6 +347,9 @@ export function MultiplayerProvider({
       state,
       checkStatus,
       ensureInstalled,
+      beginInstall,
+      cancelInstall,
+      failInstall,
       startAsHost,
       startAsJoin,
       stopSession,

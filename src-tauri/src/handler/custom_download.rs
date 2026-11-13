@@ -131,6 +131,7 @@ pub async fn start_custom_download(
     url: String,
     directory: String,
     file_name: Option<String>,
+    label: Option<String>,
 ) -> Result<u64, String> {
     validate_http_url(&url)?;
     let dir = PathBuf::from(directory.trim());
@@ -157,7 +158,10 @@ pub async fn start_custom_download(
         );
     }
 
-    let label = format!("自定义下载: {}", file_name);
+    let label = label
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| format!("自定义下载: {}", file_name));
     let req = SingleFileDownloadRequest {
         url: url.trim().to_string(),
         target_dir: dir.clone(),

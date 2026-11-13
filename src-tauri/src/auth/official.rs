@@ -491,29 +491,93 @@ fn setup_database() -> Result<Connection, Box<dyn std::error::Error>> {
             username TEXT,
             refresh_token TEXT,
             access_token TEXT,
-            time INTEGER
+            time INTEGER,
+            expires_at INTEGER
         )",
     )?;
+    // 兼容旧库：补齐 expires_at 列
+    let _ = connection.execute("ALTER TABLE accounts ADD COLUMN expires_at INTEGER");
     Ok(connection)
 }
 
-// 将账户信息保存到数据库
+/// Minecraft access_token 默认有效期（后端未返回 expires_in 时）
+const DEFAULT_MC_TOKEN_TTL_SECS: u64 = 12 * 60 * 60;
+/// 到期前多少秒停止复用旧令牌（有效期 - 1 小时）
+const CACHED_TOKEN_SKEW_SECS: u64 = 60 * 60;
+
+// 将账户信息保存到数据库（含 access_token 绝对过期时间）
 fn save_account_info(
     connection: &Connection,
     username: &str,
     uuid: &str,
     refresh_token: &str,
     access_token: &str,
+    expires_in: Option<u64>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let current_time = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)?
         .as_secs();
+    let ttl = expires_in
+        .filter(|v| *v > 0)
+        .unwrap_or(DEFAULT_MC_TOKEN_TTL_SECS);
+    let expires_at = current_time.saturating_add(ttl);
+    let uuid_sql = uuid.replace('\'', "''");
+    let username_sql = username.replace('\'', "''");
+    let refresh_sql = refresh_token.replace('\'', "''");
+    let access_sql = access_token.replace('\'', "''");
     connection.execute(format!(
-        "INSERT OR REPLACE INTO accounts (uuid, username, refresh_token, access_token, time) VALUES ('{}', '{}', '{}', '{}', '{}')",
-        uuid, username, refresh_token, access_token, current_time
+        "INSERT OR REPLACE INTO accounts (uuid, username, refresh_token, access_token, time, expires_at) VALUES ('{}', '{}', '{}', '{}', {}, {})",
+        uuid_sql, username_sql, refresh_sql, access_sql, current_time, expires_at
     ))?;
     Ok(())
 }
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CachedAccessToken {
+    pub access_token: String,
+    pub expires_at: u64,
+    pub expires_in: u64,
+}
+
+/// 若数据库中的 access_token 距过期仍超过 1 小时，则直接返回，无需重新登录/静默刷新。
+#[tauri::command(rename_all = "camelCase")]
+pub fn ms_get_cached_access_token(uuid: String) -> Result<Option<CachedAccessToken>, String> {
+    let uuid = uuid.trim().to_string();
+    if uuid.is_empty() {
+        return Ok(None);
+    }
+    let connection = setup_database().map_err(|e| format!("打开账户数据库失败: {}", e))?;
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|e| e.to_string())?
+        .as_secs();
+    let uuid_sql = uuid.replace('\'', "''");
+    let query = format!(
+        "SELECT access_token, expires_at FROM accounts WHERE uuid = '{}'",
+        uuid_sql
+    );
+    let mut stmt = connection.prepare(query).map_err(|e| e.to_string())?;
+    if let State::Row = stmt.next().map_err(|e| e.to_string())? {
+        let access_token: String = stmt.read::<String, _>(0).unwrap_or_default();
+        let expires_at: i64 = stmt.read::<i64, _>(1).unwrap_or(0);
+        if access_token.trim().is_empty() || expires_at <= 0 {
+            return Ok(None);
+        }
+        let expires_at = expires_at as u64;
+        if now + CACHED_TOKEN_SKEW_SECS >= expires_at {
+            return Ok(None);
+        }
+        let expires_in = expires_at.saturating_sub(now);
+        return Ok(Some(CachedAccessToken {
+            access_token,
+            expires_at,
+            expires_in,
+        }));
+    }
+    Ok(None)
+}
+
 async fn download_player_skin(
     client: &Client,
     uuid: &str,
@@ -1722,9 +1786,17 @@ pub async fn ms_poll_and_login(device_code: String, interval: u64) -> Result<Acc
         let db_id = profile.id.clone();
         let db_refresh = token.refresh_token.clone();
         let db_access = mc_login.access_token.clone();
+        let db_expires_in = Some(mc_login.expires_in);
         let db_result = tokio::task::spawn_blocking(move || -> Result<(), String> {
             let connection = setup_database().map_err(|e| e.to_string())?;
-            save_account_info(&connection, &db_name, &db_id, &db_refresh, &db_access)
+            save_account_info(
+                &connection,
+                &db_name,
+                &db_id,
+                &db_refresh,
+                &db_access,
+                db_expires_in,
+            )
                 .map_err(|e| e.to_string())?;
             Ok(())
         })
@@ -2274,6 +2346,7 @@ pub async fn ms_silent_refresh_account(uuid: String) -> Result<AccountInfo, Stri
             &db_uuid,
             &refreshed.refresh_token,
             &mc_login.access_token,
+            Some(mc_login.expires_in),
         )
         .map_err(|e| format!("保存账号信息失败: {}", e))?;
         eprintln!("[正版检测] 步骤3：✓ 新凭据已保存到数据库");

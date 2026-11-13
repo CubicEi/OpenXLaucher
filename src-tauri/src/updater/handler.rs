@@ -94,8 +94,8 @@ pub async fn download_update(
         let cfg = get_update_config();
         cfg.target_version
             .as_ref()
-            .map(|v| format!("启动器更新 v{}", v))
-            .or_else(|| Some("启动器更新".to_string()))
+            .map(|v| format!("下载启动器更新 v{}", v))
+            .or_else(|| Some("下载启动器更新".to_string()))
     };
     let total_bytes = get_update_config().file_size;
     let app_progress = app.clone();

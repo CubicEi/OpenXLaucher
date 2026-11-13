@@ -669,10 +669,14 @@ onClick={() => setTab("favorites")}
                     exit="exit"
                   >
                     {filteredJavaOffers.map((offer) => {
+                      const javaTaskLabel = `下载 ${offer.label}`;
+                      const matchesJavaTask = (label: string) =>
+                        label === javaTaskLabel || label === offer.label;
                       const isDownloading = tasks.some(
-                        (task) => task.label === offer.label && task.status === "downloading"
+                        (task) =>
+                          matchesJavaTask(task.label) && task.status === "downloading"
                       );
-                      const task = tasks.find((item) => item.label === offer.label);
+                      const task = tasks.find((item) => matchesJavaTask(item.label));
                       const isExternal = offer.downloadMode === "external";
                       return (
                         <button

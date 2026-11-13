@@ -59,7 +59,7 @@ export function JavaIncompatibleDialog() {
     if (requiredMajor == null) return;
     setInstalling(true);
     setInstallMessage(null);
-    const label = `Zulu JDK ${requiredMajor}`;
+    const label = `下载 Zulu JDK ${requiredMajor}`;
     try {
       const taskId = await startJavaDownload(label);
       const result = await invoke<{ message: string }>("install_zulu_jdk", {

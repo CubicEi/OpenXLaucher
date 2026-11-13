@@ -939,6 +939,8 @@
     "removeTask": "Remove task",
     "taskCompleted": "{name} completed",
     "taskCompletedWithWarning": "{name} completed with warnings",
+    "instanceInstallCompleted": "Instance {name} installed",
+    "instanceInstallCompletedWithWarning": "Instance {name} installed with warnings",
     "emptyTitle": "No tasks",
     "emptyHint": "When you download a game instance, mod, or run an update, tasks will show up here.",
     "stage": {
@@ -985,9 +987,17 @@
       "error": "Error"
     },
     "install": {
+      "readyTitle": "Download networking tool",
       "title": "Preparing networking tool",
       "failedTitle": "Networking tool install failed",
       "description": "On first use the launcher needs to download and initialize the networking module, then you can start a session.",
+      "source": "Download source",
+      "sourcePlaceholder": "Choose a download source",
+      "sourceGithub": "GitHub (official)",
+      "sourceHint": "Pick an available source, GitHub may be unstable in Mainland China.",
+      "sourceLoadFailed": "Could not load download sources.",
+      "startDownload": "Download and install",
+      "taskHint": "The download task was added to the process list.",
       "preparing": "Downloading and installing…",
       "progress": "{percent}% · {downloaded} / {total}",
       "failedHint": "Install did not finish. Check your network and try again.",

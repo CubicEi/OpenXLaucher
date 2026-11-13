@@ -267,7 +267,7 @@ pub async fn download_and_install_java(
     window: tauri::WebviewWindow,
 ) -> Result<JavaInstallResult, String> {
     let vendor = JavaVendor::parse(&vendor)?;
-    let label = vendor.offer_label(major);
+    let label = format!("下载 {}", vendor.offer_label(major));
 
     match vendor {
         JavaVendor::Oracle | JavaVendor::Microsoft => {
